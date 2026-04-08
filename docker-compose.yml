@@ -1,0 +1,58 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: pousada_db
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin_password_123
+      POSTGRES_DB: pousada_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pousada_pgadmin
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@pousada.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5051:80"
+    depends_on:
+      - db
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pousada_backend
+    restart: always
+    environment:
+      # O backend usa esta URL para conectar no Postgres do compose
+      DATABASE_URL: postgresql://admin:admin_password_123@db:5432/pousada_db
+      # Segredos de exemplo (ajuste em produção)
+      SECRET_KEY: dev_change_this_secret
+    ports:
+      - "8003:8000"
+    depends_on:
+      - db
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: pousada_frontend
+    restart: always
+    environment:
+      # Usado no build para apontar para a API
+      VITE_API_URL: http://localhost:8003
+    ports:
+      - "5174:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:

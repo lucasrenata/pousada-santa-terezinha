@@ -1,0 +1,22 @@
+# Node modules
+node_modules/
+dist/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Docker data
+postgres_data/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Misc
+.gemini/
+build_output.txt
+resumo.txt
