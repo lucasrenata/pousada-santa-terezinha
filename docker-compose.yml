@@ -37,8 +37,8 @@ services:
       # O backend usa esta URL para conectar no Postgres do compose
       DATABASE_URL: postgresql://admin:admin_password_123@db:5432/pousada_db
       # URLs Públicas para Webhooks e Autenticações
-      BASE_URL: https://hotelarIA.parceriacomia.com.br/api
-      NOTIFICATION_URL: https://hotelarIA.parceriacomia.com.br/api/payments/webhook
+      BASE_URL: https://hotelaria.parceriacomia.com.br/api
+      NOTIFICATION_URL: https://hotelaria.parceriacomia.com.br/api/payments/webhook
     ports:
       - "8003:8000"
     volumes:
