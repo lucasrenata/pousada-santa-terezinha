@@ -12,17 +12,17 @@ import { useCustomers, Customer } from '@/hooks/useCustomers';
 
 const customerSchema = z.object({
   name: z.string().min(2, 'Nome deve ter pelo menos 2 caracteres'),
-  email: z.string().email('Email inválido').optional().or(z.literal('')),
-  phone: z.string().optional(),
-  document: z.string().optional(),
-  address_street: z.string().optional(),
-  address_number: z.string().optional(),
-  address_neighborhood: z.string().optional(),
-  address_city: z.string().optional(),
-  address_state: z.string().optional(),
-  address_zip: z.string().optional(),
+  email: z.string().email('Email inválido'),
+  phone: z.string().min(10, 'Telefone inválido (mínimo 10 dígitos)'),
+  document: z.string().min(5, 'Documento inválido'),
+  address_street: z.string().min(1, 'Rua é obrigatória'),
+  address_number: z.string().min(1, 'Número é obrigatório'),
+  address_neighborhood: z.string().min(1, 'Bairro é obrigatório'),
+  address_city: z.string().min(1, 'Cidade é obrigatória'),
+  address_state: z.string().min(2, 'Estado (UF) é obrigatório'),
+  address_zip: z.string().min(8, 'CEP inválido'),
   profession: z.string().optional(),
-  birth_date: z.string().optional(),
+  birth_date: z.string().min(1, 'Data de nascimento é obrigatória'),
   notes: z.string().optional()
 });
 
@@ -57,6 +57,23 @@ export function CustomerForm({ customer, onSuccess, onCancel }: CustomerFormProp
       notes: customer?.notes || ''
     }
   });
+
+  const calculateAge = (birthDate: string) => {
+    if (!birthDate) return null;
+    const today = new Date();
+    const birth = new Date(birthDate);
+    if (isNaN(birth.getTime())) return null;
+    
+    let age = today.getFullYear() - birth.getFullYear();
+    const m = today.getMonth() - birth.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) {
+        age--;
+    }
+    return age;
+  };
+
+  const birthDateValue = form.watch('birth_date');
+  const age = calculateAge(birthDateValue);
 
   const onSubmit = async (data: CustomerFormData) => {
     setIsSubmitting(true);
@@ -119,7 +136,7 @@ export function CustomerForm({ customer, onSuccess, onCancel }: CustomerFormProp
 
               <FormField control={form.control} name="email" render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="font-semibold">Email</FormLabel>
+                  <FormLabel className="font-semibold">Email *</FormLabel>
                   <FormControl><Input placeholder="joao@email.com" {...field} /></FormControl>
                   <FormMessage />
                 </FormItem>
@@ -127,7 +144,7 @@ export function CustomerForm({ customer, onSuccess, onCancel }: CustomerFormProp
 
               <FormField control={form.control} name="phone" render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="font-semibold">WhatsApp / Telefone</FormLabel>
+                  <FormLabel className="font-semibold">WhatsApp / Telefone *</FormLabel>
                   <FormControl><Input placeholder="(11) 99999-9999" {...field} /></FormControl>
                   <FormMessage />
                 </FormItem>
@@ -135,7 +152,7 @@ export function CustomerForm({ customer, onSuccess, onCancel }: CustomerFormProp
 
               <FormField control={form.control} name="document" render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="font-semibold">CPF ou RG</FormLabel>
+                  <FormLabel className="font-semibold">CPF ou RG *</FormLabel>
                   <FormControl><Input placeholder="000.000.000-00" {...field} /></FormControl>
                   <FormMessage />
                 </FormItem>
@@ -143,7 +160,14 @@ export function CustomerForm({ customer, onSuccess, onCancel }: CustomerFormProp
 
               <FormField control={form.control} name="birth_date" render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="font-semibold">Data de Nascimento</FormLabel>
+                  <FormLabel className="font-semibold flex items-center justify-between">
+                    Data de Nascimento *
+                    {age !== null && age >= 0 && (
+                      <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
+                        {age} anos
+                      </span>
+                    )}
+                  </FormLabel>
                   <FormControl><Input type="date" {...field} /></FormControl>
                   <FormMessage />
                 </FormItem>
@@ -164,42 +188,42 @@ export function CustomerForm({ customer, onSuccess, onCancel }: CustomerFormProp
 
               <FormField control={form.control} name="address_zip" render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="font-semibold">CEP</FormLabel>
+                  <FormLabel className="font-semibold">CEP *</FormLabel>
                   <FormControl><Input placeholder="00000-000" {...field} /></FormControl>
                 </FormItem>
               )} />
 
               <FormField control={form.control} name="address_street" render={({ field }) => (
                 <FormItem className="md:col-span-2">
-                  <FormLabel className="font-semibold">Rua / Logradouro</FormLabel>
+                  <FormLabel className="font-semibold">Rua / Logradouro *</FormLabel>
                   <FormControl><Input placeholder="Ex: Av. Atlântica" {...field} /></FormControl>
                 </FormItem>
               )} />
 
               <FormField control={form.control} name="address_number" render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="font-semibold">Número</FormLabel>
+                  <FormLabel className="font-semibold">Número *</FormLabel>
                   <FormControl><Input placeholder="Ex: 100" {...field} /></FormControl>
                 </FormItem>
               )} />
 
               <FormField control={form.control} name="address_neighborhood" render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="font-semibold">Bairro</FormLabel>
+                  <FormLabel className="font-semibold">Bairro *</FormLabel>
                   <FormControl><Input placeholder="Bairro" {...field} /></FormControl>
                 </FormItem>
               )} />
 
               <FormField control={form.control} name="address_city" render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="font-semibold">Cidade</FormLabel>
+                  <FormLabel className="font-semibold">Cidade *</FormLabel>
                   <FormControl><Input placeholder="Cidade" {...field} /></FormControl>
                 </FormItem>
               )} />
 
              <FormField control={form.control} name="address_state" render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="font-semibold">Estado (UF)</FormLabel>
+                  <FormLabel className="font-semibold">Estado (UF) *</FormLabel>
                   <FormControl><Input placeholder="Ex: SP" {...field} /></FormControl>
                 </FormItem>
               )} />

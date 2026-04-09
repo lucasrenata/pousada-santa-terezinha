@@ -9,7 +9,7 @@ router = APIRouter(prefix="/rooms", tags=["Rooms"])
 
 @router.post("/", response_model=schemas.RoomResponse)
 def create_room(room: schemas.RoomCreate, db: Session = Depends(get_db), admin: models.User = Depends(get_current_admin)):
-    if db.query(models.Room).filter(models.Room.number == room.number).first():
+    if db.query(models.Room).filter(models.Room.id == room.id).first():
         raise HTTPException(status_code=400, detail="Quarto já existe")
     new_room = models.Room(status=models.RoomStatus.DISPONIVEL, **room.model_dump())
     db.add(new_room)
@@ -23,14 +23,14 @@ def list_rooms(db: Session = Depends(get_db), user: models.User = Depends(get_cu
 
 @router.get("/by-number/{number}", response_model=schemas.RoomResponse)
 def get_room_by_number(number: str, db: Session = Depends(get_db)):
-    room = db.query(models.Room).filter(models.Room.number == number).first()
+    room = db.query(models.Room).filter(models.Room.id == number).first()
     if not room:
         raise HTTPException(status_code=404, detail="Quarto não encontrado")
     return room
 
 # Rota para camareira
 @router.post("/{room_id}/clean")
-def mark_clean(room_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_staff)):
+def mark_clean(room_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_staff)):
     room = db.query(models.Room).filter(models.Room.id == room_id).first()
     if not room: raise HTTPException(status_code=404)
     room.status = models.RoomStatus.DISPONIVEL
@@ -40,7 +40,7 @@ def mark_clean(room_id: int, db: Session = Depends(get_db), user: models.User = 
 
 # Manutenção: marca quarto como MANUTENCAO com observação
 @router.post("/{room_id}/maintenance")
-def mark_maintenance(room_id: int, note: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_staff)):
+def mark_maintenance(room_id: str, note: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_staff)):
     room = db.query(models.Room).filter(models.Room.id == room_id).first()
     if not room: raise HTTPException(status_code=404, detail="Quarto não encontrado")
     room.status = models.RoomStatus.MANUTENCAO
@@ -50,7 +50,7 @@ def mark_maintenance(room_id: int, note: str, db: Session = Depends(get_db), use
 
 # Atualizar quarto
 @router.put("/{room_id}", response_model=schemas.RoomResponse)
-def update_room(room_id: int, data: schemas.RoomUpdate, db: Session = Depends(get_db), admin: models.User = Depends(get_current_admin)):
+def update_room(room_id: str, data: schemas.RoomUpdate, db: Session = Depends(get_db), admin: models.User = Depends(get_current_admin)):
     room = db.query(models.Room).filter(models.Room.id == room_id).first()
     if not room:
         raise HTTPException(status_code=404, detail="Quarto não encontrado")
@@ -64,7 +64,7 @@ def update_room(room_id: int, data: schemas.RoomUpdate, db: Session = Depends(ge
 
 # Excluir quarto
 @router.delete("/{room_id}")
-def delete_room(room_id: int, db: Session = Depends(get_db), admin: models.User = Depends(get_current_admin)):
+def delete_room(room_id: str, db: Session = Depends(get_db), admin: models.User = Depends(get_current_admin)):
     room = db.query(models.Room).filter(models.Room.id == room_id).first()
     if not room:
         raise HTTPException(status_code=404, detail="Quarto não encontrado")

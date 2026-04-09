@@ -51,12 +51,12 @@ class User(Base):
 
 class Room(Base):
     __tablename__ = "rooms"
-    id = Column(Integer, primary_key=True, index=True)
-    number = Column(String, unique=True, index=True)
+    id = Column(String, primary_key=True, index=True) # Agora o ID É o número do quarto (ex: "101")
     type = Column(String) 
     price_per_night = Column(Float)
     status = Column(Enum(RoomStatus), default=RoomStatus.DISPONIVEL)
     floor = Column(Integer, default=1)
+    description = Column(Text, nullable=True) # Características do quarto para o Agente
     
     # --- NOVO CAMPO ---
     max_capacity = Column(Integer, default=2) # Ex: 2 pessoas
@@ -70,9 +70,9 @@ class Guest(Base):
     __tablename__ = "guests"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True) 
-    email = Column(String, unique=True, index=True)
-    phone = Column(String) 
-    document = Column(String, unique=True, index=True) 
+    email = Column(String, unique=True, index=True, nullable=True)
+    phone = Column(String, nullable=True) 
+    document = Column(String, unique=True, index=True, nullable=True) 
     birth_date = Column(Date, nullable=True) 
     profession = Column(String, nullable=True)
     address_zip = Column(String, nullable=True) 
@@ -81,7 +81,16 @@ class Guest(Base):
     address_neighborhood = Column(String, nullable=True) 
     address_city = Column(String, nullable=True)
     address_state = Column(String, nullable=True) 
+    notes = Column(Text, nullable=True)
     bookings = relationship("Booking", back_populates="guest")
+
+    @property
+    def age(self):
+        if not self.birth_date:
+            return None
+        from datetime import date
+        today = date.today()
+        return today.year - self.birth_date.year - ((today.month, today.day) < (self.birth_date.month, self.birth_date.day))
 
 class Product(Base):
     """Cadastro de Produtos Rico"""
@@ -104,7 +113,7 @@ class Booking(Base):
     """Reserva Detalhada"""
     __tablename__ = "bookings"
     id = Column(Integer, primary_key=True, index=True)
-    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True) 
+    room_id = Column(String, ForeignKey("rooms.id"), nullable=True) 
     guest_id = Column(Integer, ForeignKey("guests.id"))
     check_in_date = Column(DateTime) 
     check_out_date = Column(DateTime) 
@@ -162,6 +171,15 @@ class Revenue(Base):
     created_by_user = Column(String, nullable=True) 
 # ... (Mantenha todo o resto igual) ...
 
+class ChatMessage(Base):
+    """Persistência de mensagens do Chat IA"""
+    __tablename__ = "chat_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String, index=True) # ID da sessão (UUID) vindo do Front
+    role = Column(String)                   # 'user' ou 'assistant'
+    content = Column(Text)
+    created_at = Column(DateTime, default=datetime.now)
+    
 class StockEntry(Base):
     """Entrada de Estoque (Nota Fiscal)"""
     __tablename__ = "stock_entries"
@@ -197,3 +215,14 @@ class SystemSetting(Base):
     description = Column(String, nullable=True)     # Para o Admin saber o que é
 
 
+class Event(Base):
+    """Calendário de Eventos da Região (Canção Nova, etc.)"""
+    __tablename__ = "events"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    start_date = Column(Date)
+    end_date = Column(Date)
+    location = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    color = Column(String, default="#6366f1")  # Cor do card no calendário
+    created_at = Column(DateTime, default=datetime.now)

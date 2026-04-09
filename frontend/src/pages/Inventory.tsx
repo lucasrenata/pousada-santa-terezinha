@@ -50,6 +50,7 @@ export default function Inventory() {
     category: '',
     stock_quantity: '',
     min_stock: '',
+    barcode: '',
   });
   const [uploadSummary, setUploadSummary] = useState<StockEntry | null>(null);
   const [entries, setEntries] = useState<StockEntry[]>([]);
@@ -72,7 +73,10 @@ export default function Inventory() {
     category: '',
     stock_quantity: '',
     min_stock: '5',
+    barcode: '',
   });
+
+  const [searchTerm, setSearchTerm] = useState('');
 
   async function load() {
     try {
@@ -120,7 +124,7 @@ export default function Inventory() {
       };
       await api.post('/products/', payload);
       setMessage('Produto criado');
-      setForm({ name: '', price: '', category: '', stock_quantity: '', min_stock: '5' });
+      setForm({ name: '', price: '', category: '', stock_quantity: '', min_stock: '5', barcode: '' });
       await load();
     } catch (err) {
       const axErr = err as AxiosError<{ detail?: string }>;
@@ -129,6 +133,18 @@ export default function Inventory() {
     }
   }
   
+  async function deleteEntry(id: number) {
+    if (!window.confirm('Tem certeza que deseja excluir esta entrada? O estoque será revertido.')) return;
+    try {
+      await api.delete(`/products/stock/entries/${id}`);
+      setMessage('Entrada excluída e estoque revertido');
+      await load();
+      await loadEntries();
+    } catch {
+      setError('Falha ao excluir entrada');
+    }
+  }
+
   async function loadEntries() {
     try {
       const params: any = {};
@@ -171,6 +187,7 @@ export default function Inventory() {
       category: p.category,
       stock_quantity: String(p.stock_quantity),
       min_stock: String(p.min_stock),
+      barcode: p.barcode || '',
     });
   }
   async function submitEdit(e: React.FormEvent) {
@@ -185,6 +202,7 @@ export default function Inventory() {
       if (editForm.category) payload.category = editForm.category;
       if (editForm.stock_quantity) payload.stock_quantity = parseInt(editForm.stock_quantity);
       if (editForm.min_stock) payload.min_stock = parseInt(editForm.min_stock);
+      payload.barcode = editForm.barcode || null;
       await api.put(`/products/${editing.id}`, payload);
       setEditing(null);
       await load();
@@ -264,48 +282,94 @@ export default function Inventory() {
       ) : null}
 
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+        <p className="text-lg font-semibold text-slate-800 mb-4">Buscar Produtos</p>
+        <div className="relative">
+          <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
+            🔍
+          </span>
+          <input
+            type="text"
+            placeholder="Pesquisar por nome ou código de barras..."
+            className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
         <p className="text-lg font-semibold text-slate-800 mb-4">Cadastro de Produto</p>
         <form onSubmit={handleCreate} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          <input
-            placeholder="Nome"
-            className="border rounded-lg px-3 py-2"
-            value={form.name}
-            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-          />
-          <input
-            type="number"
-            step="0.01"
-            placeholder="Preço"
-            className="border rounded-lg px-3 py-2"
-            value={form.price}
-            onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
-          />
-          <input
-            placeholder="Categoria"
-            className="border rounded-lg px-3 py-2"
-            value={form.category}
-            onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
-          />
-          <input
-            type="number"
-            placeholder="Quantidade"
-            className="border rounded-lg px-3 py-2"
-            value={form.stock_quantity}
-            onChange={(e) => setForm((f) => ({ ...f, stock_quantity: e.target.value }))}
-          />
-          <input
-            type="number"
-            placeholder="Estoque mínimo"
-            className="border rounded-lg px-3 py-2"
-            value={form.min_stock}
-            onChange={(e) => setForm((f) => ({ ...f, min_stock: e.target.value }))}
-          />
-          <button
-            type="submit"
-            className="bg-blue-600 text-white px-5 py-2 rounded-lg shadow-md hover:bg-blue-700 transition font-semibold"
-          >
-            Salvar
-          </button>
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Nome</label>
+            <input
+              placeholder="Ex: Coca-Cola 350ml"
+              className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
+              value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              required
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Código de Barras</label>
+            <input
+              placeholder="Escaneie ou digite"
+              className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
+              value={form.barcode}
+              onChange={(e) => setForm((f) => ({ ...f, barcode: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Categoria</label>
+            <input
+              placeholder="Ex: Bebidas"
+              className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
+              value={form.category}
+              onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
+              required
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Preço de Venda</label>
+            <input
+              type="number"
+              step="0.01"
+              placeholder="0.00"
+              className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
+              value={form.price}
+              onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
+              required
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Qtd em Estoque</label>
+            <input
+              type="number"
+              placeholder="0"
+              className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
+              value={form.stock_quantity}
+              onChange={(e) => setForm((f) => ({ ...f, stock_quantity: e.target.value }))}
+              required
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Estoque Mínimo</label>
+            <input
+              type="number"
+              placeholder="5"
+              className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
+              value={form.min_stock}
+              onChange={(e) => setForm((f) => ({ ...f, min_stock: e.target.value }))}
+            />
+          </div>
+          <div className="lg:col-span-3 flex justify-end">
+            <button
+              type="submit"
+              className="bg-blue-600 text-white px-8 py-2 rounded-lg shadow-md hover:bg-blue-700 transition font-semibold"
+            >
+              Criar Produto
+            </button>
+          </div>
         </form>
       </div>
 
@@ -322,7 +386,7 @@ export default function Inventory() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".csv,.xlsx,.pdf,image/*"
+              accept=".csv,.xlsx,.pdf,image/*,.xml"
               onChange={handleInvoiceUpload}
               className="hidden"
             />
@@ -355,7 +419,12 @@ export default function Inventory() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
-              {products.map((p) => {
+              {products
+                .filter(p => 
+                  p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                  (p.barcode && p.barcode.includes(searchTerm))
+                )
+                .map((p) => {
                 const st = stockStatus(p);
                 return (
                   <tr key={p.id} className="hover:bg-slate-50">
@@ -407,15 +476,35 @@ export default function Inventory() {
               </div>
               <button onClick={() => setEditing(null)} className="px-3 py-2 rounded-lg border bg-white">Fechar</button>
             </div>
-            <form onSubmit={submitEdit} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <input className="border rounded-lg px-3 py-2" placeholder="Nome" value={editForm.name} onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))} />
-              <input className="border rounded-lg px-3 py-2" type="number" step="0.01" placeholder="Preço" value={editForm.price} onChange={(e) => setEditForm((f) => ({ ...f, price: e.target.value }))} />
-              <input className="border rounded-lg px-3 py-2" placeholder="Categoria" value={editForm.category} onChange={(e) => setEditForm((f) => ({ ...f, category: e.target.value }))} />
-              <input className="border rounded-lg px-3 py-2" type="number" placeholder="Quantidade" value={editForm.stock_quantity} onChange={(e) => setEditForm((f) => ({ ...f, stock_quantity: e.target.value }))} />
-              <input className="border rounded-lg px-3 py-2" type="number" placeholder="Estoque mínimo" value={editForm.min_stock} onChange={(e) => setEditForm((f) => ({ ...f, min_stock: e.target.value }))} />
-              <div className="flex gap-2 col-span-1 sm:col-span-2 mt-2">
-                <button type="submit" className="bg-blue-600 text-white px-5 py-2 rounded-lg shadow-md hover:bg-blue-700 transition font-semibold">Salvar alterações</button>
-                <button type="button" onClick={() => setEditing(null)} className="border px-5 py-2 rounded-lg bg-white hover:bg-slate-50">Cancelar</button>
+            <form onSubmit={submitEdit} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Nome</label>
+                <input className="w-full border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500" placeholder="Nome" value={editForm.name} onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Código de Barras</label>
+                <input className="w-full border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500" placeholder="Código de barras" value={editForm.barcode} onChange={(e) => setEditForm((f) => ({ ...f, barcode: e.target.value }))} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Categoria</label>
+                <input className="w-full border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500" placeholder="Categoria" value={editForm.category} onChange={(e) => setEditForm((f) => ({ ...f, category: e.target.value }))} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Preço</label>
+                <input className="w-full border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500" type="number" step="0.01" placeholder="Preço" value={editForm.price} onChange={(e) => setEditForm((f) => ({ ...f, price: e.target.value }))} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Quantidade</label>
+                <input className="w-full border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500" type="number" placeholder="Quantidade" value={editForm.stock_quantity} onChange={(e) => setEditForm((f) => ({ ...f, stock_quantity: e.target.value }))} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Estoque Mínimo</label>
+                <input className="w-full border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500" type="number" placeholder="Estoque mínimo" value={editForm.min_stock} onChange={(e) => setEditForm((f) => ({ ...f, min_stock: e.target.value }))} />
+              </div>
+              
+              <div className="flex gap-2 col-span-1 sm:col-span-2 mt-4 pt-4 border-t border-slate-100">
+                <button type="submit" className="flex-1 bg-blue-600 text-white px-5 py-2.5 rounded-lg shadow-md hover:bg-blue-700 transition font-semibold">Salvar alterações</button>
+                <button type="button" onClick={() => setEditing(null)} className="flex-1 border px-5 py-2.5 rounded-lg bg-white hover:bg-slate-50 font-semibold text-slate-700">Cancelar</button>
               </div>
             </form>
           </div>
@@ -434,12 +523,21 @@ export default function Inventory() {
         </div>
         <div className="grid grid-cols-1 gap-3">
           {entries.map((en) => (
-            <div key={en.id} className="border rounded-xl p-3">
-              <div className="flex justify-between">
-                <p className="font-semibold text-slate-800">#{en.id} • {en.supplier || '—'} • NF {en.invoice_number || '—'}</p>
+            <div key={en.id} className="border rounded-xl p-3 flex justify-between items-start group">
+              <div>
+                <div className="flex justify-between">
+                  <p className="font-semibold text-slate-800">#{en.id} • {en.supplier || '—'} • NF {en.invoice_number || '—'}</p>
+                </div>
                 <p className="text-sm text-slate-600">{new Date(en.created_at).toLocaleString('pt-BR')}</p>
+                <p className="text-sm text-slate-600">Data NF: {en.invoice_date || '—'} • Itens: {en.items?.length ?? 0}</p>
               </div>
-              <p className="text-sm text-slate-600">Data NF: {en.invoice_date || '—'} • Itens: {en.items?.length ?? 0}</p>
+              <button 
+                onClick={() => deleteEntry(en.id)}
+                className="opacity-0 group-hover:opacity-100 p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
+                title="Excluir entrada"
+              >
+                🗑️
+              </button>
             </div>
           ))}
           {entries.length === 0 && <div className="text-slate-500">Sem entradas encontradas para os filtros.</div>}

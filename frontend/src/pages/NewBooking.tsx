@@ -9,7 +9,7 @@ export default function NewBooking() {
   const navigate = useNavigate();
   
   const roomIdStr = searchParams.get('roomId');
-  const initialRoomId = roomIdStr ? parseInt(roomIdStr) : undefined;
+  const initialRoomId = roomIdStr || undefined;
 
   return (
     <div className="max-w-5xl mx-auto py-8 px-4">

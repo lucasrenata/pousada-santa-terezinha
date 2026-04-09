@@ -9,7 +9,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
-import { useReservations, Reservation } from '@/hooks/useReservations';
+import { useCustomers, type Customer } from '@/hooks/useCustomers';
+import { useReservations, type Reservation } from '@/hooks/useReservations';
 import api from '@/services/api';
 import { ReservationCard } from '@/components/ReservationCard';
 import { ReservationForm } from '@/components/ReservationForm';
@@ -239,7 +240,7 @@ export default function Reservations() {
         </TabsContent>
 
         <TabsContent value="calendar" className="animate-in zoom-in-95 duration-300">
-          <ReservationCalendar />
+          <ReservationCalendar reservations={filteredReservations} />
         </TabsContent>
       </Tabs>
 

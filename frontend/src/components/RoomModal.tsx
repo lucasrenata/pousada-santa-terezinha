@@ -13,11 +13,12 @@ interface RoomModalProps {
 
 export default function RoomModal({ isOpen, onClose, onSuccess, initialData }: RoomModalProps) {
   type FormData = {
-    number: string;
+    id: string; // Número do quarto (PrimaryKey)
     type: string;
     price: string;
     max_capacity: number;
     floor?: number;
+    description?: string;
   };
   
   const { register, handleSubmit, reset, setValue } = useForm<FormData>({ 
@@ -26,13 +27,14 @@ export default function RoomModal({ isOpen, onClose, onSuccess, initialData }: R
 
   useEffect(() => {
     if (initialData) {
-      setValue('number', initialData.number);
+      setValue('id', initialData.id);
       setValue('type', initialData.type);
       setValue('price', initialData.price_per_night.toString());
       setValue('max_capacity', initialData.max_capacity);
       setValue('floor', initialData.floor || 1);
+      setValue('description', initialData.description || '');
     } else {
-      reset({ number: '', type: 'simples', price: '', max_capacity: 2, floor: 1 });
+      reset({ id: '', type: 'simples', price: '', max_capacity: 2, floor: 1, description: '' });
     }
   }, [initialData, setValue, reset, isOpen]);
 
@@ -41,11 +43,12 @@ export default function RoomModal({ isOpen, onClose, onSuccess, initialData }: R
   const onSubmit = async (data: FormData) => {
     try {
       const payload = {
-        number: data.number,
+        id: data.id,
         type: data.type,
         price_per_night: parseFloat(data.price),
         max_capacity: Number(data.max_capacity) || 2,
-        floor: Number(data.floor) || 1
+        floor: Number(data.floor) || 1,
+        description: data.description || ''
       };
       
       if (initialData) {
@@ -79,7 +82,8 @@ export default function RoomModal({ isOpen, onClose, onSuccess, initialData }: R
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Número do Quarto</label>
-            <input {...register("number", { required: true })} placeholder="Ex: 101" className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 ring-blue-500 outline-none" />
+            <input {...register("id", { required: true })} placeholder="Ex: 101" className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 ring-blue-500 outline-none" disabled={!!initialData} />
+            {initialData && <p className="text-[10px] text-slate-400 mt-1">O número do quarto não pode ser alterado após a criação.</p>}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -116,6 +120,16 @@ export default function RoomModal({ isOpen, onClose, onSuccess, initialData }: R
                 className="w-full border border-slate-300 rounded-lg p-2 outline-none"
               />
             </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Observações / Características</label>
+            <textarea
+              {...register("description")}
+              placeholder="Ex: Próximo ao elevador, cama de casal e beliche, térreo..."
+              rows={3}
+              className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 ring-blue-500 outline-none resize-none"
+            />
           </div>
 
           <div className="pt-4 flex gap-3">

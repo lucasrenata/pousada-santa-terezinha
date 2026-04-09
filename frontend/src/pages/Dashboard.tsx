@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { BedDouble, Search, Filter, Plus, Users, Percent, CalendarDays, DoorOpen } from 'lucide-react';
+import { BedDouble, Search, Plus, Users, Percent, CalendarDays } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useRealTimeRooms } from '../hooks/useRealTimeRooms';
 import { useReservations } from '../hooks/useReservations';
@@ -272,7 +272,7 @@ export default function Dashboard() {
               className={`p-4 rounded-2xl border-l-[6px] shadow-sm cursor-pointer hover:scale-105 transition-all duration-300 bg-white ${getStatusColor(room.status)} group`}
             >
               <div className="flex justify-between items-start mb-3">
-                <span className="text-xl font-black text-slate-800 group-hover:text-blue-600">#{room.number}</span>
+                <span className="text-xl font-black text-slate-800 group-hover:text-blue-600">#{room.id}</span>
                 <BedDouble size={18} className="text-slate-300" />
               </div>
               

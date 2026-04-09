@@ -1,3 +1,4 @@
+name: pousada_mvp
 services:
   db:
     image: postgres:15-alpine
@@ -30,13 +31,15 @@ services:
       dockerfile: Dockerfile
     container_name: pousada_backend
     restart: always
+    env_file:
+      - ./backend/.env
     environment:
       # O backend usa esta URL para conectar no Postgres do compose
       DATABASE_URL: postgresql://admin:admin_password_123@db:5432/pousada_db
-      # Segredos de exemplo (ajuste em produção)
-      SECRET_KEY: dev_change_this_secret
     ports:
       - "8003:8000"
+    volumes:
+      - ./backend/reports:/app/reports
     depends_on:
       - db
 
@@ -47,8 +50,8 @@ services:
     container_name: pousada_frontend
     restart: always
     environment:
-      # Usado no build para apontar para a API
-      VITE_API_URL: http://localhost:8003
+      # Usado no build para apontar para a API via proxy reverso do Nginx
+      VITE_API_URL: /api
     ports:
       - "5174:80"
     depends_on:

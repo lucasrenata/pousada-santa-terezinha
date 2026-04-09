@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import api from '../services/api';
 import { useNavigate } from 'react-router-dom';
@@ -9,6 +9,20 @@ export default function Login() {
   const { register, handleSubmit } = useForm<FormData>();
   const navigate = useNavigate();
   const [error, setError] = useState('');
+  const [pousadaName, setPousadaName] = useState('Pousada System');
+
+  useEffect(() => {
+    async function loadSettings() {
+      try {
+        const response = await api.get('/settings/');
+        const nameSetting = response.data.find((s: any) => s.key === 'pousada_name');
+        if (nameSetting) setPousadaName(nameSetting.value);
+      } catch (err) {
+        console.error("Erro ao carregar nome da pousada", err);
+      }
+    }
+    loadSettings();
+  }, []);
 
   const onSubmit = async (data: FormData) => {
     try {
@@ -35,7 +49,7 @@ export default function Login() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-200">
       <div className="bg-white p-8 rounded-2xl shadow-xl w-96">
-        <h1 className="text-2xl font-bold text-center mb-6 text-slate-800">Pousada System</h1>
+        <h1 className="text-2xl font-bold text-center mb-6 text-slate-800">{pousadaName}</h1>
         
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div>

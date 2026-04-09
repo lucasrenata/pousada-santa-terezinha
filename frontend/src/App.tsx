@@ -13,6 +13,11 @@ import PublicBooking from './pages/PublicBooking';
 import ServicePanel from './pages/ServicePanel';
 import Settings from './pages/Settings';
 import AdminUsers from './pages/AdminUsers';
+import Chat from './pages/Chat';
+import Events from './pages/Events';
+import GuestLayout from './components/GuestLayout';
+import GuestChatPage from './pages/GuestChatPage';
+import GuestRegistrationPage from './pages/GuestRegistrationPage';
 
 function App() {
   return (
@@ -23,9 +28,16 @@ function App() {
         <Route path="/public/book" element={<PublicBooking />} />
         <Route path="/service" element={<ServicePanel />} />
 
+        {/* Portal do Hóspede (Layout Público Premium) */}
+        <Route element={<GuestLayout />}>
+          <Route path="/atendimento" element={<GuestChatPage />} />
+          <Route path="/registrar" element={<GuestRegistrationPage />} />
+        </Route>
+
         {/* Rotas Privadas (Com Layout "ParcerIA") */}
         <Route element={<MainLayout />}>
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/chat" element={<Chat />} />
           <Route path="/rooms" element={<Rooms />} />
           <Route path="/bookings" element={<Reservations />} />
           <Route path="/bookings/new" element={<NewBooking />} />
@@ -34,6 +46,7 @@ function App() {
           <Route path="/finance" element={<Finance />} />
           <Route path="/payments" element={<Payments />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/events" element={<Events />} />
           <Route path="/admin/users" element={<AdminUsers />} />
         </Route>
 

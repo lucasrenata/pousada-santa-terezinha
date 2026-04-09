@@ -9,7 +9,7 @@ export interface Companion {
 
 export interface Reservation {
   id: number;
-  room_id: number;
+  room_id: string;
   room_number: string | null;
   guest_name: string;
   status: 'pendente' | 'confirmado' | 'ativo' | 'concluido' | 'cancelado';
@@ -78,7 +78,7 @@ export function useReservations() {
     }
   };
 
-  const checkReservationConflicts = async (roomId: number, checkIn: string, checkOut: string) => {
+  const checkReservationConflicts = async (roomId: string, checkIn: string, checkOut: string) => {
     try {
       // O backend já faz a validação de disponibilidade no POST, 
       // mas podemos chamar o GET /availability para uma checagem prévia

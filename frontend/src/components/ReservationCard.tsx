@@ -11,9 +11,15 @@ const formatCurrency = (val: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
 
 const formatDate = (dateStr: string) => {
+  if (!dateStr) return "";
   try {
-    const d = new Date(dateStr);
-    return format(d, 'dd/MM/yyyy');
+    // Isolamos apenas a parte da data (antes do 'T' se houver)
+    const datePart = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+    const parts = datePart.split('-');
+    if (parts.length === 3) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+    return dateStr;
   } catch {
     return dateStr;
   }
@@ -31,7 +37,7 @@ const statusLabels: Record<string, string> = {
   pendente: 'Pendente',
   confirmado: 'Confirmada',
   ativo: 'Check-in',
-  concluido: 'Check-out',
+  concluido: 'Finalizada',
   cancelado: 'Cancelada'
 };
 
@@ -73,6 +79,11 @@ export function ReservationCard({ reservation, onEdit, onDelete, onCheckIn, onCh
           <div className="space-y-0.5">
             <h3 className="font-bold text-slate-800 text-lg leading-tight">
               {reservation.guest_name}
+              {reservation.guest_age !== undefined && reservation.guest_age !== null && (
+                <span className="ml-2 text-sm font-normal text-slate-500">
+                  ({reservation.guest_age} anos)
+                </span>
+              )}
             </h3>
             <div className="flex items-center gap-2">
               <p className="text-sm font-semibold text-blue-600">

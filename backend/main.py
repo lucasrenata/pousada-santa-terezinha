@@ -1,19 +1,23 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from database import engine
-import models
-from routers import auth, guests, rooms, bookings, products, finance, settings, payments, admin
 from pathlib import Path
 from dotenv import load_dotenv
-import sys
+import os
 
-# Cria Tabelas no Banco (Se não existirem)
-models.Base.metadata.create_all(bind=engine)
-
-app = FastAPI(title="Pousada System Modular", version="1.0.0")
-
+# Carrega variáveis de ambiente antes de qualquer outro import que dependa delas
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(env_path, override=True)
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from database import engine
+import models
+from routers import auth, guests, rooms, bookings, products, finance, settings, payments, admin, chat, events, webhook_whatsapp
+import sys
+
+# Tabelas no banco agora são gerenciadas via migrations do Alembic.
+# Removido: models.Base.metadata.create_all(bind=engine)
+
+app = FastAPI(title="Pousada System Modular", version="1.0.0")
 
 # --- CONFIGURAÇÃO DE CORS (IMPORTANTE PARA O REACT) ---
 # Isso permite que o Front-end (porta 5173) converse com o Back-end (porta 8000)
@@ -45,6 +49,13 @@ app.include_router(finance.router)   # <--- NOVO
 app.include_router(settings.router)  # <--- NOVO
 app.include_router(payments.router)
 app.include_router(admin.router)
+app.include_router(chat.router)
+app.include_router(events.router)
+app.include_router(webhook_whatsapp.router)
+
+# Serve PDF reports
+os.makedirs("reports", exist_ok=True)
+app.mount("/reports", StaticFiles(directory="reports"), name="reports")
 
 @app.get("/")
 def root():

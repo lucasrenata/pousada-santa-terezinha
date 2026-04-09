@@ -54,11 +54,26 @@ export default function Settings() {
   };
 
   const getSettingValue = (key: string) => {
-    return settings.find(s => s.key === key)?.value || '';
+    const setting = settings.find(s => s.key === key);
+    if (!setting) {
+      // Fallbacks para novas chaves que ainda não existem no banco de dados
+      if (key === 'pousada_pricing_model') return 'per_person';
+      if (key === 'pousada_rate_child_percentage') return '50';
+      if (key === 'pousada_rate_infant_fixed') return '25';
+      if (key === 'pousada_name') return 'Pousada System';
+    }
+    return setting?.value || '';
   };
 
   const setLocalValue = (key: string, value: string) => {
-    setSettings(prev => prev.map(s => s.key === key ? { ...s, value } : s));
+    setSettings(prev => {
+      const exists = prev.some(s => s.key === key);
+      if (exists) {
+        return prev.map(s => s.key === key ? { ...s, value } : s);
+      }
+      // Se a chave não existir no estado local, adicionamos ela
+      return [...prev, { key, value, description: null }];
+    });
   };
 
   if (loading) return <div className="p-8 text-center text-slate-500">Carregando configurações...</div>;
@@ -111,6 +126,31 @@ export default function Settings() {
                 >
                   <Save className="w-4 h-4" />
                 </Button>
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-slate-100">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Modelo de Cobrança (Diárias)</label>
+                <div className="flex gap-2">
+                  <select 
+                    className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    value={getSettingValue('pousada_pricing_model') || 'per_person'} 
+                    onChange={(e) => setLocalValue('pousada_pricing_model', e.target.value)}
+                  >
+                    <option value="per_person">Por Pessoa (Soma diárias individuais)</option>
+                    <option value="per_room">Por Quarto (Valor fixo por unidade)</option>
+                  </select>
+                  <Button 
+                    onClick={() => handleUpdateSetting('pousada_pricing_model', getSettingValue('pousada_pricing_model'), 'Modelo de cálculo: por pessoa ou por quarto')}
+                    disabled={saving}
+                  >
+                    <Save className="w-4 h-4" />
+                  </Button>
+                </div>
+                <p className="text-[10px] text-slate-500 font-medium">
+                  * No modelo "Por Quarto", o valor definido no cadastro do quarto será o valor fixo da diária.
+                </p>
               </div>
             </div>
           </CardContent>

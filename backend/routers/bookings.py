@@ -28,7 +28,7 @@ async def create_booking(data: schemas.BookingCreate, db: Session = Depends(get_
             if total_people > room.max_capacity:
                 raise HTTPException(
                     status_code=400, 
-                    detail=f"Capacidade excedida! O quarto {room.number} comporta no máximo {room.max_capacity} pessoas."
+                    detail=f"Capacidade excedida! O quarto {room.id} comporta no máximo {room.max_capacity} pessoas."
                 )
 
             # Verifica conflito de datas
@@ -131,7 +131,7 @@ def check_in(data: schemas.CheckInRequest, db: Session = Depends(get_db)):
     ).first()
     if existing_active:
         room_active = db.query(models.Room).filter(models.Room.id == existing_active.room_id).first()
-        room_num = room_active.number if room_active else ""
+        room_num = room_active.id if room_active else ""
         raise HTTPException(status_code=400, detail=f"Hóspede já está com check-in ativo no quarto {room_num}")
     
     room = db.query(models.Room).with_for_update().filter(models.Room.id == data.room_id).first()
@@ -152,7 +152,7 @@ def check_in(data: schemas.CheckInRequest, db: Session = Depends(get_db)):
 
 # 3. CHECK-OUT (Com lançamento no Financeiro)
 @router.post("/checkout/{room_id}")
-def check_out(room_id: int, data: schemas.CheckoutPaymentRequest, db: Session = Depends(get_db)):
+def check_out(room_id: str, data: schemas.CheckoutPaymentRequest, db: Session = Depends(get_db)):
     booking = db.query(models.Booking).with_for_update().filter(
         models.Booking.room_id == room_id, 
         models.Booking.status == models.BookingStatus.ATIVO
@@ -205,7 +205,7 @@ def check_out(room_id: int, data: schemas.CheckoutPaymentRequest, db: Session = 
     
     # --- LANÇAMENTO AUTOMÁTICO NO LIVRO CAIXA (FINANCEIRO) ---
     revenue_entry = models.Revenue(
-        description=f"Check-out Quarto {room.number} - Reserva #{booking.id}",
+        description=f"Check-out Quarto {room.id} - Reserva #{booking.id}",
         amount=final_total,
         category=models.RevenueCategory.HOSPEDAGEM,
         payment_method=data.payment_method,
@@ -220,7 +220,7 @@ def check_out(room_id: int, data: schemas.CheckoutPaymentRequest, db: Session = 
 
 # 3.1. RESUMO PARA CHECK-OUT (diárias x consumos)
 @router.get("/summary/{room_id}")
-def checkout_summary(room_id: int, db: Session = Depends(get_db)):
+def checkout_summary(room_id: str, db: Session = Depends(get_db)):
     booking = db.query(models.Booking).filter(
         models.Booking.room_id == room_id, 
         models.Booking.status == models.BookingStatus.ATIVO
@@ -268,7 +268,13 @@ def checkout_summary(room_id: int, db: Session = Depends(get_db)):
         "grand_total": pricing["total"] + consumption_total,
         "breakdown": pricing["breakdown"],
         "consumptions": [
-            { "product_id": c.product_id, "quantity": c.quantity, "unit_price": c.unit_price }
+            { 
+                "product_id": c.product_id, 
+                "product_name": c.product.name if c.product else "N/A",
+                "quantity": c.quantity, 
+                "unit_price": c.unit_price,
+                "total": c.quantity * c.unit_price
+            }
             for c in booking.consumptions
         ]
     }
@@ -330,9 +336,10 @@ def list_bookings(start: Optional[date] = None, end: Optional[date] = None, db: 
         response.append({
             "id": b.id,
             "room_id": b.room_id,
-            "room_number": b.room.number if b.room else None,
+            "room_number": b.room_id if b.room_id else None,
             "guest_id": b.guest_id,
             "guest_name": b.guest.name if b.guest else "",
+            "guest_age": b.guest.age if b.guest else None,
             "mode": b.mode,
             "daily_rate": b.daily_rate,
 
@@ -352,7 +359,7 @@ def list_bookings(start: Optional[date] = None, end: Optional[date] = None, db: 
 
 # 5. BUSCAR RESERVA ATIVA POR QUARTO (para mostrar no modal de quarto)
 @router.get("/active/{room_id}")
-def get_active_booking(room_id: int, db: Session = Depends(get_db)):
+def get_active_booking(room_id: str, db: Session = Depends(get_db)):
     booking = db.query(models.Booking).filter(
         models.Booking.room_id == room_id,
         models.Booking.status == models.BookingStatus.ATIVO
@@ -373,14 +380,18 @@ def get_active_booking(room_id: int, db: Session = Depends(get_db)):
     }
 
 @router.get("/availability", response_model=List[schemas.RoomResponse])
-def get_availability(start: datetime, end: datetime, guests: Optional[int] = None, db: Session = Depends(get_db)):
+def get_availability(start: datetime, end: datetime, guests: Optional[int] = None, exclude_booking_id: Optional[int] = None, db: Session = Depends(get_db)):
     blocked_q = db.query(models.Booking.room_id).filter(
         models.Booking.room_id.isnot(None),
         models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
         models.Booking.check_out_date > start,
         models.Booking.check_in_date < end,
-    ).distinct()
-    blocked_ids = {rid for (rid,) in blocked_q.all()}
+    )
+    
+    if exclude_booking_id:
+        blocked_q = blocked_q.filter(models.Booking.id != exclude_booking_id)
+        
+    blocked_ids = {rid for (rid,) in blocked_q.distinct().all()}
     query = db.query(models.Room)
     if guests is not None:
         query = query.filter(models.Room.max_capacity >= guests)
@@ -465,7 +476,11 @@ async def create_public_booking(data: schemas.BookingPublicCreate, db: Session =
         guest_age = today.year - guest.birth_date.year - ((today.month, today.day) < (guest.birth_date.month, guest.birth_date.day))
     
     ages = [guest_age] + [c.age for c in data.companions]
-    pricing = calculate_reservation_total(data.daily_rate, days, ages)
+    
+    settings_rows = db.query(models.SystemSetting).all()
+    settings_dict = {s.key: s.value for s in settings_rows}
+    
+    pricing = calculate_reservation_total(data.daily_rate, days, ages, settings=settings_dict)
 
     # 4. Cria reserva
     booking = models.Booking(
@@ -501,8 +516,13 @@ def get_booking(booking_id: int, db: Session = Depends(get_db)):
     
     return {
         "id": booking.id,
-        "room_number": booking.room.number if booking.room else None,
+        "room_id": booking.room_id,
+        "room_number": booking.room_id if booking.room_id else None,
+        "guest_id": booking.guest_id,
         "guest_name": booking.guest.name if booking.guest else "",
+        "guest_age": booking.guest.age if booking.guest else None,
+        "mode": booking.mode,
+        "daily_rate": booking.daily_rate,
         "status": booking.status,
         "total_guests": booking.total_guests,
         "total_amount": booking.total_amount,

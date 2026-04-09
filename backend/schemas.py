@@ -22,25 +22,26 @@ class Token(BaseModel):
 
 # --- ROOMS ---
 class RoomBase(BaseModel):
-    number: str
+    id: str # O ID agora é o número do quarto (ex: "101")
     type: str
     price_per_night: float
     floor: Optional[int] = 1
     max_capacity: int = 2 # <--- NOVO
+    description: Optional[str] = None
 
 
 class RoomCreate(RoomBase): pass
 
 class RoomUpdate(BaseModel):
-    number: Optional[str] = None
+    id: Optional[str] = None
     type: Optional[str] = None
     price_per_night: Optional[float] = None
     floor: Optional[int] = None
     max_capacity: Optional[int] = None
+    description: Optional[str] = None
 
 
 class RoomResponse(RoomBase):
-    id: int
     status: models.RoomStatus
     maintenance_note: str | None = None
     class Config: from_attributes = True
@@ -52,7 +53,7 @@ class GuestBase(BaseModel):
     phone: str
     document: str
     birth_date: date
-    profession: str
+    profession: Optional[str] = None
     address_zip: str
     address_street: str
     address_number: str
@@ -62,8 +63,23 @@ class GuestBase(BaseModel):
 
 class GuestCreate(GuestBase): pass
 
+class GuestUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    document: Optional[str] = None
+    birth_date: Optional[date] = None
+    profession: Optional[str] = None
+    address_zip: Optional[str] = None
+    address_street: Optional[str] = None
+    address_number: Optional[str] = None
+    address_neighborhood: Optional[str] = None
+    address_city: Optional[str] = None
+    address_state: Optional[str] = None
+
 class GuestResponse(GuestBase):
     id: int
+    age: Optional[int] = None
     class Config: from_attributes = True
 
 # --- PRODUCTS ---
@@ -138,7 +154,7 @@ class CompanionResponse(BaseModel):
 
 class BookingCreate(BaseModel):
     guest_id: int
-    room_id: Optional[int] = None # Pode virar null se for reserva online sem quarto definido
+    room_id: Optional[str] = None # Pode virar null se for reserva online sem quarto definido
     check_in_date: datetime
     check_out_date: datetime
     check_in_time: Optional[str] = "14:00"
@@ -150,7 +166,7 @@ class BookingCreate(BaseModel):
     companions: List[CompanionCreate] = []
 
 class BookingUpdate(BaseModel):
-    room_id: Optional[int] = None
+    room_id: Optional[str] = None
     guest_id: Optional[int] = None
     check_in_date: Optional[datetime] = None
     check_out_date: Optional[datetime] = None
@@ -169,13 +185,13 @@ class BookingUpdate(BaseModel):
 
 class CheckInRequest(BaseModel):
     booking_id: int # Agora fazemos check-in de uma RESERVA existente
-    room_id: int    # Confirmamos qual quarto vai usar
+    room_id: str    # Confirmamos qual quarto vai usar
 
 class CheckoutPaymentRequest(BaseModel):
     payment_method: models.PaymentMethod
 
 class ConsumptionRequest(BaseModel):
-    room_id: int
+    room_id: str
     product_id: int
     quantity: int
 
@@ -187,10 +203,11 @@ class ConsumptionResponse(BaseModel):
 
 class BookingResponse(BaseModel):
     id: int
-    room_id: Optional[int] = None
+    room_id: Optional[str] = None
     room_number: Optional[str] = None
     guest_id: int
     guest_name: str
+    guest_age: Optional[int] = None
     mode: models.BookingMode
     daily_rate: float
     status: models.BookingStatus
@@ -209,7 +226,7 @@ class BookingResponse(BaseModel):
  
 class BookingPublicCreate(BaseModel):
     guest: GuestCreate
-    room_id: Optional[int] = None
+    room_id: Optional[str] = None
     check_in_date: datetime
     check_out_date: datetime
     check_in_time: Optional[str] = "14:00"
@@ -222,7 +239,7 @@ class BookingPublicCreate(BaseModel):
  
 class RescheduleRequest(BaseModel):
     booking_id: int
-    room_id: Optional[int] = None
+    room_id: Optional[str] = None
     check_in_date: datetime
     check_out_date: datetime
 # --- FINANCEIRO ---

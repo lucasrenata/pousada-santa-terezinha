@@ -27,7 +27,7 @@ import { cn } from '@/lib/utils';
 // Schema de validação Zod
 const reservationSchema = z.object({
   guest_id: z.number().min(1, 'Selecione um hóspede'),
-  room_id: z.number().min(1, 'Selecione um quarto'),
+  room_id: z.string().min(1, 'Selecione um quarto'),
   check_in_date: z.date({ required_error: 'Data de check-in é obrigatória' }),
   check_out_date: z.date({ required_error: 'Data de check-out é obrigatória' }),
   check_in_time: z.string().default('14:00'),
@@ -52,7 +52,7 @@ type ReservationFormData = z.infer<typeof reservationSchema>;
 
 interface ReservationFormProps {
   reservation?: Reservation | null;
-  initialRoomId?: number;
+  initialRoomId?: string;
   onSuccess: () => void;
   onCancel: () => void;
 }
@@ -60,6 +60,7 @@ interface ReservationFormProps {
 export function ReservationForm({ reservation, initialRoomId, onSuccess, onCancel }: ReservationFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);
+  const [pricingModel, setPricingModel] = useState<'per_person' | 'per_room'>('per_person');
   const [showCustomerForm, setShowCustomerForm] = useState(false);
   
   const { createReservation, updateReservation } = useReservations();
@@ -75,7 +76,7 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
     resolver: zodResolver(reservationSchema),
     defaultValues: {
       guest_id: reservation?.id ? 0 : 0, // Será setado no useEffect
-      room_id: initialRoomId || 0, 
+      room_id: initialRoomId || "", 
       check_in_date: reservation?.check_in_date ? new Date(reservation.check_in_date) : new Date(),
       check_out_date: reservation?.check_out_date ? new Date(reservation.check_out_date) : new Date(new Date().setDate(new Date().getDate() + 1)),
       check_in_time: reservation?.check_in_time || '14:00',
@@ -99,17 +100,48 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
   // Cálculo automático do Total Presumido (Visual apenas no form)
   const watchedValues = form.watch(['check_in_date', 'check_out_date', 'daily_rate', 'total_guests']);
   const totalPresumed = useMemo(() => {
-    const [start, end, rate] = watchedValues;
+    const [start, end, rate, guests] = watchedValues;
     if (!start || !end || !rate) return 0;
     const days = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
+    
+    if (pricingModel === 'per_person') {
+      return days * rate * (guests || 1);
+    }
     return days * rate;
-  }, [watchedValues]);
+  }, [watchedValues, pricingModel]);
 
-  // --- BUSCA DE DISPONIBILIDADE EM TEMPO REAL ---
+  // --- BUSCA DE DISPONIBILIDADE E CONFIGS EM TEMPO REAL ---
   const checkInDate = form.watch('check_in_date');
   const checkOutDate = form.watch('check_out_date');
   const checkInTime = form.watch('check_in_time');
   const checkOutTime = form.watch('check_out_time');
+  const companions = form.watch('companions');
+  const currentMode = form.watch('mode');
+
+  // Busca o modelo de precificação ativo
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const response = await api.get('/settings/');
+        const model = response.data.find((s: any) => s.key === 'pousada_pricing_model');
+        if (model) setPricingModel(model.value as 'per_person' | 'per_room');
+      } catch (err) {
+        console.error("Erro ao carregar modelo de preços", err);
+      }
+    };
+    fetchSettings();
+  }, []);
+
+  // Mantém total_guests sincronizado com acompanhantes no modo normal
+  useEffect(() => {
+    if (currentMode === 'normal') {
+      const currentTotal = form.getValues('total_guests');
+      const expectedTotal = 1 + (companions?.length || 0);
+      if (currentTotal !== expectedTotal) {
+        form.setValue('total_guests', expectedTotal);
+      }
+    }
+  }, [companions, currentMode, form]);
 
   useEffect(() => {
     const fetchAvailability = async () => {
@@ -129,16 +161,17 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
         const response = await api.get('/bookings/availability', {
           params: {
             start: start.toISOString(),
-            end: end.toISOString()
+            end: end.toISOString(),
+            exclude_booking_id: reservation?.id || undefined
           }
         });
 
         const available = response.data;
         setAvailableRooms(available);
 
-        // Verifica se o quarto pré-selecionado (vido da URL ou Edit) está disponível
+        // Verifica se o quarto pré-selecionado (vindo da URL ou Edit) está disponível
         const currentRoomId = form.getValues('room_id');
-        if (currentRoomId && currentRoomId !== 0) {
+        if (currentRoomId && currentRoomId !== "") {
           const isRoomAvailable = available.some((r: any) => r.id === currentRoomId);
           setRoomConflict(!isRoomAvailable);
         } else {
@@ -160,7 +193,7 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
     if (reservation) {
       form.reset({
         guest_id: reservation.guest_id || 0,
-        room_id: reservation.room_id || 0,
+        room_id: reservation.room_id || "",
         mode: reservation.mode || 'normal',
         check_in_date: new Date(reservation.check_in_date),
         check_out_date: new Date(reservation.check_out_date),
@@ -337,7 +370,7 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
             <FormField control={form.control} name="room_id" render={({ field }: { field: any }) => (
               <FormItem>
                 <FormLabel className="text-slate-600 font-semibold">Quarto Disponível</FormLabel>
-                 <Select onValueChange={(v: string) => field.onChange(Number(v))} value={field.value ? field.value.toString() : ""}>
+                 <Select onValueChange={field.onChange} value={field.value || ""}>
                   <FormControl>
                     <SelectTrigger className={cn("bg-white border-slate-200 focus:ring-blue-500", roomConflict && "border-red-500 ring-red-200")}>
                       <SelectValue placeholder={isCheckingAvailability ? "Verificando vagas..." : "Selecione o quarto"} />
@@ -349,13 +382,13 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
                       <div className="p-4 text-center text-sm text-slate-400">Nenhum quarto livre para este período.</div>
                     )}
                     {availableRooms.map((r: any) => (
-                      <SelectItem key={r.id} value={r.id.toString()}>
-                        Quarto {r.number} - {r.type} (Cap. {r.max_capacity} pessoas)
+                      <SelectItem key={r.id} value={r.id}>
+                        Quarto {r.id} - {r.type} (Cap. {r.max_capacity} pessoas)
                       </SelectItem>
                     ))}
                     {roomConflict && !availableRooms.find(r => r.id === field.value) && rooms.find((r: any) => r.id === field.value) && (
-                       <SelectItem value={field.value.toString()} disabled className="text-red-500 italic">
-                         Quarto {rooms.find((r: any) => r.id === field.value).number} (OCUPADO NO PERÍODO)
+                       <SelectItem value={field.value} disabled className="text-red-500 italic">
+                         Quarto {rooms.find((r: any) => r.id === field.value).id} (OCUPADO NO PERÍODO)
                        </SelectItem>
                     )}
                   </SelectContent>

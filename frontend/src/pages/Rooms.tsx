@@ -3,13 +3,15 @@ import api from '../services/api';
 import type { AxiosError } from 'axios';
 import { BedDouble, X, CheckCircle, Plus, ShoppingCart, Trash2, Edit } from 'lucide-react';
 import RoomModal from '../components/RoomModal';
+import { ReservationForm } from '../components/ReservationForm';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import type { Reservation } from '../hooks/useReservations';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 type RoomStatus = 'disponivel' | 'ocupado' | 'limpeza' | 'manutencao';
 
 interface Room {
-  id: number;
-  number: string;
+  id: string; // O ID agora é o número do quarto
   type: string;
   price_per_night: number;
   status: RoomStatus;
@@ -23,6 +25,7 @@ interface Product {
   name: string;
   price: number;
   stock_quantity: number;
+  barcode?: string | null;
 }
 
 export default function Rooms() {
@@ -34,7 +37,7 @@ export default function Rooms() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingRoom, setEditingRoom] = useState<Room | null>(null);
   const [detailsRoom, setDetailsRoom] = useState<Room | null>(null);
-  const [selectedRoomForCons, setSelectedRoomForCons] = useState<number | null>(null);
+  const [selectedRoomForCons, setSelectedRoomForCons] = useState<string | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
   const [quantity, setQuantity] = useState<number>(1);
@@ -57,6 +60,10 @@ export default function Rooms() {
   }>>([]);
   const [maintenanceOpen, setMaintenanceOpen] = useState(false);
   const [maintenanceNote, setMaintenanceNote] = useState('');
+  const [barcodeSearch, setBarcodeSearch] = useState('');
+  const [isResModalOpen, setIsResModalOpen] = useState(false);
+  const [editingReservation, setEditingReservation] = useState<Reservation | null>(null);
+  const [currentConsumptions, setCurrentConsumptions] = useState<any[]>([]);
 
   async function loadRooms() {
     try {
@@ -79,8 +86,7 @@ export default function Rooms() {
     const params = new URLSearchParams(location.search);
     const rid = params.get('roomId');
     if (rid && rooms.length > 0) {
-      const id = parseInt(rid);
-      const r = rooms.find((x) => x.id === id);
+      const r = rooms.find((x) => x.id === rid);
       if (r) setDetailsRoom(r);
     }
   }, [location.search, rooms]);
@@ -121,7 +127,7 @@ export default function Rooms() {
     fetchActive();
   }, [detailsRoom]);
 
-  async function handleClean(roomId: number) {
+  async function handleClean(roomId: string) {
     try {
       await api.post(`/rooms/${roomId}/clean`);
       await loadRooms();
@@ -131,7 +137,7 @@ export default function Rooms() {
     }
   }
 
-  async function handleCheckout(roomId: number) {
+  async function handleCheckout(roomId: string) {
     try {
       const summary = await api.get(`/bookings/summary/${roomId}`);
       setCheckoutInfo({
@@ -149,7 +155,7 @@ export default function Rooms() {
     }
   }
 
-  async function handleDelete(roomId: number) {
+  async function handleDelete(roomId: string) {
     try {
       if (!confirm('Excluir este quarto? Esta ação não pode ser desfeita.')) return;
       await api.delete(`/rooms/${roomId}`);
@@ -162,15 +168,37 @@ export default function Rooms() {
     }
   }
 
-  async function openConsumption(roomId: number) {
+  async function loadConsumptions(roomId: string) {
+    try {
+      const res = await api.get(`/bookings/summary/${roomId}`);
+      setCurrentConsumptions(res.data.consumptions || []);
+    } catch {
+      setCurrentConsumptions([]);
+    }
+  }
+
+  async function openConsumption(roomId: string) {
     try {
       setSelectedRoomForCons(roomId);
+      await loadConsumptions(roomId);
       const res = await api.get('/products/', { params: { only_active: true } });
       setProducts(res.data);
       setSelectedProductId(null);
       setQuantity(1);
+      setBarcodeSearch('');
     } catch {
       alert('Falha ao carregar produtos');
+    }
+  }
+
+  function handleBarcodeChange(val: string) {
+    setBarcodeSearch(val);
+    const found = products.find(p => p.barcode === val);
+    if (found) {
+      setSelectedProductId(found.id);
+      setBarcodeSearch('');
+      // foca quantidade ou dá um aviso visual? 
+      // por enquanto só seleciona para manter simples e robusto
     }
   }
 
@@ -185,8 +213,11 @@ export default function Rooms() {
         product_id: selectedProductId,
         quantity,
       });
-      alert('Consumo registrado');
-      setSelectedRoomForCons(null);
+      // alert('Consumo registrado');
+      await loadConsumptions(selectedRoomForCons);
+      setSelectedProductId(null);
+      setQuantity(1);
+      setBarcodeSearch('');
       await loadRooms();
     } catch (err) {
       const axErr = err as AxiosError<{ detail?: string }>;
@@ -227,7 +258,7 @@ export default function Rooms() {
 
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [checkoutInfo, setCheckoutInfo] = useState<{
-    roomId: number;
+    roomId: string;
     bookingId: number;
     dailyTotal: number;
     consumptionTotal: number;
@@ -271,7 +302,7 @@ export default function Rooms() {
     }
   }
 
-  async function submitMaintenance(roomId: number) {
+  async function submitMaintenance(roomId: string) {
     try {
       await api.post(`/rooms/${roomId}/maintenance`, null, { params: { note: maintenanceNote } });
       alert('Quarto marcado como manutenção');
@@ -285,10 +316,29 @@ export default function Rooms() {
     }
   }
 
-  async function releaseMaintenance(roomId: number) {
+  async function releaseMaintenance(roomId: string) {
     const ok = confirm('Tem certeza que deseja liberar este quarto?');
     if (!ok) return;
     await handleClean(roomId);
+  }
+
+  async function handleEditClick() {
+    if (!detailsRoom) return;
+    
+    // Se estiver ocupado ou com reserva confirmada, tentamos editar a reserva
+    if (activeBooking) {
+      try {
+        const res = await api.get(`/bookings/${activeBooking.id}`);
+        setEditingReservation(res.data);
+        setIsResModalOpen(true);
+      } catch {
+        alert('Falha ao carregar detalhes da reserva');
+      }
+    } else {
+      // Caso contrário, edita o quarto
+      setEditingRoom(detailsRoom);
+      setIsModalOpen(true);
+    }
   }
 
   return (
@@ -386,7 +436,7 @@ export default function Rooms() {
       )}
 
       <div style={{ maxHeight: '70vh', overflowY: 'auto' }} className="grid grid-cols-1 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-2">
-        {rooms.filter(r => (search ? String(r.number).includes(search) : true)).map((room) => (
+        {rooms.filter(r => (search ? String(r.id).includes(search) : true)).map((room) => (
           <div
             key={room.id}
             onClick={() => setDetailsRoom(room)}
@@ -399,7 +449,7 @@ export default function Rooms() {
                 </div>
                 <div>
                   <p className="text-[11px] text-slate-500">Quarto</p>
-                  <h3 className="text-sm font-semibold text-slate-800">{room.number}</h3>
+                  <h3 className="text-sm font-semibold text-slate-800">{room.id}</h3>
                 </div>
               </div>
               <div className="flex items-center gap-2">{getStatusBadge(room.status)}</div>
@@ -440,7 +490,7 @@ export default function Rooms() {
                 </div>
                 <div>
                   <p className="text-sm text-slate-500">Quarto</p>
-                  <h3 className="text-xl font-bold text-slate-800">{detailsRoom.number}</h3>
+                  <h3 className="text-xl font-bold text-slate-800">{detailsRoom.id}</h3>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -465,14 +515,11 @@ export default function Rooms() {
                   Manutenção
                 </button>
                 <button
-                  onClick={() => {
-                    setEditingRoom(detailsRoom);
-                    setIsModalOpen(true);
-                  }}
-                  className="px-3 py-2 rounded-lg bg-indigo-600 text-white"
-                  title="Editar dados do quarto"
+                  onClick={handleEditClick}
+                  className="px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition"
+                  title={activeBooking ? "Editar reserva do hóspede" : "Editar dados do quarto"}
                 >
-                  <Edit size={16} />
+                  <Edit size={18} />
                 </button>
                 <button
                   onClick={() => handleDelete(detailsRoom.id)}
@@ -653,46 +700,122 @@ export default function Rooms() {
            
 
             {selectedRoomForCons === detailsRoom.id && (
-              <div className="border-t pt-3">
-                <p className="text-sm font-medium text-slate-700 mb-2">Registrar consumo</p>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <select
-                    className="border rounded-lg px-3 py-2 w-full sm:w-auto"
-                    value={selectedProductId ?? ''}
-                    onChange={(e) => setSelectedProductId(parseInt(e.target.value))}
-                  >
-                    <option value="" disabled>Selecione o produto</option>
-                    {products.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} — R$ {p.price?.toFixed(2)} — Qtd {p.stock_quantity}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="number"
-                    min={1}
-                    className="border rounded-lg px-3 py-2 w-full sm:w-24"
-                    value={quantity}
-                    onChange={(e) => setQuantity(parseInt(e.target.value) || 1)}
-                  />
-                  <button
-                    onClick={submitConsumption}
-                    className="bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-900"
-                  >
-                    Registrar
-                  </button>
-                  <button
-                    onClick={() => setSelectedRoomForCons(null)}
-                    className="bg-slate-100 text-slate-700 px-4 py-2 rounded-lg hover:bg-slate-200 border"
-                  >
-                    Cancelar
-                  </button>
+              <div className="border-t pt-4 mt-2">
+                <div className="flex items-center justify-between mb-3 ">
+                  <p className="text-sm font-bold text-slate-800 uppercase tracking-wider">Consumos Atuais</p>
+                  <span className="text-[10px] text-slate-400 font-bold bg-slate-100 px-2 py-0.5 rounded">Check-in Ativo</span>
+                </div>
+
+                {/* Lista de Consumos Existentes */}
+                {currentConsumptions.length > 0 ? (
+                  <div className="mb-4 max-h-40 overflow-y-auto border border-slate-100 rounded-xl bg-white shadow-inner">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-slate-50 border-b text-slate-500 font-bold uppercase text-[9px]">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Produto</th>
+                          <th className="px-3 py-2 text-center">Qtd</th>
+                          <th className="px-3 py-2 text-right">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {currentConsumptions.map((c, i) => (
+                          <tr key={i} className="hover:bg-blue-50/30 transition-colors">
+                            <td className="px-3 py-2 font-medium text-slate-700">{c.product_name}</td>
+                            <td className="px-3 py-2 text-center text-slate-600 font-bold">{c.quantity}</td>
+                            <td className="px-3 py-2 text-right text-blue-600 font-bold">R$ {c.total.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="mb-4 p-4 border border-dashed rounded-xl text-center text-slate-400 text-xs italic">
+                    Nenhum consumo registrado ainda para este quarto.
+                  </div>
+                )}
+
+                <p className="text-sm font-bold text-slate-800 mb-3 uppercase tracking-wider">Novo Lançamento</p>
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                  <div className="sm:col-span-3">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Cód. Barras</label>
+                    <input
+                      placeholder="Escanear..."
+                      className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                      value={barcodeSearch}
+                      onChange={(e) => handleBarcodeChange(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+                  
+                  <div className="sm:col-span-5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Produto</label>
+                    <select
+                      className="border rounded-lg px-3 py-2 w-full bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                      value={selectedProductId ?? ''}
+                      onChange={(e) => setSelectedProductId(parseInt(e.target.value))}
+                    >
+                      <option value="" disabled>Selecione o produto</option>
+                      {products.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} — R$ {p.price?.toFixed(2)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Qtd</label>
+                    <input
+                      type="number"
+                      min={1}
+                      className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                      value={quantity}
+                      onChange={(e) => setQuantity(parseInt(e.target.value) || 1)}
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2 flex items-end gap-2">
+                    <button
+                      onClick={submitConsumption}
+                      className="flex-1 bg-green-600 text-white font-bold h-[38px] rounded-lg hover:bg-green-700 transition shadow-sm"
+                    >
+                      Lançar
+                    </button>
+                    <button
+                      onClick={() => setSelectedRoomForCons(null)}
+                      className="flex-1 bg-white text-slate-400 font-bold h-[38px] rounded-lg border hover:bg-slate-50 transition"
+                    >
+                      <X size={16} className="mx-auto" />
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
           </div>
         </div>
       )}
+
+      {/* Modal de Edição de Reserva */}
+      <Dialog open={isResModalOpen} onOpenChange={setIsResModalOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-slate-50 sm:rounded-3xl p-6 sm:p-10 shadow-2xl border-none">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-black text-slate-800">Editar Reserva</DialogTitle>
+          </DialogHeader>
+          <ReservationForm
+            reservation={editingReservation}
+            onSuccess={() => {
+              setIsResModalOpen(false);
+              loadRooms();
+              // Se tiver um detailsRoom aberto, talvez queira dar um "refresh" nele
+              if (detailsRoom) {
+                const updated = rooms.find(r => r.id === detailsRoom.id);
+                if (updated) setDetailsRoom(updated);
+              }
+            }}
+            onCancel={() => setIsResModalOpen(false)}
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

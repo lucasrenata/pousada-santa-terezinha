@@ -4,8 +4,7 @@ import api from '../services/api';
 type BookingMode = 'normal' | 'caravana';
 
 interface Room {
-  id: number;
-  number: string;
+  id: string; // O ID agora é o número do quarto
   type: string;
   price_per_night: number;
   max_capacity: number;
@@ -18,7 +17,7 @@ interface Companion {
 
 export default function PublicBooking() {
   const [rooms, setRooms] = useState<Room[]>([]);
-  const [roomId, setRoomId] = useState<number | null>(null);
+  const [roomId, setRoomId] = useState<string | null>(null);
   const [checkInDate, setCheckInDate] = useState<string>('');
   const [checkOutDate, setCheckOutDate] = useState<string>('');
   const [dailyRate, setDailyRate] = useState<string>('');
@@ -384,7 +383,7 @@ export default function PublicBooking() {
                 className="w-full border rounded-lg px-3 py-2"
                 value={roomId ?? ''}
                 onChange={(e) => {
-                  const val = e.target.value ? parseInt(e.target.value) : null;
+                  const val = e.target.value || null;
                   setRoomId(val);
                   if (val) {
                     const r = rooms.find((x) => x.id === val);
@@ -395,7 +394,7 @@ export default function PublicBooking() {
                 <option value="">Selecione um quarto</option>
                 {rooms.map((r) => (
                   <option key={r.id} value={r.id}>
-                    {r.number} - {r.type} (capacidade {r.max_capacity})
+                    {r.id} - {r.type} (capacidade {r.max_capacity})
                   </option>
                 ))}
               </select>

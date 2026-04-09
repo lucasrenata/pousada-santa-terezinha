@@ -15,6 +15,7 @@ export interface Customer {
   address_neighborhood?: string;
   address_city?: string;
   address_state?: string;
+  age?: number;
 }
 
 export function useCustomers() {

@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Search, User, MapPin, Phone, Mail, FileText, Calendar, Briefcase, Edit, UserPlus } from 'lucide-react';
-import { useCustomers, Customer } from '@/hooks/useCustomers';
+import { useCustomers, type Customer } from '@/hooks/useCustomers';
 import { CustomerForm } from '@/components/CustomerForm';
 
 interface CustomerSearchModalProps {
@@ -130,7 +130,14 @@ export function CustomerSearchModal({ open, onOpenChange }: CustomerSearchModalP
                           <User size={20} />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <h4 className="font-bold text-slate-800 truncate">{customer.name}</h4>
+                          <h4 className="font-bold text-slate-800 truncate">
+                            {customer.name}
+                            {customer.age !== undefined && customer.age !== null && (
+                              <span className="ml-2 text-xs font-normal text-slate-500">
+                                ({customer.age} anos)
+                              </span>
+                            )}
+                          </h4>
                           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 font-medium">
                             <span className="flex items-center gap-1"><Mail size={12} /> {customer.email || '-'}</span>
                             <span className="flex items-center gap-1"><Phone size={12} /> {customer.phone || '-'}</span>
@@ -178,7 +185,14 @@ export function CustomerSearchModal({ open, onOpenChange }: CustomerSearchModalP
                           {selectedCustomer.name.substring(0, 1).toUpperCase()}
                         </div>
                         <div>
-                          <h2 className="text-2xl font-black text-slate-900 leading-tight">{selectedCustomer.name}</h2>
+                          <h2 className="text-2xl font-black text-slate-900 leading-tight">
+                            {selectedCustomer.name}
+                            {selectedCustomer.age !== undefined && selectedCustomer.age !== null && (
+                              <span className="ml-2 text-lg font-normal text-slate-400">
+                                ({selectedCustomer.age} anos)
+                              </span>
+                            )}
+                          </h2>
                           <p className="text-sm font-bold text-blue-600">Hóspede Registrado</p>
                         </div>
                       </div>

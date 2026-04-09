@@ -35,6 +35,20 @@ def seed_data():
             if not exists:
                 print(f"Criando configuração: {s['key']}...")
                 db.add(models.SystemSetting(**s))
+
+        # 3. Create Default Rooms
+        rooms = [
+            {"id": "101", "type": "Standard", "price_per_night": 150.0, "max_capacity": 2},
+            {"id": "102", "type": "Standard", "price_per_night": 150.0, "max_capacity": 2},
+            {"id": "201", "type": "Luxo", "price_per_night": 250.0, "max_capacity": 3},
+            {"id": "202", "type": "Luxo", "price_per_night": 250.0, "max_capacity": 3},
+            {"id": "400", "type": "Master VIP", "price_per_night": 450.0, "max_capacity": 4},
+        ]
+        for r in rooms:
+            exists = db.query(models.Room).filter(models.Room.id == r["id"]).first()
+            if not exists:
+                print(f"Criando quarto: {r['id']}...")
+                db.add(models.Room(**r))
         
         db.commit()
         print("Seed finalizado com sucesso! 🚀")

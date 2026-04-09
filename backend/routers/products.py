@@ -135,8 +135,50 @@ def stock_receipt(
                 key = headers[j] if j < len(headers) else f"col{j+1}"
                 d[key] = cell.value if cell.value is not None else ""
             rows.append(d)
+    elif filename.endswith(".xml"):
+        import xml.etree.ElementTree as ET
+        content = file.file.read()
+        try:
+            root = ET.fromstring(content)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Erro ao processar XML: {str(e)}")
+
+        # O XML de NFe costuma ter namespaces. Vamos tentar buscar de forma flexível.
+        ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
+        
+        # Se não informou metadados, tentamos extrair do XML
+        if not supplier:
+            emit = root.find(".//nfe:emit/nfe:xNome", ns)
+            if emit is not None: supplier = emit.text
+        if not invoice_number:
+            nNF = root.find(".//nfe:ide/nfe:nNF", ns)
+            if nNF is not None: invoice_number = nNF.text
+        if not invoice_date:
+            dhEmi = root.find(".//nfe:ide/nfe:dhEmi", ns)
+            if dhEmi is not None: 
+                invoice_date = dhEmi.text[:10]
+            else:
+                # Versão 1.10 usa dEmi
+                dEmi = root.find(".//nfe:ide/nfe:dEmi", ns)
+                if dEmi is not None: invoice_date = dEmi.text[:10]
+
+        # Busca itens
+        for det in root.findall(".//nfe:det", ns):
+            prod_tag = det.find("nfe:prod", ns)
+            if prod_tag is not None:
+                barcode = prod_tag.find("nfe:cEAN", ns)
+                name = prod_tag.find("nfe:xProd", ns)
+                qty = prod_tag.find("nfe:qCom", ns)
+                price = prod_tag.find("nfe:vUnCom", ns)
+                
+                rows.append({
+                    "barcode": barcode.text if barcode is not None and barcode.text != "SEM GTIN" else "",
+                    "name": name.text if name is not None else "",
+                    "quantity": qty.text if qty is not None else "0",
+                    "unit_price": price.text if price is not None else ""
+                })
     else:
-        raise HTTPException(status_code=400, detail="Formato inválido. Envie CSV ou XLSX.")
+        raise HTTPException(status_code=400, detail="Formato inválido. Envie CSV, XLSX ou XML.")
     
     updated = 0
     processed = 0
@@ -157,7 +199,11 @@ def stock_receipt(
             name = str(row.get("name") or "").strip()
             qty_str = str(row.get("quantity") or "0").strip()
             price_str = str(row.get("unit_price") or "").strip()
-            quantity = int(qty_str) if qty_str else 0
+            # Converte string (que pode ser decimal) para float e depois int
+            try:
+                quantity = int(float(qty_str)) if qty_str else 0
+            except:
+                quantity = 0
             if quantity <= 0:
                 continue
             prod = None
@@ -166,8 +212,26 @@ def stock_receipt(
             if not prod and name:
                 prod = db.query(models.Product).filter(models.Product.name.ilike(name)).first()
             if not prod:
-                errors.append({"line": idx, "error": "Produto não encontrado", "barcode": barcode, "name": name})
-                continue
+                # Se não encontrou, CRIA o produto automaticamente
+                unit_price = None
+                if price_str:
+                    try: unit_price = float(price_str)
+                    except: unit_price = 0
+                
+                # Preço de venda = Compra + 20%
+                sale_price = (unit_price * 1.2) if unit_price else 0
+                
+                prod = models.Product(
+                    name=name or "Novo Produto (NF)",
+                    barcode=barcode or None,
+                    price=sale_price,
+                    category="Importado via NF",
+                    stock_quantity=0, # Será somado abaixo
+                    min_stock=5
+                )
+                db.add(prod)
+                db.flush() # Obtém ID
+            
             prod.stock_quantity = (prod.stock_quantity or 0) + quantity
             unit_price = None
             if price_str:
@@ -320,7 +384,19 @@ def stock_ocr(
                     best_id = max(score, key=score.get)
                     found = db.query(models.Product).filter(models.Product.id == best_id).first()
         if not found:
-            continue
+            # Se não encontrou via OCR, cria o novo produto
+            p_unit = it.get("unit_price") or 0
+            sale_p = p_unit * 1.2
+            found = models.Product(
+                name=it["name"] or "Novo Produto (OCR)",
+                price=sale_p,
+                category="Importado via OCR",
+                stock_quantity=0,
+                min_stock=5
+            )
+            db.add(found)
+            db.flush()
+        
         found.stock_quantity = (found.stock_quantity or 0) + int(it["quantity"])
         unit_price = it.get("unit_price")
         if unit_price:
@@ -331,3 +407,22 @@ def stock_ocr(
     db.refresh(entry)
     entry.items = db.query(models.StockEntryItem).filter(models.StockEntryItem.entry_id == entry.id).all()
     return entry
+
+@router.delete("/stock/entries/{entry_id}")
+def delete_stock_entry(entry_id: int, db: Session = Depends(get_db)):
+    """Exclui uma entrada de estoque e reverte as quantidades dos produtos."""
+    entry = db.query(models.StockEntry).filter(models.StockEntry.id == entry_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entrada não encontrada")
+    
+    # Busca itens para reverter o estoque
+    items = db.query(models.StockEntryItem).filter(models.StockEntryItem.entry_id == entry_id).all()
+    for it in items:
+        prod = db.query(models.Product).filter(models.Product.id == it.product_id).first()
+        if prod:
+            prod.stock_quantity = (prod.stock_quantity or 0) - it.quantity
+            # Permitimos estoque negativo se for o caso
+            
+    db.delete(entry)
+    db.commit()
+    return {"message": "Entrada de estoque removida e quantidades revertidas com sucesso"}
