@@ -36,6 +36,9 @@ services:
     environment:
       # O backend usa esta URL para conectar no Postgres do compose
       DATABASE_URL: postgresql://admin:admin_password_123@db:5432/pousada_db
+      # URLs Públicas para Webhooks e Autenticações
+      BASE_URL: https://hotelarIA.parceriacomia.com.br/api
+      NOTIFICATION_URL: https://hotelarIA.parceriacomia.com.br/api/payments/webhook
     ports:
       - "8003:8000"
     volumes:
@@ -51,6 +54,7 @@ services:
     restart: always
     environment:
       # Usado no build para apontar para a API via proxy reverso do Nginx
+      # Usar path relativo '/api' garante que sempre respeite o domínio oficial (https://hotelarIA.parceriacomia.com.br)
       VITE_API_URL: /api
     ports:
       - "5174:80"
