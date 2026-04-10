@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
 from sqlalchemy.orm import Session
 from database import get_db
 from .auth import get_current_staff, get_current_admin
 from pydantic import BaseModel
 import os
+from openai import OpenAI
 from typing import List
 
 import models
@@ -74,3 +75,34 @@ async def chat_admin(request: ChatRequest, db: Session = Depends(get_db), curren
     save_message(request.session_id, "assistant", result["response"], db)
     
     return result
+
+@router.post("/transcribe")
+async def transcribe_audio(audio: UploadFile = File(...), current_admin = Depends(get_current_admin)):
+    """Transcreve áudio para texto usando OpenAI Whisper."""
+    try:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="Chave da OpenAI não configurada.")
+
+        # Criamos o cliente OpenAI
+        client = OpenAI(api_key=api_key)
+
+        # Lemos o conteúdo do áudio enviado
+        audio_content = await audio.read()
+        
+        # O Whisper espera um arquivo, então usamos um truque de buffer com nome de arquivo
+        from io import BytesIO
+        audio_file = BytesIO(audio_content)
+        audio_file.name = "audio.wav" # O nome ajuda a OpenAI a identificar o formato, mas webm/ogg também funcionam
+
+        transcript = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file,
+            language="pt" # Forçamos português para melhor precisão
+        )
+
+        return {"text": transcript.text}
+
+    except Exception as e:
+        print(f"Erro na transcrição: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao processar áudio: {str(e)}")

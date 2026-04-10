@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Search, Plus, BedDouble, Wrench } from 'lucide-react';
 import api from '../services/api';
 
 type Role = 'admin' | 'recepcionista' | 'camareira' | 'manutencao' | 'faxina';
 type RoomStatus = 'disponivel' | 'ocupado' | 'limpeza' | 'manutencao';
 
 interface Room {
-  id: number;
-  number: string;
+  id: string;
   type: string;
   price_per_night: number;
   status: RoomStatus;
@@ -21,7 +20,7 @@ export default function ServicePanel() {
   const navigate = useNavigate();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [loading, setLoading] = useState(true);
-  const [noteRoomId, setNoteRoomId] = useState<number | null>(null);
+  const [noteRoomId, setNoteRoomId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState('');
   const [search, setSearch] = useState('');
 
@@ -43,7 +42,7 @@ export default function ServicePanel() {
     loadRooms();
   }, []);
 
-  async function markClean(roomId: number) {
+  async function markClean(roomId: string) {
     try {
       await api.post(`/rooms/${roomId}/clean`);
       await loadRooms();
@@ -73,7 +72,7 @@ export default function ServicePanel() {
   const filteredRooms = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return rooms;
-    return rooms.filter((r) => (r.number.toLowerCase().includes(term) || r.type.toLowerCase().includes(term)));
+    return rooms.filter((r) => (r.id.toLowerCase().includes(term) || r.type.toLowerCase().includes(term)));
   }, [rooms, search]);
   const cleaningRooms = useMemo(() => filteredRooms.filter(r => r.status === 'limpeza'), [filteredRooms]);
   const maintenanceRooms = useMemo(() => filteredRooms.filter(r => r.status === 'manutencao'), [filteredRooms]);
@@ -87,149 +86,195 @@ export default function ServicePanel() {
   }
 
   return (
-    <div>
-      <div className="mb-6">
-        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl p-6 text-white shadow-md flex justify-between items-start">
-          <div>
-            <h2 className="text-2xl font-bold">Painel de Serviços</h2>
-            <p className="opacity-90">Camareira e Manutenção</p>
-            <div className="mt-3 flex gap-2">
-              <span className="px-2 py-1 text-xs rounded-full bg-white/20 uppercase tracking-tighter">Role: {role || 'Não logado'}</span>
-              <span className={`px-2 py-1 text-xs rounded-full ${canMaintain ? 'bg-green-400/30' : 'bg-red-400/30'}`}>
-                Permissão: {canMaintain ? 'SIM' : 'NÃO'}
-              </span>
-            </div>
+    <div className="max-w-7xl mx-auto">
+      {/* Header Estilo Dashboard */}
+      <div className="flex flex-col md:flex-row justify-between items-end md:items-center gap-4 mb-8">
+        <div>
+          <h2 className="text-3xl font-bold text-slate-800 tracking-tight">Painel de Serviços</h2>
+          <p className="text-slate-500">Gestão operacional de limpeza e manutenção.</p>
+        </div>
+        
+        <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+          <div className="flex items-center bg-white px-4 py-2.5 rounded-2xl shadow-sm border border-slate-200 flex-1 md:w-80">
+            <Search size={18} className="text-slate-400 mr-2" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Filtrar quarto ou tipo..."
+              className="outline-none w-full text-slate-700 bg-transparent font-medium"
+            />
           </div>
-          <button 
-            onClick={() => navigate('/dashboard')}
-            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 px-4 py-2 rounded-xl transition-all border border-white/10 font-medium text-sm"
-          >
-            <ArrowLeft size={18} />
-            Voltar
-          </button>
+          <div className="px-4 py-2 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+            <span className="text-xs font-black text-indigo-700 uppercase tracking-tighter">
+              Acesso: {role}
+            </span>
+          </div>
         </div>
       </div>
 
-      <div className="mb-4">
-        <div className="flex items-center bg-white px-3 py-2 rounded-lg shadow-sm border border-slate-200 w-full max-w-md">
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Filtrar por número ou tipo (ex.: 101, casal, luxo)"
-            className="outline-none w-full text-slate-700 bg-transparent"
-          />
-          {search && (
-            <button onClick={() => setSearch('')} className="ml-2 text-slate-500">Limpar</button>
-          )}
+      {loading ? (
+        <div className="bg-white rounded-3xl shadow-sm border border-slate-200 p-16 text-center">
+            <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+            <p className="text-slate-400 font-medium italic">Sincronizando status dos quartos...</p>
         </div>
-      </div>
-
-      {loading && <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 text-center">Carregando...</div>}
-
-      {!loading && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white rounded-2xl shadow-sm border border-yellow-300 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-yellow-800">Quartos para Limpeza</h3>
-              <span className="text-sm text-yellow-700 bg-yellow-50 px-2 py-1 rounded-lg border border-yellow-200">Total: {cleaningRooms.length}</span>
+      ) : (
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+          
+          {/* COLUNA: LIMPEZA */}
+          <div className="space-y-6">
+            <div className="flex items-center justify-between px-2">
+                <div className="flex items-center gap-3">
+                    <div className="bg-yellow-100 text-yellow-700 p-2 rounded-xl">
+                        <BedDouble size={20} />
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-800">Aguardando Limpeza</h3>
+                </div>
+                <span className="bg-white px-3 py-1 rounded-full text-xs font-bold border border-yellow-200 text-yellow-700 shadow-sm">
+                    {cleaningRooms.length} unidades
+                </span>
             </div>
-            <div className="grid sm:grid-cols-2 gap-4">
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {cleaningRooms.map((r) => (
-                <div key={r.id} className="border border-yellow-200 rounded-xl p-4 bg-yellow-50">
-                  <div className="flex items-center justify-between">
+                <div key={r.id} className="bg-white rounded-3xl shadow-sm border border-slate-200 p-5 group hover:shadow-md transition-all duration-300">
+                  <div className="flex items-start justify-between mb-4">
                     <div>
-                      <p className="text-xs font-medium text-yellow-700">Quarto</p>
-                      <p className="text-xl font-bold text-yellow-900">{r.number}</p>
+                      <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Unidade</span>
+                      <p className="text-3xl font-black text-slate-800">#{r.id}</p>
                     </div>
                     {statusBadge(r.status)}
                   </div>
-                  <p className="text-sm text-yellow-800">Tipo: {r.type} • Cap: {r.max_capacity}</p>
-                  <div className="mt-3">
-                    <button
-                      onClick={() => markClean(r.id)}
-                      disabled={role !== 'camareira' && role !== 'faxina' && role !== 'admin'}
-                      className={`px-3 py-2 rounded-lg text-sm font-medium border ${
-                        (role === 'camareira' || role === 'faxina' || role === 'admin') ? 'bg-blue-600 text-white border-blue-700 hover:bg-blue-700' : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
-                      }`}
-                      title={role === 'camareira' ? 'Liberar após limpeza' : 'Acesso restrito à Camareira'}
-                    >
-                      Liberar
-                    </button>
+                  
+                  <div className="bg-slate-50 rounded-2xl p-3 mb-4">
+                    <p className="text-xs font-medium text-slate-500">Categoria: <span className="text-slate-800">{r.type}</span></p>
                   </div>
+
+                  <button
+                    onClick={() => markClean(r.id)}
+                    disabled={role !== 'camareira' && role !== 'faxina' && role !== 'admin'}
+                    className={`w-full py-3 rounded-2xl text-sm font-bold transition-all shadow-sm ${
+                      (role === 'camareira' || role === 'faxina' || role === 'admin') 
+                        ? 'bg-yellow-500 text-white hover:bg-yellow-600 active:scale-95' 
+                        : 'bg-slate-50 text-slate-400 cursor-not-allowed'
+                    }`}
+                  >
+                    Concluir Limpeza
+                  </button>
                 </div>
               ))}
-              {cleaningRooms.length === 0 && <p className="text-yellow-700">Nenhum quarto aguardando limpeza</p>}
+              {cleaningRooms.length === 0 && (
+                <div className="col-span-full py-12 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200 text-center">
+                    <p className="text-slate-400 font-medium italic">Tudo limpo por aqui! ✨</p>
+                </div>
+              )}
             </div>
           </div>
 
-          <div className="bg-white rounded-2xl shadow-sm border border-stone-300 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-stone-800">Quartos em Manutenção</h3>
-              <span className="text-sm text-stone-700 bg-stone-50 px-2 py-1 rounded-lg border border-stone-200">Total: {maintenanceRooms.length}</span>
+          {/* COLUNA: MANUTENÇÃO */}
+          <div className="space-y-6">
+            <div className="flex items-center justify-between px-2">
+                <div className="flex items-center gap-3">
+                    <div className="bg-stone-100 text-stone-700 p-2 rounded-xl">
+                        <Wrench size={20} />
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-800">Manutenção Ativa</h3>
+                </div>
+                <span className="bg-white px-3 py-1 rounded-full text-xs font-bold border border-stone-200 text-stone-700 shadow-sm">
+                    {maintenanceRooms.length} unidades
+                </span>
             </div>
-            <div className="grid sm:grid-cols-2 gap-4">
+
+            {/* Listagem Ativa */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {maintenanceRooms.map((r) => (
-                <div key={r.id} className="border border-stone-300 rounded-xl p-4 bg-stone-50">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs font-medium text-stone-700">Quarto</p>
-                      <p className="text-xl font-bold text-stone-900">{r.number}</p>
-                    </div>
+                <div key={r.id} className="bg-white rounded-3xl shadow-sm border border-slate-200 p-5 border-l-8 border-l-stone-400">
+                  <div className="flex items-start justify-between mb-2">
+                    <p className="text-2xl font-black text-slate-800">#{r.id}</p>
                     {statusBadge(r.status)}
                   </div>
-                  <p className="text-sm text-stone-700">Obs: {r.maintenance_note || '—'}</p>
-                  <div className="mt-3 flex gap-2">
-                    <button
-                      onClick={() => markClean(r.id)}
-                      disabled={role !== 'manutencao' && role !== 'admin'}
-                      className={`px-3 py-2 rounded-lg text-sm font-medium border ${
-                        (role === 'manutencao' || role === 'admin') ? 'bg-green-600 text-white border-green-700 hover:bg-green-700' : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
-                      }`}
-                      title={role === 'manutencao' ? 'Tornar disponível' : 'Acesso restrito à Manutenção'}
-                    >
-                      Disponibilizar
-                    </button>
+                  
+                  <div className="bg-stone-50 rounded-2xl p-4 mb-4 min-h-[80px]">
+                    <p className="text-xs font-bold text-stone-500 uppercase mb-1">Motivo/Nota:</p>
+                    <p className="text-sm text-slate-700 font-medium leading-relaxed italic">"{r.maintenance_note || 'Sem observações'}"</p>
                   </div>
+
+                  <button
+                    onClick={() => markClean(r.id)}
+                    disabled={role !== 'manutencao' && role !== 'admin'}
+                    className={`w-full py-3 rounded-2xl text-sm font-bold transition-all ${
+                      (role === 'manutencao' || role === 'admin') 
+                        ? 'bg-stone-800 text-white hover:bg-stone-900 active:scale-95 shadow-lg' 
+                        : 'bg-slate-50 text-slate-400 cursor-not-allowed border border-slate-100'
+                    }`}
+                  >
+                    Liberar Quarto
+                  </button>
                 </div>
               ))}
-              {maintenanceRooms.length === 0 && <p className="text-stone-700">Nenhum quarto em manutenção</p>}
+              {maintenanceRooms.length === 0 && (
+                <div className="col-span-full py-12 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200 text-center">
+                    <p className="text-slate-400 font-medium italic">Sem reparos pendentes. 🙌</p>
+                </div>
+              )}
             </div>
 
-            <hr className="my-6" />
+            {/* Ação de Interdição */}
+            <div className="mt-8 bg-gradient-to-br from-slate-800 to-slate-900 rounded-3xl p-6 text-white shadow-xl relative overflow-hidden">
+                <div className="relative z-10">
+                    <h4 className="text-lg font-bold mb-4 flex items-center gap-2">
+                        <Plus size={20} className="text-yellow-400" />
+                        Nova Interdição Técnica
+                    </h4>
+                    
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Quarto</label>
+                                <select
+                                  className="w-full bg-slate-700/50 border border-slate-600 rounded-2xl px-4 py-3 text-white outline-none focus:ring-2 ring-blue-500 transition-all font-medium"
+                                  value={noteRoomId ?? ''}
+                                  onChange={(e) => setNoteRoomId(e.target.value)}
+                                >
+                                  <option value="" disabled className="bg-slate-900">Selecione o alvo</option>
+                                  {filteredRooms.map((r) => (
+                                    <option key={r.id} value={r.id} className="bg-slate-900">
+                                      {r.id} — {r.type} {r.status === 'ocupado' ? '(OCUPADO)' : ''}
+                                    </option>
+                                  ))}
+                                </select>
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Descrição</label>
+                                <input
+                                  className="w-full bg-slate-700/50 border border-slate-600 rounded-2xl px-4 py-3 text-white outline-none focus:ring-2 ring-blue-500 transition-all placeholder:text-slate-500"
+                                  placeholder="Ex: Ar condicionado vazando"
+                                  value={noteText}
+                                  onChange={(e) => setNoteText(e.target.value)}
+                                />
+                            </div>
+                        </div>
 
-            <div>
-              <h4 className="text-sm font-semibold text-stone-800 mb-2">Colocar quarto em manutenção</h4>
-              <div className="flex gap-2">
-                <select
-                  className="border rounded-lg px-3 py-2 w-40"
-                  value={noteRoomId ?? ''}
-                  onChange={(e) => setNoteRoomId(parseInt(e.target.value))}
-                >
-                  <option value="" disabled>Selecione o quarto</option>
-                  {filteredRooms.filter(r => r.status !== 'ocupado').map((r) => (
-                    <option key={r.id} value={r.id}>{r.number} — {r.type}</option>
-                  ))}
-                </select>
-                <input
-                  className="border rounded-lg px-3 py-2 flex-1"
-                  placeholder="Observação (ex.: torneira com vazamento)"
-                  value={noteText}
-                  onChange={(e) => setNoteText(e.target.value)}
-                />
-                <button
-                  onClick={saveMaintenance}
-                  disabled={!noteRoomId || !noteText.trim()}
-                  className={`px-3 py-2 rounded-lg text-sm font-medium border ${
-                    noteRoomId && noteText.trim()
-                      ? 'bg-stone-700 text-white border-stone-800 hover:bg-stone-800'
-                      : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
-                  }`}
-                >
-                  Manutenção
-                </button>
-              </div>
+                        <button
+                          onClick={saveMaintenance}
+                          disabled={!noteRoomId || !noteText.trim()}
+                          className={`w-full py-4 rounded-2xl text-sm font-bold transition-all shadow-lg ${
+                            noteRoomId && noteText.trim()
+                              ? 'bg-blue-600 text-white hover:bg-blue-700 active:scale-95'
+                              : 'bg-slate-700 text-slate-500 cursor-not-allowed border border-slate-600'
+                          }`}
+                        >
+                          Interditar Quarto Imediatamente
+                        </button>
+                    </div>
+                </div>
+                {/* Efeito Visual */}
+                <div className="absolute -right-8 -bottom-8 opacity-10">
+                    <Wrench size={120} />
+                </div>
             </div>
           </div>
+
         </div>
       )}
     </div>

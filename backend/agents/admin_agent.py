@@ -1,10 +1,10 @@
 import json
 import os
-from openai import AsyncOpenAI
 from sqlalchemy.orm import Session
 import models
 from utils.pdf_reports import generate_financial_report, generate_inventory_report
-from datetime import datetime
+from datetime import datetime, date, timedelta
+from typing import Optional, List
 
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
@@ -16,295 +16,299 @@ def get_llm():
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key or api_key == "sua_chave_aqui":
         return None
-    return ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0.3)
+    return ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0.1)
 
 async def handle_admin_query(message: str, history: list, db: Session):
     llm = get_llm()
     if not llm:
-        return {"response": "A chave da OpenAI não foi configurada. Por favor, adicione sua API Key no arquivo .env para ativar o chat admin."}
+        return {"response": "A chave da OpenAI não foi configurada. Por favor, adicione sua API Key no arquivo .env."}
 
-    # --- TOOLS DYNAMICS ---
-
+    # =========================================================================
+    # ROBÔ 1: ESTOQUE (Smart Inventory Robot)
+    # =========================================================================
     @tool
-    def get_finance_summary() -> dict:
-        """Obtém um resumo financeiro das receitas da pousada."""
-        revenues = db.query(models.Revenue).all()
-        total = sum(r.amount for r in revenues)
-        
-        by_category = {}
-        for r in revenues:
-            cat = r.category.value if hasattr(r.category, 'value') else str(r.category)
-            by_category[cat] = by_category.get(cat, 0) + r.amount
+    def smart_inventory_manager(action: str, name: str = "", quantity_change: int = 0, price: float = None, category: str = None, barcode: str = "") -> dict:
+        """
+        Robô completo para gestão de estoque.
+        Ações: 'sync' (lançar/atualizar/cadastrar), 'list' (ver estoque), 'alerts' (nível crítico).
+        """
+        if action == "alerts":
+            low = db.query(models.Product).filter(models.Product.stock_quantity <= models.Product.min_stock, models.Product.is_active == True).all()
+            return {"alerts": [{"name": p.name, "stock": p.stock_quantity, "min": p.min_stock} for p in low]}
+
+        if action == "list":
+            query = db.query(models.Product).filter(models.Product.is_active == True)
+            if name: query = query.filter(models.Product.name.ilike(f"%{name}%"))
+            prods = query.all()
+            return {"products": [{"id": p.id, "name": p.name, "stock": p.stock_quantity, "price": p.price, "cat": p.category} for p in prods]}
+
+        if action == "sync":
+            if not name: return {"error": "Nome do produto é obrigatório para sincronização."}
             
-        return {
-            "period": "Geral (Até o momento)",
-            "total_revenue": total,
-            "transactions": len(revenues),
-            "by_category": by_category
-        }
+            # Tenta busca exata ou similar
+            existing = db.query(models.Product).filter(models.Product.name.ilike(f"{name}")).first()
+            if not existing:
+                existing = db.query(models.Product).filter(models.Product.name.ilike(f"%{name}%")).first()
 
-    @tool
-    def generate_pdf_finance_report() -> dict:
-        """Gera um arquivo PDF com o relatório financeiro atual."""
-        data = get_finance_summary.invoke({})
-        filename = f"relatorio_financeiro_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-        path = generate_financial_report(data, filename)
-        base_url = os.getenv("BASE_URL", "http://localhost:8000")
-        return {
-            "message": "Relatório Financeiro PDF gerado com sucesso", 
-            "download_url": f"{base_url}/reports/{filename}", 
-            "path": path
-        }
+            if existing:
+                # ATUALIZAÇÃO
+                old_stock = existing.stock_quantity
+                existing.stock_quantity += quantity_change
+                if price is not None: existing.price = price
+                if category: existing.category = category
+                if barcode: existing.barcode = barcode
+                db.commit()
+                return {
+                    "status": "updated",
+                    "product": existing.name,
+                    "old_stock": old_stock,
+                    "new_stock": existing.stock_quantity,
+                    "message": f"Produto '{existing.name}' atualizado com sucesso."
+                }
+            else:
+                # CRIAÇÃO
+                if price is None: price = 0.0
+                if not category: category = "Diversos"
+                try:
+                    new_p = models.Product(
+                        name=name, price=price, category=category, 
+                        stock_quantity=quantity_change, barcode=barcode or None
+                    )
+                    db.add(new_p)
+                    db.commit()
+                    db.refresh(new_p)
+                    return {
+                        "status": "created",
+                        "product": new_p.name,
+                        "stock": new_p.stock_quantity,
+                        "message": f"Novo produto '{new_p.name}' cadastrado e estoque inicial lançado."
+                    }
+                except Exception as e:
+                    db.rollback()
+                    return {"error": f"Falha ao criar produto: {str(e)}"}
 
-    @tool
-    def generate_pdf_inventory_report() -> dict:
-        """Gera um arquivo PDF com o relatório de estoque completo e lista de compras."""
-        products = db.query(models.Product).all()
-        data = {
-            "products": [{"name": p.name, "stock": p.stock_quantity, "min_stock": p.min_stock} for p in products]
-        }
-        filename = f"relatorio_estoque_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-        path = generate_inventory_report(data, filename)
-        base_url = os.getenv("BASE_URL", "http://localhost:8000")
-        return {
-            "message": "Relatório de Estoque e Compras PDF gerado com sucesso", 
-            "download_url": f"{base_url}/reports/{filename}", 
-            "path": path
-        }
+        return {"error": "Ação inválida para o robô de estoque."}
 
+    # =========================================================================
+    # ROBÔ 2: OPERAÇÕES (Smart Operations Robot)
+    # =========================================================================
     @tool
-    def get_stock_alerts() -> list:
-        """Lista apenas produtos com estoque crítico (abaixo de 5 unidades)."""
-        products = db.query(models.Product).filter(models.Product.stock_quantity < 5).all()
-        return [{"name": p.name, "stock": p.stock_quantity, "price": p.price, "min_stock": p.min_stock} for p in products]
-
-    @tool
-    def get_full_inventory() -> list:
-        """Lista todos os produtos cadastrados no sistema e suas quantidades totais."""
-        products = db.query(models.Product).all()
-        return [{"name": p.name, "stock": p.stock_quantity, "category": p.category} for p in products]
-
-    @tool
-    def search_product_by_name(name: str) -> list:
-        """Busca um produto específico pelo nome para saber preço ou quantidade exata."""
-        products = db.query(models.Product).filter(models.Product.name.ilike(f"%{name}%")).all()
-        return [{"name": p.name, "stock": p.stock_quantity, "price": p.price, "category": p.category} for p in products]
-
-    @tool
-    def get_rooms_overview() -> dict:
-        """Obtém um panorama completo dos quartos: quantos estão disponíveis, ocupados, em limpeza e em manutenção."""
-        rooms = db.query(models.Room).all()
-        status_count = {"disponivel": 0, "ocupado": 0, "limpeza": 0, "manutencao": 0}
-        details = {"disponivel": [], "ocupado": [], "limpeza": [], "manutencao": []}
-        for r in rooms:
-            s = r.status.value if hasattr(r.status, 'value') else str(r.status)
-            status_count[s] = status_count.get(s, 0) + 1
-            details[s].append({"quarto": r.id, "tipo": r.type, "capacidade": r.max_capacity})
-        return {
-            "total_quartos": len(rooms),
-            "resumo": status_count,
-            "detalhes": details
-        }
-
-    @tool
-    def get_bookings_overview(start_date: str = "", end_date: str = "") -> dict:
-        """Obtém um panorama das reservas. Se datas forem informadas (YYYY-MM-DD), filtra pelo período. Caso contrário, mostra todas as reservas ativas/pendentes/confirmadas."""
-        from datetime import datetime as dt
-        query = db.query(models.Booking)
+    def smart_operation_manager(room_id: str, action: str, product_name: str = "", quantity: int = 1, payment_method: str = "pix", new_status: str = "", note: str = "") -> dict:
+        """
+        Robô para gestão de quartos, consumos e checkouts.
+        Ações: 
+        - 'status': Muda o status do quarto. Requer 'new_status' (disponivel, limpeza, manutencao).
+        - 'consumption': Lança item no quarto. Requer 'product_name' e 'quantity'.
+        - 'checkout_preview': Gera extrato da conta.
+        - 'checkout_confirm': Finaliza check-out. Requer 'payment_method'.
+        """
+        from utils.pricing import calculate_daily_rates_count, calculate_reservation_total
         
-        if start_date and end_date:
-            try:
-                sd = dt.strptime(start_date, "%Y-%m-%d")
-                ed = dt.strptime(end_date, "%Y-%m-%d")
-                query = query.filter(
-                    models.Booking.check_out_date >= sd,
-                    models.Booking.check_in_date <= ed
+        room = db.query(models.Room).filter(models.Room.id == room_id).first()
+        if not room: return {"error": f"Quarto {room_id} não existe."}
+
+        # --- AÇÃO: STATUS ---
+        if action == "status":
+            valid = ["disponivel", "limpeza", "manutencao"]
+            # Fallback caso o LLM mande o status no campo 'note'
+            target_status = (new_status or note or "").lower()
+            
+            # Normalização de termos comuns
+            if "liber" in target_status or "dispon" in target_status: target_status = "disponivel"
+            if "limp" in target_status: target_status = "limpeza"
+            if "manut" in target_status: target_status = "manutencao"
+
+            if target_status not in valid:
+                return {"error": f"Status '{target_status}' inválido. Use: {', '.join(valid)}"}
+            
+            old_status = room.status
+            room.status = target_status
+            if target_status == "manutencao": 
+                room.maintenance_note = note if note else "Manutenção solicitada via Agente"
+            elif target_status == "disponivel":
+                room.maintenance_note = None
+            
+            db.commit()
+            return {"success": True, "message": f"Quarto {room_id} alterado de '{old_status}' para '{target_status}'."}
+
+        # --- AÇÃO: CONSUMO ---
+        if action == "consumption":
+            booking = db.query(models.Booking).filter(models.Booking.room_id == room_id, models.Booking.status == models.BookingStatus.ATIVO).first()
+            if not booking: return {"error": "Sem check-in ativo para lançar consumo."}
+            
+            # Usa o robô de estoque para validar o produto
+            p_res = smart_inventory_manager.invoke({"action": "list", "name": product_name})
+            if not p_res.get("products"): return {"error": f"Produto '{product_name}' não encontrado no estoque."}
+            
+            p_data = p_res["products"][0]
+            prod = db.query(models.Product).get(p_data["id"])
+            
+            if prod.stock_quantity < quantity: return {"error": f"Estoque insuficiente ({prod.stock_quantity})."}
+            
+            cons = models.Consumption(booking_id=booking.id, product_id=prod.id, quantity=quantity, unit_price=prod.price)
+            prod.stock_quantity -= quantity
+            db.add(cons)
+            db.commit()
+            return {"success": True, "message": f"Lançado {quantity}x {prod.name} no quarto {room_id}."}
+
+        # --- AÇÃO: CHECKOUT (Preview ou Confirm) ---
+        if action in ["checkout_preview", "checkout_confirm"]:
+            booking = db.query(models.Booking).filter(models.Booking.room_id == room_id, models.Booking.status == models.BookingStatus.ATIVO).first()
+            if not booking: return {"error": "Nenhum check-in ativo para checkout."}
+
+            # Cálculos
+            now = datetime.now()
+            days = calculate_daily_rates_count(booking.real_check_in or booking.check_in_date, now, booking.check_in_time, now.strftime("%H:%M"))
+            guest_age = 18
+            if booking.guest and booking.guest.birth_date:
+                bday = booking.guest.birth_date
+                guest_age = now.year - bday.year - ((now.month, now.day) < (bday.month, bday.day))
+            ages = [guest_age] + [c.age for c in booking.companions]
+            
+            settings_dict = {s.key: s.value for s in db.query(models.SystemSetting).all()}
+            pricing = calculate_reservation_total(booking.daily_rate, days, ages, settings=settings_dict)
+            c_total = sum([c.quantity * c.unit_price for c in booking.consumptions])
+            grand_total = pricing["total"] + c_total
+
+            if action == "checkout_preview":
+                return {
+                    "hospede": booking.guest.name if booking.guest else "N/A",
+                    "diarias": days,
+                    "valor_hospedagem": pricing["total"],
+                    "valor_consumo": c_total,
+                    "total_geral": grand_total,
+                    "consumos": [{"item": c.product.name, "qtd": c.quantity} for c in booking.consumptions]
+                }
+
+            if action == "checkout_confirm":
+                booking.status = models.BookingStatus.CONCLUIDO
+                booking.real_check_out = now
+                booking.total_amount = grand_total
+                room.status = models.RoomStatus.LIMPEZA
+                
+                rev = models.Revenue(
+                    description=f"Check-out {room_id} - {booking.guest.name if booking.guest else ''}",
+                    amount=grand_total, category=models.RevenueCategory.HOSPEDAGEM,
+                    payment_method=payment_method.lower(), booking_id=booking.id, created_at=now
                 )
-            except:
-                pass
-        else:
-            query = query.filter(models.Booking.status.in_([
-                models.BookingStatus.PENDENTE, 
-                models.BookingStatus.CONFIRMADO, 
-                models.BookingStatus.ATIVO
-            ]))
-        
-        bookings = query.all()
-        status_count = {}
-        booking_list = []
-        for b in bookings:
-            s = b.status.value if hasattr(b.status, 'value') else str(b.status)
-            status_count[s] = status_count.get(s, 0) + 1
-            guest = db.query(models.Guest).filter(models.Guest.id == b.guest_id).first()
-            booking_list.append({
-                "id": b.id,
-                "hospede": guest.name if guest else "N/A",
-                "quarto": b.room_id,
-                "check_in": str(b.check_in_date),
-                "check_out": str(b.check_out_date),
-                "status": s,
-                "total": b.total_amount,
-                "pagamento": b.payment_status.value if hasattr(b.payment_status, 'value') else str(b.payment_status)
-            })
-        return {
-            "total_reservas": len(bookings),
-            "por_status": status_count,
-            "reservas": booking_list
-        }
+                db.add(rev)
+                db.commit()
+                return {"success": True, "total": grand_total, "metodo": payment_method.upper(), "message": "Check-out finalizado com sucesso."}
 
+        return {"error": "Ação operacional inválida."}
+
+    # =========================================================================
+    # ROBÔ 3: EVENTOS (Smart Event Robot)
+    # =========================================================================
     @tool
-    def get_daily_dashboard() -> dict:
-        """Retorna um painel geral do dia: quartos, reservas ativas, estoque crítico e faturamento. Use quando o admin pedir um 'resumo geral' ou 'status do sistema'."""
-        from datetime import datetime as dt, date
-        
-        # Quartos
-        rooms = db.query(models.Room).all()
-        room_status = {}
-        for r in rooms:
-            s = r.status.value if hasattr(r.status, 'value') else str(r.status)
-            room_status[s] = room_status.get(s, 0) + 1
-        
-        # Reservas ativas hoje
-        today = date.today()
-        active_bookings = db.query(models.Booking).filter(
-            models.Booking.status.in_([models.BookingStatus.ATIVO, models.BookingStatus.CONFIRMADO]),
-            models.Booking.check_in_date <= dt.combine(today, dt.max.time()),
-            models.Booking.check_out_date >= dt.combine(today, dt.min.time())
-        ).count()
-        
-        # Check-ins previstos hoje
-        checkins_today = db.query(models.Booking).filter(
-            models.Booking.status.in_([models.BookingStatus.PENDENTE, models.BookingStatus.CONFIRMADO]),
-            models.Booking.check_in_date >= dt.combine(today, dt.min.time()),
-            models.Booking.check_in_date <= dt.combine(today, dt.max.time())
-        ).count()
-        
-        # Check-outs previstos hoje
-        checkouts_today = db.query(models.Booking).filter(
-            models.Booking.status.in_([models.BookingStatus.ATIVO, models.BookingStatus.CONFIRMADO]),
-            models.Booking.check_out_date >= dt.combine(today, dt.min.time()),
-            models.Booking.check_out_date <= dt.combine(today, dt.max.time())
-        ).count()
-        
-        # Estoque crítico
-        critical_stock = db.query(models.Product).filter(models.Product.stock_quantity < 5).count()
-        
-        # Faturamento total
-        total_revenue = sum(r.amount for r in db.query(models.Revenue).all())
-        
-        # Hóspedes cadastrados
-        total_guests = db.query(models.Guest).count()
-        
-        return {
-            "data_atual": str(today),
-            "quartos": {"total": len(rooms), **room_status},
-            "reservas_ativas_hoje": active_bookings,
-            "checkins_previstos_hoje": checkins_today,
-            "checkouts_previstos_hoje": checkouts_today,
-            "produtos_estoque_critico": critical_stock,
-            "faturamento_total": total_revenue,
-            "hospedes_cadastrados": total_guests
-        }
+    def smart_event_manager(action: str, name: str = "", month: int = None, start_date: str = "", end_date: str = "") -> dict:
+        """Robô para consultar e gerenciar o calendário de eventos regionais."""
+        if action == "query":
+            import calendar
+            q = db.query(models.Event)
+            if name: q = q.filter(models.Event.name.ilike(f"%{name}%"))
+            elif month:
+                y = datetime.now().year
+                _, last = calendar.monthrange(y, month)
+                q = q.filter(models.Event.end_date >= date(y, month, 1), models.Event.start_date <= date(y, month, last))
+            else:
+                q = q.filter(models.Event.start_date >= datetime.now().date()).limit(10)
+            
+            events = q.all()
+            total_rooms = db.query(models.Room).count()
+            res = []
+            for e in events:
+                occ = db.query(models.Booking.room_id).filter(
+                    models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
+                    models.Booking.check_out_date >= e.start_date, models.Booking.check_in_date <= e.end_date
+                ).distinct().count()
+                res.append({
+                    "id": e.id, "nome": e.name, "data": f"{e.start_date} a {e.end_date}",
+                    "vagas": f"{total_rooms - occ} de {total_rooms}", "loc": e.location
+                })
+            return {"events": res}
 
+        if action == "add":
+            try:
+                sd = datetime.strptime(start_date, "%Y-%m-%d").date()
+                ed = datetime.strptime(end_date, "%Y-%m-%d").date()
+                ev = models.Event(name=name, start_date=sd, end_date=ed, location="Região")
+                db.add(ev)
+                db.commit()
+                return {"success": True, "message": f"Evento '{name}' adicionado."}
+            except: return {"error": "Formato de data inválido (use YYYY-MM-DD)."}
+
+        return {"error": "Ação de eventos inválida."}
+
+    # =========================================================================
+    # ROBÔ 4: FINANCEIRO E RELATÓRIOS (Smart Finance Robot)
+    # =========================================================================
     @tool
-    def get_events_availability(event_name: str = "") -> list:
-        """Busca eventos regionais e verifica se há quartos disponíveis nessas datas. Use quando perguntarem sobre vagas para um evento específico ou quais os próximos eventos e a situação do hotel."""
-        from datetime import datetime as dt
-        # 1. Buscar os eventos
-        event_query = db.query(models.Event)
-        if event_name:
-            event_query = event_query.filter(models.Event.name.ilike(f"%{event_name}%"))
-        else:
-            # Pega os 5 próximos eventos a partir de hoje
-            event_query = event_query.filter(models.Event.start_date >= dt.now().date()).order_by(models.Event.start_date.asc()).limit(5)
-            
-        events = event_query.all()
-        if not events:
-            return {"message": "Nenhum evento regional encontrado para os critérios informados."}
-
-        # 2. Total de quartos cadastrados
-        total_rooms = db.query(models.Room).count()
+    def smart_finance_robot(action: str, type: str = "summary") -> dict:
+        """Robô para relatórios financeiros e de estoque. Ações: 'view', 'pdf'."""
+        if action == "view":
+            revenues = db.query(models.Revenue).all()
+            total = sum(r.amount for r in revenues)
+            return {"total_revenue": total, "entries": len(revenues), "period": "Geral"}
         
-        results = []
-        for e in events:
-            # 3. Verificar ocupação no período do evento
-            # Conta quantos QUARTOS DISTINTOS possuem reservas confirmadas ou ativas no período
-            overlapping_rooms = db.query(models.Booking.room_id).filter(
-                models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
-                models.Booking.check_out_date >= e.start_date,
-                models.Booking.check_in_date <= e.end_date
-            ).distinct().all()
-            
-            occupied_count = len(overlapping_rooms)
-            available_count = total_rooms - occupied_count
-            
-            results.append({
-                "evento": e.name,
-                "periodo": f"{e.start_date.strftime('%d/%m')} até {e.end_date.strftime('%d/%m')}",
-                "local": e.location,
-                "vagas": f"{available_count} de {total_rooms} quartos disponíveis",
-                "esgotado": available_count <= 0
-            })
-            
-        return results
+        if action == "pdf":
+            base_url = os.getenv("BASE_URL", "http://localhost:8000")
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            if type == "finance":
+                data = {"total_revenue": sum(r.amount for r in db.query(models.Revenue).all())}
+                path = generate_financial_report(data, f"finance_{ts}.pdf")
+                return {"url": f"{base_url}/reports/finance_{ts}.pdf"}
+            else:
+                prods = db.query(models.Product).all()
+                data = {"products": [{"name": p.name, "stock": p.stock_quantity} for p in prods]}
+                path = generate_inventory_report(data, f"stock_{ts}.pdf")
+                return {"url": f"{base_url}/reports/stock_{ts}.pdf"}
+                
+        return {"error": "Ação financeira inválida."}
 
-    tools = [get_finance_summary, generate_pdf_finance_report, generate_pdf_inventory_report, get_stock_alerts, get_full_inventory, search_product_by_name, get_rooms_overview, get_bookings_overview, get_daily_dashboard, get_events_availability]
+    # =========================================================================
+    # CONFIGURAÇÃO DO AGENTE
+    # =========================================================================
+    tools = [smart_inventory_manager, smart_operation_manager, smart_event_manager, smart_finance_robot]
     llm_with_tools = llm.bind_tools(tools)
- 
-    # --- LANGGRAPH SETUP ---
-    sys_msg = SystemMessage(content="""Você é o Assistente Administrativo da Pousada System.
-Seu papel é ajudar o administrador com dados financeiros, estoque, quartos, reservas, eventos e relatórios.
+
+    sys_msg = SystemMessage(content="""Você é o Cérebro Operacional da Pousada.
+Sua missão é extrair a intenção do usuário e enviar para os Robôs Python especializados.
 
 DIRETRIZES:
-1. **Visão Geral / Dashboard**: Se pedirem "resumo", "status", "como está a pousada" → use 'get_daily_dashboard'.
-2. **Quartos**: Se perguntarem sobre quartos disponíveis, sujos, em manutenção → use 'get_rooms_overview'.
-3. **Reservas**: Se perguntarem sobre reservas em um período → use 'get_bookings_overview' com as datas. Se só pedirem reservas ativas → use sem datas.
-4. **Eventos e Vagas**: Se perguntarem se "há vagas para o evento X", "quais os eventos do mês" ou "como está a ocupação nos dias de evento" → use 'get_events_availability'.
-5. **PDF Financeiro**: Se solicitarem PDF de faturamento → use 'generate_pdf_finance_report'.
-6. **PDF Estoque**: Se solicitarem PDF de estoque/inventário → use 'generate_pdf_inventory_report'.
-7. **Links**: Retorne links SEMPRE em Markdown clicável: [📄 Baixar Relatório](URL).
-8. **Estoque**: Para alertas use 'get_stock_alerts'. Para inventário completo use 'get_full_inventory'. Para buscar item específico use 'search_product_by_name'.
-9. **Apresentação**: Formate respostas com negrito, listas e emojis para facilitar a leitura rápida.""")
+1. **ESTOQUE**: 'smart_inventory_manager' (action='sync'). Se o usuário disser "Lança X", não pergunte nada, apenas chame o robô com a quantidade. Se ele não informar preço/categoria, o robô usará padrões.
+2. **QUARTOS/CONTAS**: 'smart_operation_manager'. Lida com consumo, status (limpeza/manutenção) e checkout.
+3. **EVENTOS**: 'smart_event_manager' (action='query'). 
+4. **FINANCEIRO**: 'smart_finance_robot'.
+5. **DÊ ORDENS DIRETAS**: Não hesite. Se o comando for claro, execute. Só peça confirmação para EXCLUIR algo permanentemente.
+6. **RESPOSTAS**: Seja curto, grosso e eficiente. Reporte o sucesso e os novos dados (ex: 'Arroz lançado. Novo estoque: 15').""")
 
     def call_model(state: MessagesState):
         messages = [sys_msg] + state["messages"]
         response = llm_with_tools.invoke(messages)
         return {"messages": [response]}
 
+    # Graph
     workflow = StateGraph(MessagesState)
     workflow.add_node("agent", call_model)
     workflow.add_node("tools", ToolNode(tools))
-    
     workflow.add_edge(START, "agent")
-    
-    def should_continue(state: MessagesState):
-        last_message = state["messages"][-1]
-        if last_message.tool_calls:
-            return "tools"
-        return END
-
-    workflow.add_conditional_edges("agent", should_continue)
+    workflow.add_conditional_edges("agent", lambda s: "tools" if s["messages"][-1].tool_calls else END)
     workflow.add_edge("tools", "agent")
-    
     app = workflow.compile()
 
-    # --- EXECUTION ---
+    # History Execution
     lc_messages = []
-    for h in history[-15:]:
-        if isinstance(h, dict):
-            role = h.get("role", "user")
-            content = h.get("content", "")
-            if role == "user": lc_messages.append(HumanMessage(content=content))
-            elif role == "assistant": lc_messages.append(AIMessage(content=content))
-    
+    for h in history[-10:]:
+        role = h.get("role", "user")
+        if role == "user": lc_messages.append(HumanMessage(content=h.get("content", "")))
+        elif role == "assistant": lc_messages.append(AIMessage(content=h.get("content", "")))
     lc_messages.append(HumanMessage(content=message))
-    
+
     try:
         final_state = await app.ainvoke({"messages": lc_messages})
-        final_message = final_state["messages"][-1].content
-        return {"response": final_message}
+        return {"response": final_state["messages"][-1].content}
     except Exception as e:
-        print(f"❌ Erro LangGraph no Agente Admin: {str(e)}")
         import traceback
         traceback.print_exc()
-        return {"response": "Desculpe, tive um problema ao acessar os dados administrativos agora (Erro LangGraph)."}
+        return {"response": "Erro na execução dos robôs operacionais."}

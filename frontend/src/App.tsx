@@ -26,7 +26,6 @@ function App() {
         {/* Rota Pública (Sem Layout) */}
         <Route path="/" element={<Login />} />
         <Route path="/public/book" element={<PublicBooking />} />
-        <Route path="/service" element={<ServicePanel />} />
 
         {/* Portal do Hóspede (Layout Público Premium) */}
         <Route element={<GuestLayout />}>
@@ -48,6 +47,7 @@ function App() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/events" element={<Events />} />
           <Route path="/admin/users" element={<AdminUsers />} />
+          <Route path="/service" element={<ServicePanel />} />
         </Route>
 
         {/* Redireciona qualquer rota doida para o login */}

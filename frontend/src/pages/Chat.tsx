@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Send, User, Bot, Check, AlertCircle } from 'lucide-react';
+import { Send, User, Bot, Check, AlertCircle, Mic, Square } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import api from '../services/api';
 import { Card, CardContent } from '../components/ui/card';
@@ -17,6 +17,9 @@ export default function Chat() {
   const [loading, setLoading] = useState(false);
   const [sessionId, setSessionId] = useState<string>('');
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   useEffect(() => {
     let sid = localStorage.getItem('chat_session_admin');
@@ -46,14 +49,15 @@ export default function Chat() {
     }
   }, [messages]);
 
-  const handleSend = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!message.trim() || loading) return;
+  const handleSend = async (e?: React.FormEvent, textOverride?: string) => {
+    e?.preventDefault();
+    const finalMessage = textOverride || message;
+    if (!finalMessage.trim() || loading) return;
 
     const userMsg: Message = {
       id: Date.now().toString(),
       role: 'user',
-      content: message,
+      content: finalMessage,
       timestamp: new Date()
     };
 
@@ -83,6 +87,59 @@ export default function Chat() {
         content: "Oops! Tive um problema em processar sua solicitação. Verifique sua conexão ou tente novamente mais tarde.",
         timestamp: new Date()
       }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        await handleTranscription(audioBlob);
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      recorder.start();
+      setIsRecording(true);
+    } catch (err) {
+      console.error('Erro ao acessar microfone:', err);
+      alert('Não foi possível acessar o microfone. Verifique as permissões do seu navegador.');
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  };
+
+  const handleTranscription = async (blob: Blob) => {
+    setLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append('audio', blob, 'recording.webm');
+
+      const res = await api.post('/chat/transcribe', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+
+      if (res.data.text) {
+        await handleSend(undefined, res.data.text);
+      }
+    } catch (error) {
+      console.error('Erro na transcrição:', error);
+      alert('Falha ao transcrever áudio.');
     } finally {
       setLoading(false);
     }
@@ -169,16 +226,30 @@ export default function Chat() {
 
         {/* Input */}
         <CardContent className="p-4 bg-white border-t border-slate-100">
-          <form onSubmit={handleSend} className="flex gap-3">
+          <form onSubmit={(e) => handleSend(e)} className="flex gap-3">
             <input
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              placeholder="Solicite um relatório, dados de estoque, reservas..."
-              className="flex-1 bg-slate-50 border-none rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+              placeholder={isRecording ? "Ouvindo..." : "Solicite um relatório, dados de estoque, reservas..."}
+              className={`flex-1 bg-slate-50 border-none rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isRecording ? 'animate-pulse ring-2 ring-red-500' : ''}`}
             />
+            
+            <button
+              type="button"
+              onClick={isRecording ? stopRecording : startRecording}
+              disabled={loading}
+              className={`p-3 rounded-xl shadow-lg transition-all ${
+                isRecording 
+                  ? 'bg-red-500 text-white animate-pulse' 
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              {isRecording ? <Square size={20} /> : <Mic size={20} />}
+            </button>
+
             <button
               type="submit"
-              disabled={loading || !message.trim()}
+              disabled={loading || !message.trim() || isRecording}
               className="bg-indigo-600 hover:bg-indigo-700 text-white p-3 rounded-xl shadow-lg shadow-indigo-200 transition-all disabled:opacity-50 disabled:shadow-none"
             >
               <Send size={20} />

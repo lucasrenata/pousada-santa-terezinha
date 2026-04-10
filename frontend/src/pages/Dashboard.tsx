@@ -161,12 +161,6 @@ export default function Dashboard() {
             <input placeholder="Buscar quarto ou hóspede..." className="outline-none w-full text-slate-700 bg-transparent" />
           </div>
           
-          <button 
-            onClick={() => setIsModalOpen(true)}
-            className="flex items-center justify-center bg-blue-600 text-white px-6 py-2.5 rounded-xl shadow-lg hover:bg-blue-700 transition-all font-bold whitespace-nowrap"
-          >
-            <Plus size={20} className="mr-2" /> Novo Quarto
-          </button>
         </div>
       </div>
 

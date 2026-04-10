@@ -21,8 +21,11 @@ export default function MainLayout() {
   const filteredMenu = menuItems.filter(item => item.roles.includes(role || 'recepcionista'));
 
   // Bloqueio de rota no layout (se o cara tentar entrar em rota proibida via URL)
-  if (role && role !== 'admin' && role !== 'recepcionista' && location.pathname !== '/service') {
-    navigate('/service');
+  const isProtectedPath = location.pathname !== '/service';
+  const isStaff = role === 'manutencao' || role === 'faxina' || role === 'camareira';
+  
+  if (role && isStaff && isProtectedPath) {
+    navigate('/service', { replace: true });
   }
 
   function handleLogout() {
