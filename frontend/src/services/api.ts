@@ -1,5 +1,5 @@
 import axios from 'axios';
-const baseURL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8003';
+const baseURL = import.meta.env.VITE_API_URL || '/api';
 const api = axios.create({ baseURL });
 
 // Interceptor: Adiciona o Token em toda requisição automaticamente
