@@ -80,7 +80,7 @@ async def handle_customer_query(message: str, history: list, db: Session):
         
         rooms = db.query(models.Room).filter(
             models.Room.id.notin_(occupied_ids),
-            models.Room.status == models.RoomStatus.DISPONIVEL
+            models.Room.status != models.RoomStatus.MANUTENCAO
         ).order_by(models.Room.max_capacity.desc()).all()
         
         # Busca modelo de precificação para rotular o retorno
