@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from .auth import get_current_staff, get_current_admin
+
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import models, schemas
@@ -11,7 +13,7 @@ router = APIRouter(prefix="/products", tags=["Products/Stock"])
 
 # 1. CRIAR PRODUTO (Com validação de Barcode)
 @router.post("/", response_model=schemas.ProductResponse)
-def create_product(product: schemas.ProductCreate, db: Session = Depends(get_db)):
+def create_product(product: schemas.ProductCreate, db: Session = Depends(get_db), user = Depends(get_current_staff)):
     if product.barcode:
         existing = db.query(models.Product).filter(models.Product.barcode == product.barcode).first()
         if existing:
@@ -28,7 +30,8 @@ def create_product(product: schemas.ProductCreate, db: Session = Depends(get_db)
 def list_products(
     category: Optional[str] = None, 
     only_active: bool = True, 
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user = Depends(get_current_staff)
 ):
     query = db.query(models.Product)
     
@@ -42,7 +45,7 @@ def list_products(
 
 # 3. DASHBOARD DE ESTOQUE (KPIs da Documentação)
 @router.get("/dashboard", response_model=schemas.StockDashboard)
-def get_stock_dashboard(db: Session = Depends(get_db)):
+def get_stock_dashboard(db: Session = Depends(get_db), user = Depends(get_current_staff)):
     products = db.query(models.Product).filter(models.Product.is_active == True).all()
     
     total_items = len(products)
@@ -60,7 +63,7 @@ def get_stock_dashboard(db: Session = Depends(get_db)):
 
 # 4. CONSUMO (Mantido, mas checando is_active)
 @router.post("/consumption")
-def add_consumption(data: schemas.ConsumptionRequest, db: Session = Depends(get_db)):
+def add_consumption(data: schemas.ConsumptionRequest, db: Session = Depends(get_db), user = Depends(get_current_staff)):
     booking = db.query(models.Booking).filter(models.Booking.room_id == data.room_id, models.Booking.status == models.BookingStatus.ATIVO).first()
     if not booking: raise HTTPException(status_code=400, detail="Sem check-in ativo")
     
@@ -79,7 +82,7 @@ def add_consumption(data: schemas.ConsumptionRequest, db: Session = Depends(get_
 
 # 5. ATUALIZAR PRODUTO (inclui quantidade e preço)
 @router.put("/{product_id}", response_model=schemas.ProductResponse)
-def update_product(product_id: int, payload: schemas.ProductUpdate, db: Session = Depends(get_db)):
+def update_product(product_id: int, payload: schemas.ProductUpdate, db: Session = Depends(get_db), user = Depends(get_current_staff)):
     prod = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not prod:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
@@ -99,6 +102,8 @@ def update_product(product_id: int, payload: schemas.ProductUpdate, db: Session 
     if payload.description is not None: prod.description = payload.description
     if payload.is_active is not None: prod.is_active = payload.is_active
     if payload.is_quick_access is not None: prod.is_quick_access = payload.is_quick_access
+    if payload.cost_price is not None: prod.cost_price = payload.cost_price
+    if payload.markup_percent is not None: prod.markup_percent = payload.markup_percent
     db.commit()
     db.refresh(prod)
     return prod
@@ -111,7 +116,8 @@ def stock_receipt(
     invoice_number: Optional[str] = None,
     invoice_date: Optional[str] = None,
     note: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user = Depends(get_current_staff)
 ):
     filename = file.filename.lower()
     rows: List[dict] = []
@@ -259,7 +265,8 @@ def list_stock_entries(
     end: Optional[date] = None,
     supplier: Optional[str] = None,
     invoice_number: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user = Depends(get_current_staff)
 ):
     q = db.query(models.StockEntry)
     if start: q = q.filter(models.StockEntry.invoice_date >= start)
@@ -281,7 +288,8 @@ def stock_ocr(
     invoice_number: Optional[str] = None,
     invoice_date: Optional[str] = None,
     note: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user = Depends(get_current_staff)
 ):
     filename = (file.filename or "").lower()
     if not (filename.endswith(".png") or filename.endswith(".jpg") or filename.endswith(".jpeg") or filename.endswith(".pdf")):
@@ -409,7 +417,7 @@ def stock_ocr(
     return entry
 
 @router.delete("/stock/entries/{entry_id}")
-def delete_stock_entry(entry_id: int, db: Session = Depends(get_db)):
+def delete_stock_entry(entry_id: int, db: Session = Depends(get_db), admin = Depends(get_current_admin)):
     """Exclui uma entrada de estoque e reverte as quantidades dos produtos."""
     entry = db.query(models.StockEntry).filter(models.StockEntry.id == entry_id).first()
     if not entry:

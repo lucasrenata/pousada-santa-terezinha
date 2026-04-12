@@ -1,8 +1,15 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, Enum, ForeignKey, DateTime, Text, Date
+from sqlalchemy import Column, Integer, String, Float, Boolean, Enum, ForeignKey, DateTime, Text, Date, JSON
 from sqlalchemy.orm import relationship
 from database import Base
 import enum
 from datetime import datetime
+from sqlalchemy.orm import declared_attr
+
+class TenantMixin:
+    """Mixin para adicionar tenant_id em todas as tabelas de negócio"""
+    @declared_attr
+    def tenant_id(cls):
+        return Column(Integer, ForeignKey("tenants.id"), nullable=True, index=True)
 
 # --- ENUMS ---
 class RoomStatus(str, enum.Enum):
@@ -41,15 +48,31 @@ class RevenueCategory(str, enum.Enum):
 
 # --- TABELAS ---
 
+class Tenant(Base):
+    """Gerenciamento de Organizações (Clientes)"""
+    __tablename__ = "tenants"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    subdomain = Column(String, unique=True, index=True, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+    users = relationship("User", back_populates="tenant")
+
 class User(Base):
     """Usuários do Sistema (Login)"""
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True)
+    username = Column(String, unique=True, index=True) # Utilizado para o Login
+    full_name = Column(String, nullable=True) # Nome completo do funcionário
+    email = Column(String, unique=True, index=True, nullable=True) # E-mail corporativo válido
     password_hash = Column(String)
     role = Column(String, default="recepcionista")
+    
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True)
+    tenant = relationship("Tenant", back_populates="users")
 
-class Room(Base):
+class Room(Base, TenantMixin):
     __tablename__ = "rooms"
     id = Column(String, primary_key=True, index=True) # Agora o ID É o número do quarto (ex: "101")
     type = Column(String) 
@@ -65,7 +88,7 @@ class Room(Base):
     bookings = relationship("Booking", back_populates="room")
 
 
-class Guest(Base):
+class Guest(Base, TenantMixin):
     """Cadastro Completo do Hóspede Principal"""
     __tablename__ = "guests"
     id = Column(Integer, primary_key=True, index=True)
@@ -92,7 +115,7 @@ class Guest(Base):
         today = date.today()
         return today.year - self.birth_date.year - ((today.month, today.day) < (self.birth_date.month, self.birth_date.day))
 
-class Product(Base):
+class Product(Base, TenantMixin):
     """Cadastro de Produtos Rico"""
     __tablename__ = "products"
     id = Column(Integer, primary_key=True, index=True)
@@ -104,12 +127,14 @@ class Product(Base):
     stock_quantity = Column(Integer, default=0)
     min_stock = Column(Integer, default=5) 
     max_stock = Column(Integer, nullable=True)
+    cost_price = Column(Float, default=0.0)
+    markup_percent = Column(Float, default=0.0)
     supplier = Column(String, nullable=True) 
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
     is_quick_access = Column(Boolean, default=False)
 
-class Booking(Base):
+class Booking(Base, TenantMixin):
     """Reserva Detalhada"""
     __tablename__ = "bookings"
     id = Column(Integer, primary_key=True, index=True)
@@ -136,7 +161,7 @@ class Booking(Base):
     # Relacionamento com Revenue (opcional, se quiser linkar pagamentos)
     revenues = relationship("Revenue", back_populates="booking")
 
-class Companion(Base):
+class Companion(Base, TenantMixin):
     """Acompanhantes"""
     __tablename__ = "companions"
     id = Column(Integer, primary_key=True, index=True)
@@ -145,7 +170,7 @@ class Companion(Base):
     age = Column(Integer)
     booking = relationship("Booking", back_populates="companions")
 
-class Consumption(Base):
+class Consumption(Base, TenantMixin):
     __tablename__ = "consumptions"
     id = Column(Integer, primary_key=True, index=True)
     booking_id = Column(Integer, ForeignKey("bookings.id"))
@@ -156,7 +181,7 @@ class Consumption(Base):
     booking = relationship("Booking", back_populates="consumptions")
     product = relationship("Product")
 
-class Revenue(Base):
+class Revenue(Base, TenantMixin):
     """Tabela Financeira - O Livro Caixa"""
     __tablename__ = "revenues"
     id = Column(Integer, primary_key=True, index=True)
@@ -171,7 +196,18 @@ class Revenue(Base):
     created_by_user = Column(String, nullable=True) 
 # ... (Mantenha todo o resto igual) ...
 
-class ChatMessage(Base):
+class BusinessRule(Base, TenantMixin):
+    """Regras de Negócio Dinâmicas (Preços diferenciados, Restrições, etc.)"""
+    __tablename__ = "business_rules"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    description = Column(String, nullable=True)
+    rule_type = Column(String) # 'price_modifier', 'booking_restriction', etc.
+    config = Column(JSON) # Parametros da regra
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+class ChatMessage(Base, TenantMixin):
     """Persistência de mensagens do Chat IA"""
     __tablename__ = "chat_messages"
     id = Column(Integer, primary_key=True, index=True)
@@ -180,7 +216,7 @@ class ChatMessage(Base):
     content = Column(Text)
     created_at = Column(DateTime, default=datetime.now)
     
-class StockEntry(Base):
+class StockEntry(Base, TenantMixin):
     """Entrada de Estoque (Nota Fiscal)"""
     __tablename__ = "stock_entries"
     id = Column(Integer, primary_key=True, index=True)
@@ -191,7 +227,7 @@ class StockEntry(Base):
     created_at = Column(DateTime, default=datetime.now)
     items = relationship("StockEntryItem", back_populates="entry", cascade="all, delete-orphan")
 
-class StockEntryItem(Base):
+class StockEntryItem(Base, TenantMixin):
     __tablename__ = "stock_entry_items"
     id = Column(Integer, primary_key=True, index=True)
     entry_id = Column(Integer, ForeignKey("stock_entries.id"))
@@ -201,7 +237,7 @@ class StockEntryItem(Base):
     entry = relationship("StockEntry", back_populates="items")
     product = relationship("Product")
 
-class SystemSetting(Base):
+class SystemSetting(Base, TenantMixin):
     """
     Configurações Globais do Sistema
     Ex: {"key": "checkout_time", "value": "12:00"}
@@ -215,7 +251,7 @@ class SystemSetting(Base):
     description = Column(String, nullable=True)     # Para o Admin saber o que é
 
 
-class Event(Base):
+class Event(Base, TenantMixin):
     """Calendário de Eventos da Região (Canção Nova, etc.)"""
     __tablename__ = "events"
     id = Column(Integer, primary_key=True, index=True)
@@ -224,5 +260,10 @@ class Event(Base):
     end_date = Column(Date)
     location = Column(String, nullable=True)
     description = Column(Text, nullable=True)
+    daily_rate = Column(Float, default=0.0) # Fallback/Geral
+    daily_rate_single = Column(Float, default=0.0)
+    daily_rate_couple = Column(Float, default=0.0)
+    daily_rate_extra = Column(Float, default=0.0)
+    daily_rate_child = Column(Float, default=0.0)
     color = Column(String, default="#6366f1")  # Cor do card no calendário
     created_at = Column(DateTime, default=datetime.now)

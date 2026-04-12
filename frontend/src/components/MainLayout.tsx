@@ -1,5 +1,7 @@
+import { useEffect } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, BedDouble, CalendarDays, CalendarHeart, Package, DollarSign, LogOut, Menu, Settings, Users, Wrench, MessageSquare } from 'lucide-react';
+
+import { LayoutDashboard, BedDouble, CalendarDays, CalendarHeart, Package, DollarSign, LogOut, Menu, Settings, Users, Wrench, MessageSquare, ShieldCheck } from 'lucide-react';
 
 export default function MainLayout() {
   const navigate = useNavigate();
@@ -7,26 +9,37 @@ export default function MainLayout() {
   const role = localStorage.getItem('role');
   const menuItems = [
     { label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard', roles: ['admin', 'recepcionista'] },
-    { label: 'Chat IA', icon: MessageSquare, path: '/chat', roles: ['admin', 'recepcionista'] },
+    { label: 'Chat IA', icon: MessageSquare, path: '/chat', roles: ['admin'] },
     { label: 'Quartos', icon: BedDouble, path: '/rooms', roles: ['admin', 'recepcionista'] },
     { label: 'Reservas', icon: CalendarDays, path: '/bookings', roles: ['admin', 'recepcionista'] },
     { label: 'Estoque', icon: Package, path: '/inventory', roles: ['admin', 'recepcionista'] },
-    { label: 'Receitas', icon: DollarSign, path: '/finance', roles: ['admin', 'recepcionista'] },
+    { label: 'Receitas', icon: DollarSign, path: '/finance', roles: ['admin'] },
     { label: 'Eventos', icon: CalendarHeart, path: '/events', roles: ['admin', 'recepcionista'] },
     { label: 'Usuários', icon: Users, path: '/admin/users', roles: ['admin'] },
     { label: 'Configurações', icon: Settings, path: '/settings', roles: ['admin'] },
     { label: 'Serviços', icon: Wrench, path: '/service', roles: ['admin', 'recepcionista', 'manutencao', 'faxina', 'camareira'] },
+    { label: 'Console SaaS', icon: ShieldCheck, path: '/super/dashboard', roles: ['superadmin'] },
   ];
 
   const filteredMenu = menuItems.filter(item => item.roles.includes(role || 'recepcionista'));
 
   // Bloqueio de rota no layout (se o cara tentar entrar em rota proibida via URL)
-  const isProtectedPath = location.pathname !== '/service';
-  const isStaff = role === 'manutencao' || role === 'faxina' || role === 'camareira';
-  
-  if (role && isStaff && isProtectedPath) {
-    navigate('/service', { replace: true });
-  }
+  useEffect(() => {
+    const isProtectedPath = location.pathname !== '/service';
+    const isServiceStaff = role === 'manutencao' || role === 'faxina' || role === 'camareira';
+    const isRecepcionista = role === 'recepcionista';
+    
+    // Rotas bloqueadas para recepcionista
+    const forbiddenForRecepcionista = ['/finance', '/chat', '/admin', '/settings'];
+    const isForbidden = forbiddenForRecepcionista.some(path => location.pathname.startsWith(path));
+
+    if (role && isServiceStaff && isProtectedPath) {
+      navigate('/service', { replace: true });
+    } else if (role && isRecepcionista && isForbidden) {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [role, location.pathname, navigate]);
+
 
   function handleLogout() {
     localStorage.removeItem('token');

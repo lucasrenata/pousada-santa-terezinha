@@ -9,6 +9,11 @@ interface Event {
   end_date: string;
   location: string;
   description: string;
+  daily_rate: number;
+  daily_rate_single: number;
+  daily_rate_couple: number;
+  daily_rate_extra: number;
+  daily_rate_child: number;
   color: string;
 }
 
@@ -20,7 +25,11 @@ export default function Events() {
   const [loading, setLoading] = useState(false);
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [formData, setFormData] = useState({ name: '', start_date: '', end_date: '', location: 'Canção Nova - Cachoeira Paulista/SP', description: '', color: '#6366f1' });
+  const [formData, setFormData] = useState({ 
+    name: '', start_date: '', end_date: '', location: 'Canção Nova - Cachoeira Paulista/SP', 
+    description: '', color: '#6366f1',
+    daily_rate: 0, daily_rate_single: 0, daily_rate_couple: 0, daily_rate_extra: 0, daily_rate_child: 0
+  });
 
   useEffect(() => { loadEvents(); }, [year]);
 
@@ -52,14 +61,26 @@ export default function Events() {
       }
       setShowForm(false);
       setEditingEvent(null);
-      setFormData({ name: '', start_date: '', end_date: '', location: 'Canção Nova - Cachoeira Paulista/SP', description: '', color: '#6366f1' });
+      setFormData({ 
+        name: '', start_date: '', end_date: '', location: 'Canção Nova - Cachoeira Paulista/SP', 
+        description: '', color: '#6366f1',
+        daily_rate: 0, daily_rate_single: 0, daily_rate_couple: 0, daily_rate_extra: 0, daily_rate_child: 0
+      });
       await loadEvents();
     } catch (err) { console.error(err); }
   };
 
   const handleEdit = (e: Event) => {
     setEditingEvent(e);
-    setFormData({ name: e.name, start_date: e.start_date, end_date: e.end_date, location: e.location || '', description: e.description || '', color: e.color });
+    setFormData({ 
+      name: e.name, start_date: e.start_date, end_date: e.end_date, 
+      location: e.location || '', description: e.description || '', color: e.color,
+      daily_rate: e.daily_rate || 0,
+      daily_rate_single: e.daily_rate_single || 0,
+      daily_rate_couple: e.daily_rate_couple || 0,
+      daily_rate_extra: e.daily_rate_extra || 0,
+      daily_rate_child: e.daily_rate_child || 0
+    });
     setShowForm(true);
   };
 
@@ -134,6 +155,32 @@ export default function Events() {
                 <label className="text-xs font-bold text-slate-400 uppercase">Local</label>
                 <input value={formData.location} onChange={e => setFormData({...formData, location: e.target.value})} className="w-full bg-slate-50 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-indigo-200 mt-1" />
               </div>
+
+              {/* Tabela de Preços */}
+              <div className="bg-slate-50 rounded-2xl p-6 space-y-4 border border-slate-100">
+                <h4 className="text-xs font-black text-slate-500 uppercase flex items-center gap-2">
+                  💰 Tarifas por Pessoa no Evento
+                </h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">👤 Solteiro</label>
+                    <input type="number" value={formData.daily_rate_single} onChange={e => setFormData({...formData, daily_rate_single: parseFloat(e.target.value)})} className="w-full bg-white rounded-xl px-4 py-2 text-sm outline-none border border-slate-200 focus:ring-2 focus:ring-indigo-200 mt-1" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">👥 Casal (Total)</label>
+                    <input type="number" value={formData.daily_rate_couple} onChange={e => setFormData({...formData, daily_rate_couple: parseFloat(e.target.value)})} className="w-full bg-white rounded-xl px-4 py-2 text-sm outline-none border border-slate-200 focus:ring-2 focus:ring-indigo-200 mt-1" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">➕ Extra Adulto</label>
+                    <input type="number" value={formData.daily_rate_extra} onChange={e => setFormData({...formData, daily_rate_extra: parseFloat(e.target.value)})} className="w-full bg-white rounded-xl px-4 py-2 text-sm outline-none border border-slate-200 focus:ring-2 focus:ring-indigo-200 mt-1" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">👶 Criança (7-12)</label>
+                    <input type="number" value={formData.daily_rate_child} onChange={e => setFormData({...formData, daily_rate_child: parseFloat(e.target.value)})} className="w-full bg-white rounded-xl px-4 py-2 text-sm outline-none border border-slate-200 focus:ring-2 focus:ring-indigo-200 mt-1" />
+                  </div>
+                </div>
+              </div>
+
               <div className="flex items-center gap-3">
                 <label className="text-xs font-bold text-slate-400 uppercase">Cor</label>
                 <input type="color" value={formData.color} onChange={e => setFormData({...formData, color: e.target.value})} className="w-10 h-10 rounded-lg border-none cursor-pointer" />
@@ -178,6 +225,12 @@ export default function Events() {
                           <p className="text-[10px] text-slate-500 font-bold mt-1">
                             📅 {formatDate(e.start_date)} → {formatDate(e.end_date)}
                           </p>
+                          {(e.daily_rate_single > 0 || e.daily_rate_couple > 0) && (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                               {e.daily_rate_single > 0 && <span className="text-[9px] bg-white px-1.5 py-0.5 rounded border border-slate-200 text-slate-600 font-bold">👤 R${e.daily_rate_single}</span>}
+                               {e.daily_rate_couple > 0 && <span className="text-[9px] bg-white px-1.5 py-0.5 rounded border border-slate-200 text-slate-600 font-bold">👥 R${e.daily_rate_couple}</span>}
+                            </div>
+                          )}
                         </div>
                         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
                           <button onClick={() => handleEdit(e)} className="p-1.5 rounded-lg bg-white shadow-sm hover:bg-indigo-50 text-indigo-600">

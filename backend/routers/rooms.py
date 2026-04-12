@@ -3,7 +3,7 @@ from .auth import get_current_admin, get_current_staff
 from sqlalchemy.orm import Session
 from typing import List
 import models, schemas
-from database import get_db
+from database import get_db, set_tenant_context
 
 router = APIRouter(prefix="/rooms", tags=["Rooms"])
 
@@ -21,8 +21,13 @@ def create_room(room: schemas.RoomCreate, db: Session = Depends(get_db), admin: 
 def list_rooms(db: Session = Depends(get_db), user: models.User = Depends(get_current_staff)):
     return db.query(models.Room).all()
 
+@router.get("/public", response_model=List[schemas.RoomResponse])
+def list_public_rooms(tenant_id: int, db: Session = Depends(get_db)):
+    set_tenant_context(db, tenant_id)
+    return db.query(models.Room).all()
+
 @router.get("/by-number/{number}", response_model=schemas.RoomResponse)
-def get_room_by_number(number: str, db: Session = Depends(get_db)):
+def get_room_by_number(number: str, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
     room = db.query(models.Room).filter(models.Room.id == number).first()
     if not room:
         raise HTTPException(status_code=404, detail="Quarto não encontrado")

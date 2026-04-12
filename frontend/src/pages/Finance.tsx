@@ -216,25 +216,7 @@ export default function Finance() {
     }
   }
   
-  function exportCSV() {
-    const header = ['Data','Descrição','Valor','Categoria','Forma','Reserva'];
-    const rows = revenues.map((r) => [
-      new Date(r.created_at).toLocaleString(),
-      r.description,
-      r.amount.toFixed(2),
-      r.category,
-      r.payment_method,
-      r.booking_id ?? ''
-    ]);
-    const csv = [header, ...rows].map((row) => row.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'receitas.csv';
-    link.click();
-    URL.revokeObjectURL(url);
-  }
+
 
   function startEdit(r: Revenue) {
     setEditing(r);
@@ -346,10 +328,7 @@ export default function Finance() {
             </select>
           </div>
           <div className="flex items-end">
-            <div className="flex gap-2 w-full">
-              <button onClick={loadReport} className="bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-900 w-full">Aplicar</button>
-              <button onClick={exportCSV} className="border px-4 py-2 rounded-lg bg-white hover:bg-slate-50">Exportar CSV</button>
-            </div>
+            <button onClick={loadReport} className="bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-900 w-full h-10">Aplicar</button>
           </div>
         </div>
       </div>

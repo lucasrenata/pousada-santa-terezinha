@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from database import get_db
+from .auth import get_current_staff, get_current_admin
 import models
 from pydantic import BaseModel
 from typing import Optional
@@ -14,6 +15,11 @@ class EventCreate(BaseModel):
     end_date: date
     location: Optional[str] = "Canção Nova - Cachoeira Paulista/SP"
     description: Optional[str] = None
+    daily_rate: Optional[float] = 0.0
+    daily_rate_single: Optional[float] = 0.0
+    daily_rate_couple: Optional[float] = 0.0
+    daily_rate_extra: Optional[float] = 0.0
+    daily_rate_child: Optional[float] = 0.0
     color: Optional[str] = "#6366f1"
 
 class EventUpdate(BaseModel):
@@ -22,10 +28,15 @@ class EventUpdate(BaseModel):
     end_date: Optional[date] = None
     location: Optional[str] = None
     description: Optional[str] = None
+    daily_rate: Optional[float] = None
+    daily_rate_single: Optional[float] = None
+    daily_rate_couple: Optional[float] = None
+    daily_rate_extra: Optional[float] = None
+    daily_rate_child: Optional[float] = None
     color: Optional[str] = None
 
 @router.get("/")
-def list_events(year: int = 2026, db: Session = Depends(get_db)):
+def list_events(year: int = 2026, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
     events = db.query(models.Event).filter(
         models.Event.start_date >= date(year, 1, 1),
         models.Event.start_date <= date(year, 12, 31)
@@ -33,11 +44,17 @@ def list_events(year: int = 2026, db: Session = Depends(get_db)):
     return [{
         "id": e.id, "name": e.name, 
         "start_date": str(e.start_date), "end_date": str(e.end_date),
-        "location": e.location, "description": e.description, "color": e.color
+        "location": e.location, "description": e.description, 
+        "daily_rate": e.daily_rate,
+        "daily_rate_single": e.daily_rate_single,
+        "daily_rate_couple": e.daily_rate_couple,
+        "daily_rate_extra": e.daily_rate_extra,
+        "daily_rate_child": e.daily_rate_child,
+        "color": e.color
     } for e in events]
 
 @router.post("/")
-def create_event(data: EventCreate, db: Session = Depends(get_db)):
+def create_event(data: EventCreate, db: Session = Depends(get_db), admin = Depends(get_current_admin)):
     event = models.Event(**data.dict())
     db.add(event)
     db.commit()
@@ -45,7 +62,7 @@ def create_event(data: EventCreate, db: Session = Depends(get_db)):
     return {"id": event.id, "name": event.name}
 
 @router.put("/{event_id}")
-def update_event(event_id: int, data: EventUpdate, db: Session = Depends(get_db)):
+def update_event(event_id: int, data: EventUpdate, db: Session = Depends(get_db), admin = Depends(get_current_admin)):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Evento não encontrado")
@@ -57,7 +74,7 @@ def update_event(event_id: int, data: EventUpdate, db: Session = Depends(get_db)
     return {"id": event.id, "name": event.name, "start_date": str(event.start_date)}
 
 @router.delete("/{event_id}")
-def delete_event(event_id: int, db: Session = Depends(get_db)):
+def delete_event(event_id: int, db: Session = Depends(get_db), admin = Depends(get_current_admin)):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Evento não encontrado")
@@ -66,7 +83,7 @@ def delete_event(event_id: int, db: Session = Depends(get_db)):
     return {"message": "Evento excluído"}
 
 @router.post("/seed")
-def seed_events(year: int = 2026, db: Session = Depends(get_db)):
+def seed_events(year: int = 2026, db: Session = Depends(get_db), admin = Depends(get_current_admin)):
     """Popula o banco com o calendário Canção Nova para o ano informado."""
     # Remove eventos existentes do ano para evitar duplicatas
     db.query(models.Event).filter(

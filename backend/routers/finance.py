@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
+from .auth import get_current_admin
+
 from sqlalchemy.orm import Session
 from sqlalchemy import func, asc, desc
 from datetime import date, datetime
@@ -10,7 +12,7 @@ router = APIRouter(prefix="/finance", tags=["Finance"])
 
 # 1. LANÇAR RECEITA (Manual)
 @router.post("/", response_model=schemas.RevenueResponse)
-def add_revenue(revenue: schemas.RevenueCreate, db: Session = Depends(get_db)):
+def add_revenue(revenue: schemas.RevenueCreate, db: Session = Depends(get_db), admin = Depends(get_current_admin)):
     new_rev = models.Revenue(
         description=revenue.description,
         amount=revenue.amount,
@@ -36,7 +38,8 @@ def get_report(
     page_size: int = 10,
     sort_by: Optional[str] = "created_at",
     sort_dir: str = "desc",
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    admin = Depends(get_current_admin)
 ):
     query = db.query(models.Revenue)
     if start: query = query.filter(models.Revenue.created_at >= start)
@@ -78,7 +81,7 @@ def get_report(
 
 # 3. ATUALIZAR RECEITA
 @router.put("/{revenue_id}", response_model=schemas.RevenueResponse)
-def update_revenue(revenue_id: int, payload: schemas.RevenueUpdate, db: Session = Depends(get_db)):
+def update_revenue(revenue_id: int, payload: schemas.RevenueUpdate, db: Session = Depends(get_db), admin = Depends(get_current_admin)):
     rev = db.query(models.Revenue).filter(models.Revenue.id == revenue_id).first()
     if not rev:
         raise HTTPException(status_code=404, detail="Receita não encontrada")
@@ -93,7 +96,7 @@ def update_revenue(revenue_id: int, payload: schemas.RevenueUpdate, db: Session 
 
 # 4. EXCLUIR RECEITA
 @router.delete("/{revenue_id}")
-def delete_revenue(revenue_id: int, db: Session = Depends(get_db)):
+def delete_revenue(revenue_id: int, db: Session = Depends(get_db), admin = Depends(get_current_admin)):
     rev = db.query(models.Revenue).filter(models.Revenue.id == revenue_id).first()
     if not rev:
         raise HTTPException(status_code=404, detail="Receita não encontrada")

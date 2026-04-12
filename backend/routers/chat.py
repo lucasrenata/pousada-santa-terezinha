@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
 from sqlalchemy.orm import Session
-from database import get_db
+from database import get_db, set_tenant_context
 from .auth import get_current_staff, get_current_admin
 from pydantic import BaseModel
 import os
@@ -15,23 +15,27 @@ router = APIRouter(prefix="/chat", tags=["AI Chat Agents"])
 class ChatRequest(BaseModel):
     message: str
     session_id: str # Obrigatório para persistência
+    tenant_id: int # ID da Pousada
     chat_history: List[dict] = []
 
-async def get_db_history(session_id: str, db: Session):
+async def get_db_history(session_id: str, db: Session, tenant_id: int):
+    # O isolamento RLS já deve filtrar, mas passamos tenant_id por segurança/clareza
     messages = db.query(models.ChatMessage).filter(
-        models.ChatMessage.session_id == session_id
+        models.ChatMessage.session_id == session_id,
+        models.ChatMessage.tenant_id == tenant_id
     ).order_by(models.ChatMessage.created_at.asc()).all()
     
     # Filtramos mensagens vazias que podem ter vindo de tool_calls incompletos na persistência
     return [{"role": m.role, "content": m.content} for m in messages if m.content and m.content.strip()]
 
-def save_message(session_id: str, role: str, content: str, db: Session):
-    msg = models.ChatMessage(session_id=session_id, role=role, content=content)
+def save_message(session_id: str, role: str, content: str, tenant_id: int, db: Session):
+    msg = models.ChatMessage(session_id=session_id, role=role, content=content, tenant_id=tenant_id)
     db.add(msg)
     db.commit()
 
 @router.get("/history/{session_id}")
-async def get_chat_history(session_id: str, db: Session = Depends(get_db)):
+async def get_chat_history(session_id: str, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+    set_tenant_context(db, current_user.tenant_id)
     messages = db.query(models.ChatMessage).filter(
         models.ChatMessage.session_id == session_id
     ).order_by(models.ChatMessage.created_at.asc()).all()
@@ -47,32 +51,38 @@ async def get_chat_history(session_id: str, db: Session = Depends(get_db)):
 
 @router.post("/customer")
 async def chat_customer(request: ChatRequest, db: Session = Depends(get_db)):
+    # 0. Ativa RLS context
+    set_tenant_context(db, request.tenant_id)
+    
     # 1. Salva mensagem do usuário
-    save_message(request.session_id, "user", request.message, db)
+    save_message(request.session_id, "user", request.message, request.tenant_id, db)
     
     # 2. Busca histórico completo do banco (Fonte da Verdade)
-    history = await get_db_history(request.session_id, db)
+    history = await get_db_history(request.session_id, db, request.tenant_id)
     
     # 3. Importação tardia do agente
     from agents.customer_agent import handle_customer_query
     
     # Chamamos o agente (ele já recebe o histórico do banco)
-    result = await handle_customer_query(request.message, history[:-1], db) # Passamos histórico sem a mensagem atual (agente adiciona ela)
+    result = await handle_customer_query(request.message, history[:-1], db, request.tenant_id) 
     
     # 4. Salva resposta da IA
-    save_message(request.session_id, "assistant", result["response"], db)
+    save_message(request.session_id, "assistant", result["response"], request.tenant_id, db)
     
     return result
 
 @router.post("/admin")
 async def chat_admin(request: ChatRequest, db: Session = Depends(get_db), current_admin = Depends(get_current_admin)):
-    save_message(request.session_id, "user", request.message, db)
-    history = await get_db_history(request.session_id, db)
+    # O context RLS já deve estar setado pelo get_current_admin, mas reforçamos
+    set_tenant_context(db, current_admin.tenant_id)
+    
+    save_message(request.session_id, "user", request.message, current_admin.tenant_id, db)
+    history = await get_db_history(request.session_id, db, current_admin.tenant_id)
     
     from agents.admin_agent import handle_admin_query
-    result = await handle_admin_query(request.message, history[:-1], db)
+    result = await handle_admin_query(request.message, history[:-1], db, current_admin.tenant_id)
     
-    save_message(request.session_id, "assistant", result["response"], db)
+    save_message(request.session_id, "assistant", result["response"], current_admin.tenant_id, db)
     
     return result
 

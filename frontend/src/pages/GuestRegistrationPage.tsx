@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, useParams } from 'react-router-dom';
 import { Bot, User, MapPin, Phone, Mail, CheckCircle, Loader2, ArrowRight, Calendar } from 'lucide-react';
 import api from '../services/api';
 
 export default function GuestRegistrationPage() {
+  const { tenant_id } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
@@ -102,11 +103,12 @@ export default function GuestRegistrationPage() {
         address_number: formData.number,
         address_neighborhood: formData.neighborhood,
         address_city: formData.city,
-        address_state: formData.state
+        address_state: formData.state,
+        tenant_id: parseInt(tenant_id || "1")
       });
 
       setSuccess(true);
-      setTimeout(() => navigate('/atendimento'), 3000);
+      setTimeout(() => navigate(`/${tenant_id || "1"}/atendimento`), 3000);
     } catch (err: any) {
       console.error("Erro ao salvar cadastro:", err);
       setError(err.response?.data?.detail || "Ocorreu um erro ao salvar seus dados. Verifique os campos ou tente novamente.");
@@ -124,7 +126,7 @@ export default function GuestRegistrationPage() {
         <h2 className="text-2xl font-black text-slate-800 mb-2">Cadastro Concluído!</h2>
         <p className="text-slate-500 font-medium mb-8">Agora você pode voltar ao chat e finalizar sua reserva em segundos.</p>
         <button 
-          onClick={() => navigate('/atendimento')}
+          onClick={() => navigate(`/${tenant_id || "1"}/atendimento`)}
           className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-slate-800 transition-all"
         >
           Voltar para o Chat <ArrowRight size={18} />

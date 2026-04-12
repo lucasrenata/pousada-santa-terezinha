@@ -38,6 +38,14 @@ class PousadaProfessionalReport:
             alignment=2 # Right
         ))
 
+        self.styles.add(ParagraphStyle(
+            name='PousadaKPI',
+            fontSize=12,
+            textColor=colors.HexColor("#334155"), # Slate 700
+            alignment=1, # Center
+            fontName='Helvetica-Bold'
+        ))
+
     def _get_pousada_name(self):
         db = SessionLocal()
         try:
@@ -55,20 +63,42 @@ class PousadaProfessionalReport:
         self.story.append(Paragraph(self.title, self.styles['PousadaTitle']))
         self.story.append(Spacer(1, 0.5*cm))
 
-    def add_table(self, data, col_widths=None):
+    def add_kpi_cards(self, cards: list):
+        """
+        Recebe uma lista de dicts: [{'label': 'Receita', 'value': 'R$ 100'}]
+        Renderiza como pequenos cards lado a lado.
+        """
+        data = [[Paragraph(f"<b>{c['label']}</b><br/><br/><font size=14><b>{c['value']}</b></font>", self.styles['PousadaKPI']) for c in cards]]
+        
+        # Colunas flexíveis baseadas no número de cards
+        cw = (A4[0] - 4*cm) / len(cards)
+        t = Table(data, colWidths=[cw]*len(cards))
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#f8fafc")), # Slate 50
+            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")), # Slate 300
+            ('TOPPADDING', (0, 0), (-1, -1), 15),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 15),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        self.story.append(t)
+        self.story.append(Spacer(1, 1*cm))
+
+    def add_table(self, data, col_widths=None, align='CENTER'):
         """Adiciona uma tabela estilizada seguindo o padrão Qualitec."""
         t = Table(data, colWidths=col_widths)
         t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#f1f5f9")), # Slate 100
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor("#475569")), # Slate 600
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1e293b")), # Slate 800
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('ALIGN', (0, 0), (-1, -1), align),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
             ('FONTSIZE', (0, 0), (-1, 0), 10),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+            ('TOPPADDING', (0, 0), (-1, 0), 10),
             ('BACKGROUND', (0, 1), (-1, -1), colors.white),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")), # Slate 200
+            ('GRID', (0, 0), (-1, -1), 0.1, colors.HexColor("#e2e8f0")), # Slate 200
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]) # Zebra
         ]))
         self.story.append(t)
 

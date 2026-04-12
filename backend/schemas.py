@@ -6,19 +6,51 @@ import models
 # --- AUTH ---
 class UserCreate(BaseModel):
     username: str
+    full_name: str
+    email: str
     password: str
     role: str = "recepcionista"
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    password: Optional[str] = None
+    role: Optional[str] = None
 
 class UserResponse(BaseModel):
     id: int
     username: str
+    full_name: Optional[str] = None
+    email: Optional[str] = None
     role: str
+    tenant_id: Optional[int] = None
     class Config: from_attributes = True
 
 class Token(BaseModel):
     access_token: str
     token_type: str
     role: str
+    tenant_id: Optional[int] = None
+
+# --- TENANTS & SIGNUP ---
+class TenantBase(BaseModel):
+    name: str
+    subdomain: Optional[str] = None
+
+class TenantCreate(TenantBase):
+    pass
+
+class TenantResponse(TenantBase):
+    id: int
+    is_active: bool
+    created_at: datetime
+    class Config: from_attributes = True
+
+class SignupRequest(BaseModel):
+    pousada_name: str
+    admin_username: str
+    admin_full_name: str
+    admin_email: str
+    admin_password: str
 
 # --- ROOMS ---
 class RoomBase(BaseModel):
@@ -63,6 +95,9 @@ class GuestBase(BaseModel):
 
 class GuestCreate(GuestBase): pass
 
+class GuestPublicCreate(GuestBase):
+    tenant_id: int # Recebido via URL pública
+
 class GuestUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
@@ -92,6 +127,8 @@ class ProductBase(BaseModel):
     stock_quantity: int
     min_stock: int = 5
     max_stock: Optional[int] = None
+    cost_price: float = 0.0
+    markup_percent: float = 0.0
     supplier: Optional[str] = None
     description: Optional[str] = None
     is_active: bool = True
@@ -117,6 +154,8 @@ class ProductUpdate(BaseModel):
     description: Optional[str] = None
     is_active: Optional[bool] = None
     is_quick_access: Optional[bool] = None
+    cost_price: Optional[float] = None
+    markup_percent: Optional[float] = None
 
 class StockDashboard(BaseModel):
     total_products: int
@@ -225,6 +264,7 @@ class BookingResponse(BaseModel):
     class Config: from_attributes = True
  
 class BookingPublicCreate(BaseModel):
+    tenant_id: int
     guest: GuestCreate
     room_id: Optional[str] = None
     check_in_date: datetime
@@ -261,3 +301,26 @@ class RevenueUpdate(BaseModel):
     category: Optional[models.RevenueCategory] = None
     payment_method: Optional[models.PaymentMethod] = None
     booking_id: Optional[int] = None
+
+# --- BUSINESS RULES ---
+class BusinessRuleBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+    rule_type: str
+    config: dict
+    is_active: bool = True
+
+class BusinessRuleCreate(BusinessRuleBase):
+    pass
+
+class BusinessRuleUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    rule_type: Optional[str] = None
+    config: Optional[dict] = None
+    is_active: Optional[bool] = None
+
+class BusinessRuleResponse(BusinessRuleBase):
+    id: int
+    created_at: datetime
+    class Config: from_attributes = True

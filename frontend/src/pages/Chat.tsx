@@ -66,9 +66,11 @@ export default function Chat() {
     setLoading(true);
 
     try {
+      const tenantId = localStorage.getItem('tenant_id') ? Number(localStorage.getItem('tenant_id')) : 0;
       const res = await api.post('/chat/admin', {
         message: userMsg.content,
-        session_id: sessionId
+        session_id: sessionId,
+        tenant_id: tenantId
       });
 
       const botMsg: Message = {

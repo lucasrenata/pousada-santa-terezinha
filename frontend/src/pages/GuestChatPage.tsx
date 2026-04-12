@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Send, User, Bot, Check, ShieldCheck, Phone } from 'lucide-react';
+import { useParams } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import api from '../services/api';
 
@@ -11,6 +12,7 @@ interface Message {
 }
 
 export default function GuestChatPage() {
+  const { tenant_id } = useParams();
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
@@ -76,7 +78,8 @@ export default function GuestChatPage() {
     try {
       const res = await api.post('/chat/customer', {
         message: userMsg.content,
-        session_id: sessionId
+        session_id: sessionId,
+        tenant_id: parseInt(tenant_id || "1")
       });
 
       const botMsg: Message = {

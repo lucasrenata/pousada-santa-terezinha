@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import api from '../services/api';
 
 type BookingMode = 'normal' | 'caravana';
@@ -16,6 +17,7 @@ interface Companion {
 }
 
 export default function PublicBooking() {
+  const { tenant_id } = useParams();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [checkInDate, setCheckInDate] = useState<string>('');
@@ -82,7 +84,8 @@ export default function PublicBooking() {
 
   async function loadRooms() {
     try {
-      const res = await api.get('/rooms/');
+      if (!tenant_id) return;
+      const res = await api.get(`/rooms/public?tenant_id=${tenant_id}`);
       setRooms(res.data);
     } catch {
       setError('Falha ao carregar quartos');
@@ -98,7 +101,8 @@ export default function PublicBooking() {
       const start = new Date(checkInDate).toISOString();
       const end = new Date(checkOutDate).toISOString();
       const guests = mode === 'normal' ? 1 + companions.length : totalGuests;
-      const availRes = await api.get(`/bookings/availability?start=${start}&end=${end}&guests=${guests}`);
+      const t_id = tenant_id || "1";
+      const availRes = await api.get(`/bookings/availability/public?start=${start}&end=${end}&guests=${guests}&tenant_id=${t_id}`);
       const available: Room[] = availRes.data;
       setRooms(available);
       if (roomId && !available.find((r) => r.id === roomId)) {
@@ -108,7 +112,7 @@ export default function PublicBooking() {
     } catch {
       // Em caso de falha, mantém lista atual
     }
-  }, [checkInDate, checkOutDate, roomId, mode, companions, totalGuests]);
+  }, [checkInDate, checkOutDate, roomId, mode, companions, totalGuests, tenant_id]);
 
   useEffect(() => {
     refreshAvailableRooms();
@@ -215,6 +219,7 @@ export default function PublicBooking() {
         daily_rate: parseFloat(dailyRate),
         notes: notes || null,
         companions,
+        tenant_id: parseInt(tenant_id || "1")
       };
       await api.post('/bookings/public', payload);
       setMessage('Solicitação enviada. Aguarde confirmação por email.');
@@ -263,6 +268,7 @@ export default function PublicBooking() {
         daily_rate: parseFloat(dailyRate),
         notes: notes || null,
         companions,
+        tenant_id: parseInt(tenant_id || "1")
       };
       const res = await api.post('/bookings/public', payload);
       const bookingId = res.data?.booking_id;
@@ -270,7 +276,8 @@ export default function PublicBooking() {
         setError('Falha ao criar reserva para pagamento');
         return;
       }
-      const payRes = await api.post(`/payments/public/${bookingId}/card`);
+      const t_id = tenant_id || "1";
+      const payRes = await api.post(`/payments/public/${bookingId}/card?tenant_id=${t_id}`);
       const url = payRes.data?.sandbox_init_point || payRes.data?.init_point;
       if (!url) {
         setError('Falha ao iniciar pagamento');

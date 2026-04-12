@@ -436,7 +436,10 @@ export default function Rooms() {
       )}
 
       <div style={{ maxHeight: '70vh', overflowY: 'auto' }} className="grid grid-cols-1 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-2">
-        {rooms.filter(r => (search ? String(r.id).includes(search) : true)).map((room) => (
+        {rooms
+          .filter(r => (search ? String(r.id).includes(search) : true))
+          .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }))
+          .map((room) => (
           <div
             key={room.id}
             onClick={() => setDetailsRoom(room)}

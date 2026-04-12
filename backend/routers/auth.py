@@ -6,7 +6,7 @@ from jose import JWTError, jwt
 import os
 import bcrypt
 import models, schemas
-from database import get_db
+from database import get_db, set_tenant_context
 
 router = APIRouter(tags=["Auth"])
 
@@ -37,6 +37,15 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     except JWTError: raise credentials_exception
     user = db.query(models.User).filter(models.User.username == username).first()
     if user is None: raise credentials_exception
+    
+    # Bloqueio em Nível de Sessão (Kill Switch do SaaS)
+    if user.role != "superadmin" and user.tenant_id and user.tenant:
+        if not user.tenant.is_active:
+            raise HTTPException(status_code=403, detail="Ambiente suspenso administrativamente.")
+    
+    # --- ATIVAÇÃO DO RLS ---
+    set_tenant_context(db, user.tenant_id)
+    
     return user
 
 async def get_current_admin(current_user: models.User = Depends(get_current_user)):
@@ -46,9 +55,48 @@ async def get_current_admin(current_user: models.User = Depends(get_current_user
 
 async def get_current_staff(current_user: models.User = Depends(get_current_user)):
     # Permite admin e recepcionista para quase tudo
-    if current_user.role not in ["admin", "recepcionista", "manutencao", "faxina"]:
+    if current_user.role not in ["admin", "recepcionista", "manutencao", "faxina", "camareira"]:
         raise HTTPException(status_code=403, detail="Acesso negado")
     return current_user
+
+import re
+
+@router.post("/signup", response_model=schemas.UserResponse)
+def signup(request: schemas.SignupRequest, db: Session = Depends(get_db)):
+    """Fluxo de Auto-Cadastro: Cria Tenant e Admin"""
+    # 1. Valida se usuário já existe
+    if db.query(models.User).filter(models.User.username == request.admin_username).first():
+        raise HTTPException(status_code=400, detail="Nome de usuário já está em uso")
+    
+    if db.query(models.User).filter(models.User.email == request.admin_email).first():
+        raise HTTPException(status_code=400, detail="E-mail já está em uso")
+
+    # Validação de Senha Forte
+    if len(request.admin_password) < 8 or not re.search(r"[a-z]", request.admin_password) or not re.search(r"[A-Z]", request.admin_password) or not re.search(r"[0-9]", request.admin_password) or not re.search(r"[!@#$%^&*(),.?\":{}|<>]", request.admin_password):
+        raise HTTPException(status_code=400, detail="A senha deve conter no mínimo 8 caracteres, uma letra maiúscula, uma minúscula, um número e um caractere especial.")
+    
+    # 2. Cria o Tenant (Pousada)
+    new_tenant = models.Tenant(name=request.pousada_name)
+    db.add(new_tenant)
+    db.commit()
+    db.refresh(new_tenant)
+    
+    # 3. Cria o Usuário Admin vinculado ao Tenant
+    new_user = models.User(
+        username=request.admin_username, 
+        full_name=request.admin_full_name,
+        email=request.admin_email,
+        password_hash=get_password_hash(request.admin_password), 
+        role="admin",
+        tenant_id=new_tenant.id
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    # 4. Configuração Inicial (Ex: Moeda padrão, etc) - Opcional agora
+    
+    return new_user
 
 @router.post("/users/", response_model=schemas.UserResponse)
 def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
@@ -65,5 +113,11 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
     if not user or not verify_password(form_data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Login incorreto")
-    token = create_access_token(data={"sub": user.username, "role": user.role})
-    return {"access_token": token, "token_type": "bearer", "role": user.role}
+        
+    # Impedir emissão de token se a Pousada estiver bloqueada
+    if user.role != "superadmin" and user.tenant_id and user.tenant:
+        if not user.tenant.is_active:
+            raise HTTPException(status_code=403, detail="Ambiente suspenso administrativamente. Contate o provedor SaaS.")
+            
+    token = create_access_token(data={"sub": user.username, "role": user.role, "tenant_id": user.tenant_id})
+    return {"access_token": token, "token_type": "bearer", "role": user.role, "tenant_id": user.tenant_id}

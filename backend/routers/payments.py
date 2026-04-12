@@ -3,8 +3,9 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 import hmac, hashlib, os
 import models
-from database import get_db, SessionLocal
+from database import get_db, SessionLocal, set_tenant_context
 from payments.mercadopago_service import MercadoPagoService, MercadoPagoUnavailable
+from .auth import get_current_staff
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
@@ -46,7 +47,7 @@ def compute_checkout_summary(db: Session, room_id: int):
     return booking, daily_total, consumption_total, daily_total + consumption_total
 
 @router.get("/summary/{room_id}")
-def summary(room_id: int, db: Session = Depends(get_db)):
+def summary(room_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
     booking, daily_total, consumption_total, grand_total = compute_checkout_summary(db, room_id)
     room = db.query(models.Room).filter(models.Room.id == room_id).first()
     guest = booking.guest
@@ -94,13 +95,13 @@ def perform_checkout(db: Session, room_id: int, method: models.PaymentMethod):
     return {"message": "Check-out realizado e Receita Lançada", "total": final_total}
 
 @router.post("/checkout/{room_id}/pix")
-def start_pix_checkout(room_id: int, db: Session = Depends(get_db)):
+def start_pix_checkout(room_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
     try:
         mp = MercadoPagoService()
     except MercadoPagoUnavailable as e:
         raise HTTPException(status_code=500, detail=str(e))
     booking, daily_total, consumption_total, grand_total = compute_checkout_summary(db, room_id)
-    metadata = {"room_id": room_id, "booking_id": booking.id, "type": "checkout"}
+    metadata = {"room_id": room_id, "booking_id": booking.id, "type": "checkout", "tenant_id": current_user.tenant_id}
     description = f"Check-out Reserva #{booking.id} Quarto {booking.room.number if booking.room else ''}"
     env = (os.getenv("ENVIRONMENT") or "development").lower()
     guest = booking.guest
@@ -156,13 +157,13 @@ def start_pix_checkout(room_id: int, db: Session = Depends(get_db)):
     }
 
 @router.post("/checkout/{room_id}/card")
-def start_card_checkout(room_id: int, db: Session = Depends(get_db)):
+def start_card_checkout(room_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
     try:
         mp = MercadoPagoService()
     except MercadoPagoUnavailable as e:
         raise HTTPException(status_code=500, detail=str(e))
     booking, daily_total, consumption_total, grand_total = compute_checkout_summary(db, room_id)
-    metadata = {"room_id": room_id, "booking_id": booking.id, "type": "checkout"}
+    metadata = {"room_id": room_id, "booking_id": booking.id, "type": "checkout", "tenant_id": current_user.tenant_id}
     title = f"Check-out Reserva #{booking.id} Quarto {booking.room.number if booking.room else ''}"
     fe = os.getenv("FRONTEND_URL", "http://127.0.0.1:5173").rstrip("/")
     back_urls = {
@@ -194,7 +195,8 @@ def start_card_checkout(room_id: int, db: Session = Depends(get_db)):
         "status": 200
     }
 @router.post("/public/{booking_id}/card")
-def start_public_card(booking_id: int, db: Session = Depends(get_db)):
+def start_public_card(booking_id: int, tenant_id: int, db: Session = Depends(get_db)):
+    set_tenant_context(db, tenant_id)
     try:
         mp = MercadoPagoService()
     except MercadoPagoUnavailable as e:
@@ -204,7 +206,7 @@ def start_public_card(booking_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Reserva não encontrada")
     amount = booking.total_amount or 0.0
     title = f"Reserva #{booking.id} Quarto {booking.room.number if booking.room else ''}"
-    metadata = {"booking_id": booking.id, "type": "public"}
+    metadata = {"booking_id": booking.id, "type": "public", "tenant_id": tenant_id}
     fe = os.getenv("FRONTEND_URL", "http://127.0.0.1:5173").rstrip("/")
     back_urls = {
         "success": fe + "/public/book",
@@ -269,6 +271,12 @@ async def webhook(req: Request, db: Session = Depends(get_db)):
         response = result.get("response") or {}
         status = response.get("status")
         metadata = response.get("metadata") or {}
+        
+        # 1. Ativa contexto RLS para o Tenant apropriado do pagamento
+        tenant_id = metadata.get("tenant_id")
+        if tenant_id:
+            set_tenant_context(db, int(tenant_id))
+
         if status == "approved":
             room_id = metadata.get("room_id")
             if room_id:
@@ -311,6 +319,11 @@ def webhook_get(id: int | None = None, background_tasks: BackgroundTasks = None)
             response = result.get("response") or {}
             status = response.get("status")
             metadata = response.get("metadata") or {}
+            
+            tenant_id = metadata.get("tenant_id")
+            if tenant_id:
+                set_tenant_context(db, int(tenant_id))
+
             if status == "approved":
                 room_id = metadata.get("room_id")
                 if room_id:

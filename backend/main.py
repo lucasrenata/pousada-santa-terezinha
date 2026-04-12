@@ -6,12 +6,13 @@ import os
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(env_path, override=True)
 
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from database import engine
 import models
-from routers import auth, guests, rooms, bookings, products, finance, settings, payments, admin, chat, events, webhook_whatsapp
+from routers import auth, guests, rooms, bookings, products, finance, settings, payments, admin, chat, events, webhook_whatsapp, business_rules, superadmin
 import sys
 
 # Tabelas no banco agora são gerenciadas automaticamente ao iniciar.
@@ -47,15 +48,32 @@ app.include_router(bookings.router)
 app.include_router(products.router)
 app.include_router(finance.router)   # <--- NOVO
 app.include_router(settings.router)  # <--- NOVO
+app.include_router(business_rules.router)
 app.include_router(payments.router)
 app.include_router(admin.router)
 app.include_router(chat.router)
 app.include_router(events.router)
 app.include_router(webhook_whatsapp.router)
+app.include_router(superadmin.router)
 
-# Serve PDF reports
+# Serve PDF reports with auto-delete after download
 os.makedirs("reports", exist_ok=True)
-app.mount("/reports", StaticFiles(directory="reports"), name="reports")
+
+@app.get("/reports/{filename}")
+async def get_report(filename: str, background_tasks: BackgroundTasks):
+    file_path = f"reports/{filename}"
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Relatório não encontrado ou já expirado.")
+    
+    def remove_file(path: str):
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception as e:
+            print(f"Erro ao deletar relatório {path}: {e}")
+
+    background_tasks.add_task(remove_file, file_path)
+    return FileResponse(file_path, media_type='application/pdf', filename=filename)
 
 @app.get("/")
 def root():

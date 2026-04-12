@@ -1,9 +1,11 @@
 import json
 import os
-from datetime import datetime, date
 from sqlalchemy.orm import Session
 import models
+from database import set_tenant_context
 from utils.pricing import calculate_daily_rates_count, calculate_reservation_total
+from datetime import datetime, date, timedelta
+from typing import Optional, List
 
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
@@ -15,340 +17,285 @@ def get_llm():
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key or api_key == "sua_chave_aqui":
         return None
-    return ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0.3)
+    return ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0.1)
 
-async def handle_customer_query(message: str, history: list, db: Session):
+async def handle_customer_query(message: str, history: list, db: Session, tenant_id: int):
     llm = get_llm()
     if not llm:
         return {"response": "A chave da OpenAI não foi configurada. Por favor, adicione sua API Key no arquivo .env."}
 
-    # --- TOOLS DYNAMICS ---
+    # =========================================================================
+    # ROBÔ DE RESERVAS (Smart Booking Engine)
+    # =========================================================================
     @tool
-    def get_current_context() -> dict:
-        """Obtém a data e hora atuais da pousada e as configurações de precificação ativas."""
-        now = datetime.now()
-        days = ["Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado", "Domingo"]
-        
-        # Busca modelo de precificação
-        settings_rows = db.query(models.SystemSetting).all()
-        settings_dict = {s.key: s.value for s in settings_rows}
-        pricing_model = settings_dict.get("pousada_pricing_model", "per_person") # per_person ou per_room
-        
-        return {
-            "current_date": now.strftime("%Y-%m-%d"),
-            "current_time": now.strftime("%H:%M:%S"),
-            "day_of_week": days[now.weekday()],
-            "check_in_standard": "14:00",
-            "check_out_standard": "14:00",
-            "pricing_model_active": pricing_model # Importante para explicar o valor ao hóspede
-        }
-
-    @tool
-    def find_guest_by_cpf(cpf: str) -> dict:
-        """Busca um hóspede no banco de dados pelo CPF. Use o CPF com ou sem pontuação."""
-        clean_cpf = "".join(filter(str.isdigit, cpf))
-        search_pattern = "%" + "%".join(clean_cpf) + "%"
-        guest = db.query(models.Guest).filter(models.Guest.document.ilike(search_pattern)).first()
-        if guest:
-            return {"id": guest.id, "name": guest.name, "email": guest.email, "phone": guest.phone, "document": guest.document}
-        return {"error": "Hóspede não encontrado."}
-
-    @tool
-    def find_guests_by_name(name: str) -> list:
-        """Busca hóspedes pelo nome quando o CPF não é informado ou conhecido."""
-        guests = db.query(models.Guest).filter(models.Guest.name.ilike(f"%{name}%")).all()
-        return [{"id": g.id, "name": g.name, "document": g.document, "phone": g.phone} for g in guests]
-
-    @tool
-    def check_availability(check_in: str, check_out: str, capacity: int = 1) -> dict:
-        """Verifica quais quartos estão disponíveis em um período.
-        RETORNO: Lista de quartos e a CAPACIDADE TOTAL disponível.
-        IMPORTANTE: Se o grupo for grande (ex: 20 pessoas), use a lista de quartos para sugerir uma combinação.
+    def smart_booking_engine(
+        action: str, 
+        mode: str = "NORMAL", 
+        guest_id: int = None,
+        check_in: str = "", 
+        check_out: str = "", 
+        group_size: int = 1,
+        room_id: str = None,
+        companions: List[dict] = [],
+        check_in_time: str = "14:00",
+        check_out_time: str = "14:00"
+    ) -> dict:
+        """
+        Robô unificado para consulta e reserva.
+        Ações: 'check' (ver vagas), 'reserve' (criar reserva).
+        Modos: 'NORMAL' (família/amigos), 'CARAVANA' (bloqueia pousada toda).
         """
         try:
+            set_tenant_context(db, tenant_id)
             ci = datetime.strptime(check_in, "%Y-%m-%d").date()
             co = datetime.strptime(check_out, "%Y-%m-%d").date()
         except:
-            return {"error": "Datas em formato inválido. Use YYYY-MM-DD"}
+            return {"error": "Datas obrigatórias no formato YYYY-MM-DD."}
+
+        # 1. Busca Eventos no Período
+        event = db.query(models.Event).filter(
+            models.Event.start_date <= co,
+            models.Event.end_date >= ci
+        ).first()
+
+        days = calculate_daily_rates_count(ci, co, check_in_time, check_out_time)
+        settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
+        active_rules = db.query(models.BusinessRule).filter(models.BusinessRule.is_active == True).all()
         
-        occupied_room_ids = db.query(models.Booking.room_id).filter(
-            models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
-            models.Booking.check_out_date > ci,
-            models.Booking.check_in_date < co,
-        ).all()
-        occupied_ids = [r[0] for r in occupied_room_ids]
-        
-        rooms = db.query(models.Room).filter(
-            models.Room.id.notin_(occupied_ids),
-            models.Room.status != models.RoomStatus.MANUTENCAO
-        ).order_by(models.Room.max_capacity.desc()).all()
-        
-        # Busca modelo de precificação para rotular o retorno
-        settings_rows = db.query(models.SystemSetting).all()
-        settings_dict = {s.key: s.value for s in settings_rows}
-        model = settings_dict.get("pousada_pricing_model", "per_person")
-        price_unit = "por pessoa" if model == "per_person" else "valor fixo do quarto"
-        
-        total_cap = sum(r.max_capacity for r in rooms)
-        
-        return {
-            "pousada_pricing_model": model,
-            "pricing_description": f"Os preços abaixo são {price_unit}.",
-            "total_available_capacity": total_cap,
-            "rooms": [
-                {
-                    "id": r.id, 
-                    "number": r.id, 
-                    "type": r.type, 
-                    "daily_rate": r.price_per_night, 
-                    "price_label": f"R$ {r.price_per_night:.2f} {price_unit}",
-                    "capacity": r.max_capacity,
-                    "description": r.description or "Sem observações específicas."
-                } for r in rooms
-            ],
-            "request_info": f"Hóspede pediu por {capacity} pessoas. Capacidade total disponível no período: {total_cap}."
-        }
-
-    @tool
-    def register_guest(name: str, email: str, phone: str, document: str, birth_date: str, profession: str, 
-                       cep: str, street: str, number: str, neighborhood: str, 
-                       city: str, state: str, notes: str = None) -> dict:
-        """Cadastra um novo hóspede no sistema com todos os dados do formulário."""
-        print(f"DEBUG: Agente chamando register_guest para {name} (CPF: {document})")
-        try:
-            # Validação básica de CPF
-            clean_cpf = "".join(filter(str.isdigit, document))
-            if not clean_cpf:
-                return {"error": "CPF/Documento é obrigatório para o cadastro."}
-
-            # Verifica duplicidade de CPF
-            existing_cpf = db.query(models.Guest).filter(models.Guest.document == clean_cpf).first()
-            if existing_cpf:
-                return {"error": "Já existe um hóspede cadastrado com este CPF.", "id": existing_cpf.id, "name": existing_cpf.name}
-
-            # Verifica duplicidade de Email
-            if email:
-                existing_email = db.query(models.Guest).filter(models.Guest.email == email).first()
-                if existing_email:
-                    return {"error": f"O email '{email}' já está em uso por outro hóspede (CPF: {existing_email.document})."}
-
-            # Conversão de data
-            b_date = None
-            if birth_date:
-                try:
-                    b_date = datetime.strptime(birth_date, "%Y-%m-%d").date()
-                except:
-                    pass
-
-            new_guest = models.Guest(
-                name=name, email=email, phone=phone, document=clean_cpf,
-                birth_date=b_date, profession=profession,
-                address_zip=cep, address_street=street,
-                address_number=number, address_neighborhood=neighborhood,
-                address_city=city, address_state=state,
-                notes=notes
-            )
-            db.add(new_guest)
-            db.commit()
-            db.refresh(new_guest)
-            print(f"DEBUG: Hóspede {new_guest.name} cadastrado com ID {new_guest.id}")
-            return {"id": new_guest.id, "name": new_guest.name, "message": "Hóspede cadastrado com sucesso!"}
-        except Exception as e:
-            db.rollback()
-            err_msg = f"Erro ao cadastrar hóspede: {str(e)}"
-            print(f"DEBUG: {err_msg}")
-            return {"error": err_msg}
-
-    @tool
-    def create_pending_booking(guest_id: int, room_id: str, check_in_date: str, check_out_date: str, check_in_time: str, check_out_time: str, companions: list) -> dict:
-        """Cria uma nova reserva com status PENDENTE.
-        IMPORTANTE: O parâmetro 'companions' deve listar APENAS os acompanhantes EXTRAS (não inclua o hóspede principal aqui).
-        Use YYYY-MM-DD para datas e HH:MM para horários.
-        """
-        try:
-            ci_date = datetime.strptime(check_in_date, "%Y-%m-%d").date()
-            co_date = datetime.strptime(check_out_date, "%Y-%m-%d").date()
-        except:
-            return {"error": "Datas em formato inválido. Use YYYY-MM-DD"}
+        # --- AÇÃO: CHECK ---
+        if action == "check":
+            occupied = [r[0] for r in db.query(models.Booking.room_id).filter(
+                models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
+                models.Booking.check_out_date > ci,
+                models.Booking.check_in_date < co
+            ).all()]
+            rooms = db.query(models.Room).filter(models.Room.id.notin_(occupied), models.Room.status != models.RoomStatus.MANUTENCAO).all()
             
-        # Agora o room_id JA É o número do quarto
-        room = db.query(models.Room).filter(models.Room.id == str(room_id)).first()
-        guest = db.query(models.Guest).filter((models.Guest.id == guest_id) | (models.Guest.document == str(guest_id))).first()
-        
-        if not room: return {"error": "Quarto não encontrado no banco de dados."}
-        if not guest: return {"error": "Hóspede não encontrado."}
-        
-        days = calculate_daily_rates_count(ci_date, co_date, check_in_time, check_out_time)
-        guest_age = 18
-        if guest.birth_date:
-            today = date.today()
-            guest_age = today.year - guest.birth_date.year - ((today.month, today.day) < (guest.birth_date.month, guest.birth_date.day))
-        
-        ages = [guest_age] + [c.get('age', 18) for c in companions]
-        settings_rows = db.query(models.SystemSetting).all()
-        settings_dict = {s.key: s.value for s in settings_rows}
-        pricing = calculate_reservation_total(room.price_per_night, days, ages, settings=settings_dict)
-        
-        booking = models.Booking(
-            guest_id=guest_id, room_id=room_id, check_in_date=ci_date, check_out_date=co_date,
-            check_in_time=check_in_time, check_out_time=check_out_time, total_guests=1 + len(companions),
-            daily_rate=room.price_per_night, total_amount=pricing["total"],
-            status=models.BookingStatus.PENDENTE, mode=models.BookingMode.NORMAL
-        )
-        db.add(booking)
-        db.commit()
-        db.refresh(booking)
-        
-        for c in companions:
-            db.add(models.Companion(booking_id=booking.id, name=c.get('name', ''), age=c.get('age', 18)))
-        db.commit()
-        
-        return {
-            "booking_id": booking.id, "guest": guest.name, "room": room.id,
-            "period": f"{check_in_date} às {check_in_time} até {check_out_date} às {check_out_time}",
-            "total": pricing["total"], "status": "PENDENTE"
-        }
-
-    @tool
-    def update_booking_guest(booking_id: int, new_guest_id: int) -> dict:
-        """Altera o hóspede de uma reserva existente. 
-        Use se o hóspede disser que o nome na reserva está incorreto e ele for outra pessoa."""
-        try:
-            booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
-            if not booking:
-                return {"error": "Reserva não encontrada."}
+            # Aplicação de Restrições nas Salas Disponíveis
+            final_rooms = []
+            for r in rooms:
+                allowed = True
+                # Regra: Restrição de Casal
+                couple_rule = next((rule for rule in active_rules if rule.name == "Restrição de Casal"), None)
+                if couple_rule and group_size == 2:
+                    restricted_rooms = [rid.strip() for rid in couple_rule.config.get("room_ids", "").split(",") if rid.strip()]
+                    if r.id in restricted_rooms:
+                        # Verifica se há final de semana no período
+                        has_weekend = any((ci + timedelta(days=i)).weekday() in [4, 5, 6] for i in range(days))
+                        if has_weekend:
+                            allowed = False
                 
-            new_guest = db.query(models.Guest).filter(models.Guest.id == new_guest_id).first()
-            if not new_guest:
-                return {"error": "Novo hóspede não encontrado com o ID fornecido."}
-                
-            booking.guest_id = new_guest.id
-            db.commit()
-            return {"message": "Reserva atualizada com sucesso!", "new_guest_name": new_guest.name}
-        except Exception as e:
-            db.rollback()
-            return {"error": f"Erro técnico ao atualizar: {str(e)}"}
+                if allowed:
+                    final_rooms.append(r)
 
-    @tool
-    def search_events(query: str = None) -> list:
-        """Busca eventos no calendário regional (ex: Canção Nova, Hosana Brasil, PHN). 
-        Use isso quando o hóspede mencionar um evento ou perguntar sobre a 'programação' da cidade.
-        Retorna os nomes e as datas exatas dos eventos para que você possa sugerir reservas.
-        """
-        db_query = db.query(models.Event)
-        if query:
-            # Busca por nome similar
-            db_query = db_query.filter(models.Event.name.ilike(f"%{query}%"))
-        
-        # Filtra eventos futuros ou que terminam hoje
-        from datetime import date as dt_date
-        events = db_query.filter(models.Event.end_date >= dt_date.today()).order_by(models.Event.start_date.asc()).limit(10).all()
-        
-        if not events:
-            return [{"message": "Nenhum evento futuro localizado com este nome."}]
+            return {
+                "available_rooms": [{"id": r.id, "cap": r.max_capacity, "price": base_rate or r.price_per_night} for r in final_rooms],
+                "event_info": msg,
+                "total_capacity": sum(r.max_capacity for r in final_rooms),
+                "pricing_model": settings.get("pousada_pricing_model", "per_person"),
+                "rules_active": [r.name for r in active_rules]
+            }
+
+        # --- AÇÃO: RESERVE ---
+        if action == "reserve":
+            if not guest_id: return {"error": "guest_id é necessário para reserva."}
+            guest = db.query(models.Guest).get(guest_id)
+            if not guest: return {"error": "Hóspede não encontrado."}
+
+            # RESOLUÇÃO DE VALORES (Tabela de Evento vs Padrao)
+            total_amount = 0.0
+            daily_rate_label = ""
             
-        return [
-            {
-                "name": e.name,
-                "start_date": e.start_date.strftime("%Y-%m-%d"),
-                "end_date": e.end_date.strftime("%Y-%m-%d"),
-                "location": e.location,
-                "description": e.description
-            } for e in events
-        ]
+            if event and (event.daily_rate_single > 0 or event.daily_rate_couple > 0):
+                # Lógica de Tarifação de Evento
+                adults = 1 + len([c for c in companions if c.get('age', 18) >= 13])
+                children = len([c for c in companions if c.get('age', 0) < 13 and c.get('age', 0) >= 7])
+                
+                if adults == 1 and event.daily_rate_single > 0:
+                    total_amount = (event.daily_rate_single + (children * event.daily_rate_child)) * days
+                    daily_rate_label = f"Tarifa Solteiro Evento: R${event.daily_rate_single}"
+                elif adults >= 2 and event.daily_rate_couple > 0:
+                    extras = adults - 2
+                    total_amount = (event.daily_rate_couple + (extras * event.daily_rate_extra) + (children * event.daily_rate_child)) * days
+                    daily_rate_label = f"Tarifa Casal Evento: R${event.daily_rate_couple}"
+                else:
+                    # Fallback para diária por pessoa se não houver lógica de casal/solteiro
+                    daily_rate = event.daily_rate or 100.0
+                    ages = [guest.age or 18] + [int(c['age']) for c in companions]
+                    pricing = calculate_reservation_total(daily_rate, days, ages, settings=settings)
+                    total_amount = pricing["total"]
+                    daily_rate_label = f"Tarifa Especial Evento: R${daily_rate}/pessoa"
+            else:
+                # Tarifas Padrão da Pousada
+                room = db.query(models.Room).get(room_id)
+                daily_rate = room.price_per_night if room else 100.0
+                ages = [guest.age or 18] + [int(c['age']) for c in companions]
+                pricing = calculate_reservation_total(daily_rate, days, ages, settings=settings)
+                total_amount = pricing["total"]
+                daily_rate_label = f"Tarifa Padrão: R${daily_rate}"
 
-    tools = [get_current_context, find_guest_by_cpf, find_guests_by_name, check_availability, register_guest, create_pending_booking, update_booking_guest, search_events]
+            # VALIDAÇÃO DE CONTEXTO (NORMAL)
+            if mode == "NORMAL":
+                if group_size > 1:
+                    # Verifica se todos os acompanhantes têm nome e idade
+                    if len(companions) < (group_size - 1):
+                        return {"error": f"Faltam dados dos acompanhantes. Preciso do nome e idade dos {group_size - 1} extras."}
+                    for c in companions:
+                        if not c.get("name") or not c.get("age"):
+                            return {"error": "Cada acompanhante deve ter nome e idade informados."}
+                
+                # --- APLICAR REGRAS DE NEGÓCIO AO TOTAL ---
+                final_total = total_amount
+                multiplier_label = ""
+                
+                # 1. Multiplicador de Fim de Semana
+                fds_rule = next((rule for rule in active_rules if rule.name == "Tarifa Fim de Semana"), None)
+                if fds_rule:
+                    has_weekend = any((ci + timedelta(days=i)).weekday() in [4, 5, 6] for i in range(days))
+                    if has_weekend:
+                        mult = float(fds_rule.config.get("multiplier", 1.0))
+                        final_total *= mult
+                        multiplier_label += f" | Ajuste FDS (x{mult})"
+
+                # 2. Desconto Estadia Longa
+                long_rule = next((rule for rule in active_rules if rule.name == "Desconto Estadia Longa"), None)
+                if long_rule:
+                    min_d = int(long_rule.config.get("min_days", 999))
+                    if days >= min_d:
+                        disc = float(long_rule.config.get("discount_percent", 0)) / 100.0
+                        final_total *= (1 - disc)
+                        multiplier_label += f" | Desc. Longa Estadia (-{disc*100}%)"
+
+                # Criar 1 reserva
+                booking = models.Booking(
+                    guest_id=guest_id, room_id=room_id, check_in_date=ci, check_out_date=co,
+                    check_in_time=check_in_time, check_out_time=check_out_time,
+                    total_guests=group_size, daily_rate=0.0, total_amount=final_total, 
+                    mode=models.BookingMode.NORMAL, status=models.BookingStatus.PENDENTE,
+                    notes=f"{daily_rate_label}{multiplier_label}"
+                )
+                db.add(booking)
+                db.commit()
+                db.refresh(booking)
+                for c in companions:
+                    db.add(models.Companion(booking_id=booking.id, name=c['name'], age=int(c['age'])))
+                db.commit()
+                return {"success": True, "booking_id": booking.id, "total": final_total, "type": "FAMILIA", "label": f"{daily_rate_label}{multiplier_label}"}
+
+            # VALIDAÇÃO DE CONTEXTO (CARAVANA)
+            if mode == "CARAVANA":
+                if not event or event.daily_rate <= 0:
+                    return {"error": "Reservas de Caravana exigem um Evento cadastrado com tarifa por pessoa."}
+                
+                # Seleciona quartos disponíveis o suficiente para cobrir a capacidade
+                occupied = [r[0] for r in db.query(models.Booking.room_id).filter(
+                    models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
+                    models.Booking.check_out_date > ci,
+                    models.Booking.check_in_date < co
+                ).all()]
+                
+                # Busca quartos não ocupados, priorizando os de maior capacidade
+                available_rooms = db.query(models.Room).filter(
+                    models.Room.id.notin_(occupied),
+                    models.Room.status != models.RoomStatus.MANUTENCAO
+                ).order_by(models.Room.max_capacity.desc()).all()
+                
+                target_rooms = []
+                current_cap = 0
+                for r in available_rooms:
+                    target_rooms.append(r)
+                    current_cap += r.max_capacity
+                    if current_cap >= group_size:
+                        break
+                
+                if current_cap < group_size:
+                    return {"error": f"Capacidade insuficiente. Apenas {current_cap} vagas disponíveis, mas o grupo é de {group_size}."}
+
+                total_amount_global = daily_rate * group_size * days
+                amount_per_room = total_amount_global / len(target_rooms) if target_rooms else 0
+                
+                main_booking_id = None
+                for r in target_rooms:
+                    b = models.Booking(
+                        guest_id=guest_id, room_id=r.id, check_in_date=ci, check_out_date=co,
+                        check_in_time=check_in_time, check_out_time=check_out_time,
+                        total_guests=group_size, daily_rate=daily_rate, total_amount=amount_per_room,
+                        mode=models.BookingMode.CARAVANA, status=models.BookingStatus.PENDENTE,
+                        notes=f"Líder da Caravana: {guest.name}. Grupo de {group_size} pessoas. (Vaga total selecionada: {current_cap})"
+                    )
+                    db.add(b)
+                    db.commit()
+                    db.refresh(b)
+                    if not main_booking_id: main_booking_id = b.id
+                
+                return {
+                    "success": True, 
+                    "leader_booking_id": main_booking_id, 
+                    "total": total_amount_global, 
+                    "rooms_blocked": len(target_rooms), 
+                    "total_capacity_reserved": current_cap,
+                    "type": "CARAVANA"
+                }
+
+        return {"error": "Ação inválida."}
+
+    # Mantemos ferramentas de busca para o fluxo de identificação
+    @tool
+    def find_guest(cpf: str = "", name: str = "") -> dict:
+        """Busca hóspede por CPF ou Nome."""
+        if cpf:
+            clean_cpf = "".join(filter(str.isdigit, cpf))
+            g = db.query(models.Guest).filter(models.Guest.document == clean_cpf).first()
+            if g: return {"id": g.id, "name": g.name, "cpf": g.document}
+        if name:
+            gs = db.query(models.Guest).filter(models.Guest.name.ilike(f"%{name}%")).all()
+            return {"results": [{"id": x.id, "name": x.name} for x in gs]}
+        return {"error": "Nenhum dado informado."}
+
+    tools = [smart_booking_engine, find_guest]
     llm_with_tools = llm.bind_tools(tools)
 
-    # --- LANGGRAPH SETUP ---
-    sys_msg = SystemMessage(content="""Você é o **Especialista em Atendimento e Reservas da Pousada System**, um recepcionista humano e supereficiente. Seu objetivo é guiar o hóspede pelo processo de reserva.
+    sys_msg = SystemMessage(content="""Você é o Especialista de Reservas da Pousada.
+Sua missão é conduzir o hóspede até a reserva, garantindo a coleta correta de dados.
 
-### SUA ROTINA DE ATENDIMENTO:
-1. **Identificação & Boas-vinda**: Você é o anfitrião digital. Comece com uma recepção calorosa. Pergunte o CPF/Documento.
-2. **Hóspede JÁ CADASTRADO**: Se 'find_guest_by_cpf' retornar os dados do hóspede (id, name, email, phone), ele JÁ ESTÁ no sistema.
-   - **MUITO IMPORTANTE**: GUARDE o 'id' do hóspede. Você DEVE usar estritamente este 'id' ao chamar 'create_pending_booking'. NUNCA invente IDs falsos ou suponha o ID.
-   - **NÃO peça Nome, Email, WhatsApp, Data de Nascimento ou Endereço novamente.** Esses dados já existem.
-   - Cumprimente-o pelo nome: "Olá, [NOME]! Que bom ter você de volta."
-   - Vá DIRETO para: "Para qual período deseja reservar? (Check-in, Check-out, e quantas pessoas?)"
-3. **Hóspede NÃO CADASTRADO**: Se 'find_guest_by_cpf' retornar erro, ofereça IMEDIATAMENTE o link:
-   `[📋 Completar meu Cadastro](/registrar?cpf=XXXX)` (substitua XXXX pelo CPF informado).
-   - Explique que isso agiliza o processo.
-   - **Fallback**: Se o hóspede preferir continuar no chat, colete os dados em 3 grupos rápidos:
-     - Grupo 1: Nome, Email, WhatsApp.
-     - Grupo 2: Data de Nascimento, Profissão.
-     - Grupo 3: CEP, Cidade, Estado.
-4. **CÁLCULO DE DATAS**: Seja preciso (ex: "hoje" dia 8, "amanhã por 2 dias" -> In: 09, Out: 11).
-5. **Disponibilidade**: Use 'check_availability' com a capacidade correta e sugira quartos com preço.
-6. **Voucher & Confirmação**: Apresente um resumo formatado e, após "de acordo", crie a reserva PENDENTE.
-   - *REGRA*: O hóspede principal conta como 1. 'companions' é apenas para acompanhantes EXTRAS. Se for 1 pessoa, envie companions=[].
-7. **Eventos e Calendário**: Use 'search_events' sempre que o hóspede falar sobre eventos, festas ou nomes como 'PHN', 'Hosana'.
-   - Se ele perguntar "quando é o evento X?", procure e informe as datas.
-   - Se ele disser "quero reserva para o evento X", procure o evento, pegue as datas e use-as para chamar 'check_availability' automaticamente.
-8. **Gestão de Grupos e Caravanas**: Se o hóspede pedir para muitas pessoas (ex: 20 pessoas):
-   - Chame 'check_availability' com a capacidade total.
-   - Se nenhum quarto individual couber todo mundo, olhe para o `total_available_capacity`.
-   - Se a capacidade total for suficiente, proponha dividir o grupo: "Temos espaço para os 20! Podemos usar o Quarto A (10 pessoas) e o Quarto B (10 pessoas)."
-   - Explique que o check-in é individual por quarto ou centralizado conforme ele preferir.
-9. **Explicação de Preços (Modelo de Diária)**: Sempre considere o `pricing_model_active` retornado por 'get_current_context'.
-   - Se o modelo for **'per_person'**: Explique que o valor é individual: "A diária é de R$ X por pessoa."
-   - **MUITO IMPORTANTE**: No modelo 'per_person', o preço da ferramenta é UNITÁRIO. Você DEVE multiplicar: `Valor * Hóspedes * Noites` para dar o total geral. Nunca mostre apenas o valor de 1 diária de quarto se houver 20 pessoas.
-   - Se o modelo for **'per_room'**: Explique que o valor é pelo quarto: "A diária do quarto é R$ X, independente do número de pessoas."
-10. **RECOMENDAÇÕES INTELIGENTES**:
-    Ao listar quartos disponíveis (check_availability), analise SEMPRE o campo 'description'. 
-    - Se o hóspede pedir algo específico (ex: 'perto do elevador', 'sem escadas', 'cama de casal', 'vista para o jardim'), prioritize quartos que mencionem isso na descrição.
-    - Se o hóspede não pedir nada específico, mas a descrição tiver algo atrativo (ex: 'Quarto mais silencioso da pousada'), use isso para "vender" a ideia.
-    - Sempre cite a característica que justifica sua recomendação. Ex: "Recomendo o quarto 101 pois ele fica no térreo, atendendo seu pedido de evitar escadas."
+DIRETRIZES DE COLETA:
+1. **IDENTIFICAÇÃO**: Peça sempre o CPF primeiro. Use 'find_guest'.
+2. **DISTINÇÃO DE MODO**:
+   - Se o grupo for Familiar (2-6 pessoas): Você DEVE obrigatoriamente pedir NOME e IDADE de cada companheiro antes de reservar. Não pule isso!
+   - Se o usuário falar em 'Caravana', 'Excursão' ou 'Grupo Grande': Use mode='CARAVANA'. Avise que a pousada toda será bloqueada para eles. Peça apenas o total de pessoas.
+3. **EVENTOS**: O robô de reserva já detecta eventos por data. Se encontrar um evento, informe a tarifa especial dele.
+4. **CÁLCULO**: O robô faz os cálculos. Apenas reporte o valor final.
+5. **RESPOSTA**: Seja gentil, use emojis e apresente um resumo claro antes de confirmar a reserva.
 
-### REGRAS DE OURO:
-- **MATEMÁTICA**: No modelo 'per_person', se há 20 pessoas e a diária é 100, o total de 3 noites é R$ 6.000,00. Faça a conta correta!
-- **IDENTIDADE DO HÓSPEDE**: Ao criar uma reserva, utilize apenas o `guest_id` EXATO retornado pelas ferramentas de busca ou cadastro. Se ocorreu um erro no nome e o usuário reclamar, chame a ferramenta `update_booking_guest` para corrigir passando o ID correto.
-- **NUNCA peça dados que a ferramenta já retornou.** Isso irrita o cliente.
-- **Links**: Use Markdown para botões bonitos.
-- **Tom**: Profissional, acolhedor e ágil.
-- **Ação imediata**: Chame as ferramentas assim que tiver os dados. Nunca diga "um momento".
-- **Inteligência de Datas**: Se o evento é de 10 a 13, sugira check-in no dia 10 e check-out no dia 13 (ou conforme a preferência).
-""")
+Lembre-se: Para Caravanas, não precisamos de nomes individuais, apenas do líder. Para Famílias, nomes e idades são obrigatórios para o preço estar certo.
+Sempre informe o hóspede caso alguma Regra de Negócio (como multiplicador de fim de semana ou desconto por longa estadia) seja aplicada ao valor final.""")
 
     def call_model(state: MessagesState):
         messages = [sys_msg] + state["messages"]
         response = llm_with_tools.invoke(messages)
         return {"messages": [response]}
 
+    # Graph
     workflow = StateGraph(MessagesState)
     workflow.add_node("agent", call_model)
     workflow.add_node("tools", ToolNode(tools))
-    
     workflow.add_edge(START, "agent")
-    
-    def should_continue(state: MessagesState):
-        last_message = state["messages"][-1]
-        if last_message.tool_calls:
-            return "tools"
-        return END
-
-    workflow.add_conditional_edges("agent", should_continue)
+    workflow.add_conditional_edges("agent", lambda s: "tools" if s["messages"][-1].tool_calls else END)
     workflow.add_edge("tools", "agent")
-    
     app = workflow.compile()
 
-    # --- EXECUTION ---
+    # History Transformation
     lc_messages = []
-    # Aumentamos o histórico para 40 mensagens para suportar cadastros longos
-    for h in history[-40:]:
-        if isinstance(h, dict):
-            role = h.get("role", "user")
-            content = h.get("content", "")
-            if role == "user": lc_messages.append(HumanMessage(content=content))
-            elif role == "assistant": lc_messages.append(AIMessage(content=content))
-    
+    for h in history[-20:]:
+        role = h.get("role", "user")
+        if role == "user": lc_messages.append(HumanMessage(content=h.get("content", "")))
+        elif role == "assistant": lc_messages.append(AIMessage(content=h.get("content", "")))
     lc_messages.append(HumanMessage(content=message))
-    
+
     try:
         final_state = await app.ainvoke({"messages": lc_messages})
-        final_message = final_state["messages"][-1].content
-        return {"response": final_message}
+        return {"response": final_state["messages"][-1].content}
     except Exception as e:
-        print(f"❌ Erro LangGraph no Agente Cliente: {str(e)}")
         import traceback
         traceback.print_exc()
-        return {"response": "Tive um problema técnico ao processar sua solicitação agora (Erro LangGraph). Pode repetir o que deseja?"}
+        return {"response": "Erro ao processar reserva inteligente."}

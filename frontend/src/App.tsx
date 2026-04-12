@@ -1,4 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import Landing from './pages/Landing';
+import Signup from './pages/Signup';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Rooms from './pages/Rooms';
@@ -15,6 +17,7 @@ import Settings from './pages/Settings';
 import AdminUsers from './pages/AdminUsers';
 import Chat from './pages/Chat';
 import Events from './pages/Events';
+import SuperDashboard from './pages/SuperDashboard';
 import GuestLayout from './components/GuestLayout';
 import GuestChatPage from './pages/GuestChatPage';
 import GuestRegistrationPage from './pages/GuestRegistrationPage';
@@ -23,14 +26,18 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Rota Pública (Sem Layout) */}
-        <Route path="/" element={<Login />} />
-        <Route path="/public/book" element={<PublicBooking />} />
+        {/* Rota Pública Principal (Gatilho de Vendas) */}
+        <Route path="/" element={<Landing />} />
+        <Route path="/signup" element={<Signup />} />
+        <Route path="/login" element={<Login />} />
+        
+        {/* Atendimento Público */}
+        <Route path="/:tenant_id/book" element={<PublicBooking />} />
 
         {/* Portal do Hóspede (Layout Público Premium) */}
         <Route element={<GuestLayout />}>
-          <Route path="/atendimento" element={<GuestChatPage />} />
-          <Route path="/registrar" element={<GuestRegistrationPage />} />
+          <Route path="/:tenant_id/atendimento" element={<GuestChatPage />} />
+          <Route path="/:tenant_id/registrar" element={<GuestRegistrationPage />} />
         </Route>
 
         {/* Rotas Privadas (Com Layout "ParcerIA") */}
@@ -48,9 +55,10 @@ function App() {
           <Route path="/events" element={<Events />} />
           <Route path="/admin/users" element={<AdminUsers />} />
           <Route path="/service" element={<ServicePanel />} />
+          <Route path="/super/dashboard" element={<SuperDashboard />} />
         </Route>
 
-        {/* Redireciona qualquer rota doida para o login */}
+        {/* Redireciona qualquer rota doida para a Landing */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

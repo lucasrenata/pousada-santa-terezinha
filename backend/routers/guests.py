@@ -2,12 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import models, schemas
-from database import get_db
+from database import get_db, set_tenant_context
+from .auth import get_current_staff
 
 router = APIRouter(prefix="/guests", tags=["Guests"])
 
 @router.post("/", response_model=schemas.GuestResponse)
-def create_guest(guest: schemas.GuestCreate, db: Session = Depends(get_db)):
+def create_guest(guest: schemas.GuestCreate, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
     if db.query(models.Guest).filter(models.Guest.document == guest.document).first():
         raise HTTPException(status_code=400, detail="CPF/RG já cadastrado")
     
@@ -18,25 +19,31 @@ def create_guest(guest: schemas.GuestCreate, db: Session = Depends(get_db)):
     return new_guest
 
 @router.post("/public", response_model=schemas.GuestResponse)
-def create_guest_public(guest: schemas.GuestCreate, db: Session = Depends(get_db)):
-    # Para a ficha pública, se o hóspede já existir, nós atualizamos os dados dele
-    # Isso permite que ele corrija informações ou complete o cadastro depois.
-    existing = db.query(models.Guest).filter(models.Guest.document == guest.document).first()
+def create_guest_public(guest_data: schemas.GuestPublicCreate, db: Session = Depends(get_db)):
+    # 0. Ativa RLS context a partir do payload
+    set_tenant_context(db, guest_data.tenant_id)
+
+    # 1. Busca hóspede
+    existing = db.query(models.Guest).filter(models.Guest.document == guest_data.document).first()
     if existing:
-        for key, value in guest.model_dump().items():
+        # Atualiza dados, mas retira o tenant_id para evitar erro se ele tentar injetar algo estranho
+        update_dict = guest_data.model_dump(exclude={'tenant_id'})
+        for key, value in update_dict.items():
             setattr(existing, key, value)
         db.commit()
         db.refresh(existing)
         return existing
     
-    new_guest = models.Guest(**guest.model_dump())
+    # Como o RLS já ativa o before_flush, não precisa injetar o tenant explicitamente
+    new_guest_dict = guest_data.model_dump(exclude={'tenant_id'})
+    new_guest = models.Guest(**new_guest_dict)
     db.add(new_guest)
     db.commit()
     db.refresh(new_guest)
     return new_guest
 
 @router.get("/", response_model=List[schemas.GuestResponse])
-def list_guests(q: Optional[str] = None, db: Session = Depends(get_db)):
+def list_guests(q: Optional[str] = None, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
     query = db.query(models.Guest)
     if q:
         query = query.filter(
@@ -47,14 +54,14 @@ def list_guests(q: Optional[str] = None, db: Session = Depends(get_db)):
     return query.all()
 
 @router.get("/{guest_id}", response_model=schemas.GuestResponse)
-def get_guest(guest_id: int, db: Session = Depends(get_db)):
+def get_guest(guest_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
     guest = db.query(models.Guest).filter(models.Guest.id == guest_id).first()
     if not guest:
         raise HTTPException(status_code=404, detail="Hóspede não encontrado")
     return guest
 
 @router.put("/{guest_id}", response_model=schemas.GuestResponse)
-def update_guest(guest_id: int, data: schemas.GuestUpdate, db: Session = Depends(get_db)):
+def update_guest(guest_id: int, data: schemas.GuestUpdate, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
     guest = db.query(models.Guest).filter(models.Guest.id == guest_id).first()
     if not guest:
         raise HTTPException(status_code=404, detail="Hóspede não encontrado")
@@ -67,7 +74,7 @@ def update_guest(guest_id: int, data: schemas.GuestUpdate, db: Session = Depends
     return guest
 
 @router.delete("/{guest_id}")
-def delete_guest(guest_id: int, db: Session = Depends(get_db)):
+def delete_guest(guest_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
     guest = db.query(models.Guest).filter(models.Guest.id == guest_id).first()
     if not guest:
         raise HTTPException(status_code=404, detail="Hóspede não encontrado")

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Search, Plus, BedDouble, Wrench } from 'lucide-react';
+import { ArrowLeft, Search, Plus, BedDouble, Wrench, Shield } from 'lucide-react';
 import api from '../services/api';
 
 type Role = 'admin' | 'recepcionista' | 'camareira' | 'manutencao' | 'faxina';
@@ -23,6 +23,7 @@ export default function ServicePanel() {
   const [noteRoomId, setNoteRoomId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState('');
   const [search, setSearch] = useState('');
+  const [activeTab, setActiveTab] = useState<'limpeza' | 'manutencao'>('limpeza');
 
   const rawRole = localStorage.getItem('role');
   const role = (rawRole?.toLowerCase() as Role | null) ?? null;
@@ -119,162 +120,199 @@ export default function ServicePanel() {
             <p className="text-slate-400 font-medium italic">Sincronizando status dos quartos...</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-          
-          {/* COLUNA: LIMPEZA */}
-          <div className="space-y-6">
-            <div className="flex items-center justify-between px-2">
-                <div className="flex items-center gap-3">
-                    <div className="bg-yellow-100 text-yellow-700 p-2 rounded-xl">
-                        <BedDouble size={20} />
-                    </div>
-                    <h3 className="text-xl font-bold text-slate-800">Aguardando Limpeza</h3>
-                </div>
-                <span className="bg-white px-3 py-1 rounded-full text-xs font-bold border border-yellow-200 text-yellow-700 shadow-sm">
-                    {cleaningRooms.length} unidades
-                </span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {cleaningRooms.map((r) => (
-                <div key={r.id} className="bg-white rounded-3xl shadow-sm border border-slate-200 p-5 group hover:shadow-md transition-all duration-300">
-                  <div className="flex items-start justify-between mb-4">
-                    <div>
-                      <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Unidade</span>
-                      <p className="text-3xl font-black text-slate-800">#{r.id}</p>
-                    </div>
-                    {statusBadge(r.status)}
-                  </div>
-                  
-                  <div className="bg-slate-50 rounded-2xl p-3 mb-4">
-                    <p className="text-xs font-medium text-slate-500">Categoria: <span className="text-slate-800">{r.type}</span></p>
-                  </div>
-
-                  <button
-                    onClick={() => markClean(r.id)}
-                    disabled={role !== 'camareira' && role !== 'faxina' && role !== 'admin'}
-                    className={`w-full py-3 rounded-2xl text-sm font-bold transition-all shadow-sm ${
-                      (role === 'camareira' || role === 'faxina' || role === 'admin') 
-                        ? 'bg-yellow-500 text-white hover:bg-yellow-600 active:scale-95' 
-                        : 'bg-slate-50 text-slate-400 cursor-not-allowed'
-                    }`}
-                  >
-                    Concluir Limpeza
-                  </button>
-                </div>
-              ))}
-              {cleaningRooms.length === 0 && (
-                <div className="col-span-full py-12 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200 text-center">
-                    <p className="text-slate-400 font-medium italic">Tudo limpo por aqui! ✨</p>
-                </div>
-              )}
-            </div>
+        <div className="space-y-8">
+          {/* NAVEGAÇÃO POR ABAS */}
+          <div className="flex p-1.5 bg-slate-100 rounded-2xl w-full sm:w-fit gap-1 border border-slate-200">
+            <button
+              onClick={() => setActiveTab('limpeza')}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-3 px-8 py-3 rounded-xl font-bold transition-all ${
+                activeTab === 'limpeza' 
+                ? 'bg-white text-yellow-600 shadow-md ring-1 ring-slate-200/50' 
+                : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <BedDouble size={18} />
+              <span>Aguardando Limpeza</span>
+              <span className={`px-2 py-0.5 rounded-lg text-[10px] ${
+                activeTab === 'limpeza' ? 'bg-yellow-100 text-yellow-700' : 'bg-slate-200 text-slate-500'
+              }`}>
+                {cleaningRooms.length}
+              </span>
+            </button>
+            <button
+              onClick={() => setActiveTab('manutencao')}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-3 px-8 py-3 rounded-xl font-bold transition-all ${
+                activeTab === 'manutencao' 
+                ? 'bg-white text-indigo-600 shadow-md ring-1 ring-slate-200/50' 
+                : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <Wrench size={18} />
+              <span>Manutenção Ativa</span>
+              <span className={`px-2 py-0.5 rounded-lg text-[10px] ${
+                activeTab === 'manutencao' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-500'
+              }`}>
+                {maintenanceRooms.length}
+              </span>
+            </button>
           </div>
 
-          {/* COLUNA: MANUTENÇÃO */}
-          <div className="space-y-6">
-            <div className="flex items-center justify-between px-2">
-                <div className="flex items-center gap-3">
-                    <div className="bg-stone-100 text-stone-700 p-2 rounded-xl">
-                        <Wrench size={20} />
+          <div className="min-h-[500px]">
+            {activeTab === 'limpeza' && (
+              <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6">
+                  {cleaningRooms.map((r) => (
+                    <div key={r.id} className="bg-white rounded-3xl shadow-sm border border-slate-200 p-6 group hover:shadow-lg transition-all duration-300 relative overflow-hidden">
+                      <div className="absolute top-0 right-0 w-24 h-24 bg-yellow-400/5 rounded-full -mr-8 -mt-8" />
+                      
+                      <div className="flex items-start justify-between mb-6">
+                        <div>
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Unidade</span>
+                          <p className="text-4xl font-black text-slate-800">#{r.id}</p>
+                        </div>
+                        {statusBadge(r.status)}
+                      </div>
+                      
+                      <div className="bg-slate-50 rounded-2xl p-4 mb-6">
+                        <div className="flex items-center gap-2 text-slate-600">
+                          <BedDouble size={14} className="text-slate-400" />
+                          <p className="text-sm font-semibold">{r.type}</p>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => markClean(r.id)}
+                        disabled={role !== 'camareira' && role !== 'faxina' && role !== 'admin'}
+                        className={`w-full py-4 rounded-2xl text-sm font-black transition-all shadow-md ${
+                          (role === 'camareira' || role === 'faxina' || role === 'admin') 
+                            ? 'bg-yellow-500 text-white hover:bg-yellow-600 hover:shadow-yellow-200 active:scale-95' 
+                            : 'bg-slate-50 text-slate-400 cursor-not-allowed'
+                        }`}
+                      >
+                        CONCLUIR LIMPEZA
+                      </button>
                     </div>
-                    <h3 className="text-xl font-bold text-slate-800">Manutenção Ativa</h3>
+                  ))}
+                  {cleaningRooms.length === 0 && (
+                    <div className="col-span-full py-24 bg-slate-50/50 rounded-3xl border-2 border-dashed border-slate-200 text-center">
+                        <div className="bg-white w-16 h-16 rounded-full shadow-sm flex items-center justify-center mx-auto mb-4 border border-slate-200">
+                          <p className="text-2xl">✨</p>
+                        </div>
+                        <p className="text-slate-500 font-bold text-lg">Tudo limpo por aqui!</p>
+                        <p className="text-slate-400 text-sm">Não há quartos aguardando faxina no momento.</p>
+                    </div>
+                  )}
                 </div>
-                <span className="bg-white px-3 py-1 rounded-full text-xs font-bold border border-stone-200 text-stone-700 shadow-sm">
-                    {maintenanceRooms.length} unidades
-                </span>
-            </div>
+              </div>
+            )}
 
-            {/* Listagem Ativa */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {maintenanceRooms.map((r) => (
-                <div key={r.id} className="bg-white rounded-3xl shadow-sm border border-slate-200 p-5 border-l-8 border-l-stone-400">
-                  <div className="flex items-start justify-between mb-2">
-                    <p className="text-2xl font-black text-slate-800">#{r.id}</p>
-                    {statusBadge(r.status)}
-                  </div>
-                  
-                  <div className="bg-stone-50 rounded-2xl p-4 mb-4 min-h-[80px]">
-                    <p className="text-xs font-bold text-stone-500 uppercase mb-1">Motivo/Nota:</p>
-                    <p className="text-sm text-slate-700 font-medium leading-relaxed italic">"{r.maintenance_note || 'Sem observações'}"</p>
-                  </div>
+            {activeTab === 'manutencao' && (
+              <div className="space-y-10 animate-in fade-in slide-in-from-bottom-2 duration-500">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6">
+                  {maintenanceRooms.map((r) => (
+                    <div key={r.id} className="bg-white rounded-3xl shadow-sm border border-slate-200 p-6 border-t-8 border-t-slate-500 hover:shadow-lg transition-all relative overflow-hidden group">
+                      <div className="flex items-start justify-between mb-4">
+                        <div className="flex flex-col">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Unidade</span>
+                          <p className="text-4xl font-black text-slate-800">#{r.id}</p>
+                        </div>
+                        {statusBadge(r.status)}
+                      </div>
+                      
+                      <div className="bg-slate-50 rounded-2xl p-4 mb-6 min-h-[100px] border border-slate-100 group-hover:bg-slate-100 transition-colors">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Wrench size={12} className="text-slate-400" />
+                          <span className="text-[10px] font-bold text-slate-400 uppercase">Relatório Técnico</span>
+                        </div>
+                        <p className="text-sm text-slate-700 font-medium leading-relaxed italic">"{r.maintenance_note || 'Sem observações detalhadas.'}"</p>
+                      </div>
 
-                  <button
-                    onClick={() => markClean(r.id)}
-                    disabled={role !== 'manutencao' && role !== 'admin'}
-                    className={`w-full py-3 rounded-2xl text-sm font-bold transition-all ${
-                      (role === 'manutencao' || role === 'admin') 
-                        ? 'bg-stone-800 text-white hover:bg-stone-900 active:scale-95 shadow-lg' 
-                        : 'bg-slate-50 text-slate-400 cursor-not-allowed border border-slate-100'
-                    }`}
-                  >
-                    Liberar Quarto
-                  </button>
+                      <button
+                        onClick={() => markClean(r.id)}
+                        disabled={role !== 'manutencao' && role !== 'admin' && role !== 'faxina' && role !== 'camareira'}
+                        className={`w-full py-4 rounded-2xl text-sm font-black transition-all shadow-md group-hover:scale-[1.02] ${
+                          (role === 'manutencao' || role === 'admin' || role === 'faxina' || role === 'camareira') 
+                            ? 'bg-slate-800 text-white hover:bg-slate-900 active:scale-95' 
+                            : 'bg-slate-50 text-slate-400 cursor-not-allowed border border-slate-100'
+                        }`}
+                      >
+                        LIBERAR QUARTO
+                      </button>
+                    </div>
+                  ))}
+                  {maintenanceRooms.length === 0 && (
+                    <div className="col-span-full py-24 bg-slate-50/50 rounded-3xl border-2 border-dashed border-slate-200 text-center">
+                        <div className="bg-white w-16 h-16 rounded-full shadow-sm flex items-center justify-center mx-auto mb-4 border border-slate-200">
+                          <Wrench size={24} className="text-slate-300" />
+                        </div>
+                        <p className="text-slate-500 font-bold text-lg">Sem manutenções ativas</p>
+                        <p className="text-slate-400 text-sm">Toda a infraestrutura está em perfeito estado. 🙌</p>
+                    </div>
+                  )}
                 </div>
-              ))}
-              {maintenanceRooms.length === 0 && (
-                <div className="col-span-full py-12 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200 text-center">
-                    <p className="text-slate-400 font-medium italic">Sem reparos pendentes. 🙌</p>
-                </div>
-              )}
-            </div>
 
-            {/* Ação de Interdição */}
-            <div className="mt-8 bg-gradient-to-br from-slate-800 to-slate-900 rounded-3xl p-6 text-white shadow-xl relative overflow-hidden">
-                <div className="relative z-10">
-                    <h4 className="text-lg font-bold mb-4 flex items-center gap-2">
-                        <Plus size={20} className="text-yellow-400" />
-                        Nova Interdição Técnica
-                    </h4>
-                    
-                    <div className="space-y-4">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div className="space-y-1">
-                                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Quarto</label>
+                <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-[2.5rem] p-8 text-white shadow-2xl relative overflow-hidden border border-slate-700 max-w-4xl">
+                    <div className="relative z-10">
+                        <div className="flex items-center gap-4 mb-8">
+                          <div className="bg-blue-600 p-3 rounded-2xl shadow-lg ring-4 ring-blue-500/20">
+                            <Plus size={24} className="text-white" />
+                          </div>
+                          <div>
+                            <h4 className="text-2xl font-black tracking-tight">Interdição Técnica</h4>
+                            <p className="text-slate-400 text-xs font-semibold uppercase tracking-widest">Bloquear unidade para reparos</p>
+                          </div>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Selecione o Quarto</label>
                                 <select
-                                  className="w-full bg-slate-700/50 border border-slate-600 rounded-2xl px-4 py-3 text-white outline-none focus:ring-2 ring-blue-500 transition-all font-medium"
+                                  className="w-full bg-slate-700/50 border border-slate-600 rounded-2xl px-5 py-4 text-white outline-none focus:ring-4 ring-blue-500/30 transition-all font-bold appearance-none cursor-pointer"
                                   value={noteRoomId ?? ''}
                                   onChange={(e) => setNoteRoomId(e.target.value)}
                                 >
-                                  <option value="" disabled className="bg-slate-900">Selecione o alvo</option>
+                                  <option value="" disabled className="bg-slate-900">Qual quarto?</option>
                                   {filteredRooms.map((r) => (
                                     <option key={r.id} value={r.id} className="bg-slate-900">
-                                      {r.id} — {r.type} {r.status === 'ocupado' ? '(OCUPADO)' : ''}
+                                      #{r.id} — {r.type} {r.status === 'ocupado' ? '(OCUPADO)' : ''}
                                     </option>
                                   ))}
                                 </select>
                             </div>
-                            <div className="space-y-1">
-                                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Descrição</label>
+                            <div className="md:col-span-2 space-y-2">
+                                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Descrição do Problema</label>
                                 <input
-                                  className="w-full bg-slate-700/50 border border-slate-600 rounded-2xl px-4 py-3 text-white outline-none focus:ring-2 ring-blue-500 transition-all placeholder:text-slate-500"
-                                  placeholder="Ex: Ar condicionado vazando"
+                                  className="w-full bg-slate-700/50 border border-slate-600 rounded-2xl px-5 py-4 text-white outline-none focus:ring-4 ring-blue-500/30 transition-all placeholder:text-slate-500 font-medium"
+                                  placeholder="Detalhe o que precisa ser consertado..."
                                   value={noteText}
                                   onChange={(e) => setNoteText(e.target.value)}
                                 />
                             </div>
                         </div>
 
-                        <button
-                          onClick={saveMaintenance}
-                          disabled={!noteRoomId || !noteText.trim()}
-                          className={`w-full py-4 rounded-2xl text-sm font-bold transition-all shadow-lg ${
-                            noteRoomId && noteText.trim()
-                              ? 'bg-blue-600 text-white hover:bg-blue-700 active:scale-95'
-                              : 'bg-slate-700 text-slate-500 cursor-not-allowed border border-slate-600'
-                          }`}
-                        >
-                          Interditar Quarto Imediatamente
-                        </button>
+                        <div className="flex justify-end mt-8">
+                          <button
+                            onClick={saveMaintenance}
+                            disabled={!noteRoomId || !noteText.trim()}
+                            className={`px-12 py-4 rounded-2xl text-sm font-black transition-all shadow-xl flex items-center gap-3 ${
+                              noteRoomId && noteText.trim()
+                                ? 'bg-blue-600 text-white hover:bg-blue-700 hover:-translate-y-1 active:scale-95 active:translate-y-0'
+                                : 'bg-slate-700 text-slate-500 cursor-not-allowed border border-slate-600'
+                            }`}
+                          >
+                            <Shield size={18} />
+                            CONFIRMAR BLOQUEIO
+                          </button>
+                        </div>
+                    </div>
+                    <div className="absolute right-0 top-0 w-64 h-64 bg-blue-600/10 rounded-full -mr-32 -mt-32 blur-3xl pointer-events-none" />
+                    <div className="absolute -right-12 -bottom-12 opacity-5 rotate-12 pointer-events-none">
+                        <Wrench size={240} />
                     </div>
                 </div>
-                {/* Efeito Visual */}
-                <div className="absolute -right-8 -bottom-8 opacity-10">
-                    <Wrench size={120} />
-                </div>
-            </div>
+              </div>
+            )}
           </div>
-
         </div>
       )}
     </div>
