@@ -10,6 +10,17 @@ def migrate():
             conn.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS check_out_time VARCHAR DEFAULT '14:00'"))
             conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS cost_price FLOAT DEFAULT 0.0"))
             conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS markup_percent FLOAT DEFAULT 0.0"))
+            # Adicionando colunas recém-criadas na branch main que não estavam na nuvem
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name VARCHAR"))
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR"))
+            
+            conn.execute(text("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS max_capacity INTEGER DEFAULT 2"))
+            conn.execute(text("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS maintenance_note TEXT"))
+            
+            conn.execute(text("ALTER TABLE guests ADD COLUMN IF NOT EXISTS document VARCHAR"))
+            conn.execute(text("ALTER TABLE guests ADD COLUMN IF NOT EXISTS birth_date DATE"))
+            conn.execute(text("ALTER TABLE guests ADD COLUMN IF NOT EXISTS profession VARCHAR"))
+            
             # Adicionando tenant_id nas tabelas legadas para a VPS
             tables = [
                 "users", "rooms", "guests", "products", "bookings", 
