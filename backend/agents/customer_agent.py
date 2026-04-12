@@ -25,25 +25,15 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
         return {"response": "A chave da OpenAI não foi configurada. Por favor, adicione sua API Key no arquivo .env."}
 
     # =========================================================================
-    # ROBÔ DE RESERVAS (Smart Booking Engine)
+    # MICRO-ROBÔS FOCADOS EM TAREFAS
     # =========================================================================
+    
     @tool
-    def smart_booking_engine(
-        action: str, 
-        mode: str = "NORMAL", 
-        guest_id: int = None,
-        check_in: str = "", 
-        check_out: str = "", 
-        group_size: int = 1,
-        room_id: str = None,
-        companions: List[dict] = [],
-        check_in_time: str = "14:00",
-        check_out_time: str = "14:00"
-    ) -> dict:
+    def robot_availability_checker(check_in: str, check_out: str, group_size: int = 1) -> dict:
         """
-        Robô unificado para consulta e reserva.
-        Ações: 'check' (ver vagas), 'reserve' (criar reserva).
-        Modos: 'NORMAL' (família/amigos), 'CARAVANA' (bloqueia pousada toda).
+        Verifica quartos disponíveis, calcula a capacidade e reporta eventos e restrições.
+        Use SEMPRE que o cliente perguntar "tem vaga?", "qual o preço?", "quais os quartos?".
+        Datas devem ser no formato YYYY-MM-DD.
         """
         try:
             set_tenant_context(db, tenant_id)
@@ -51,198 +41,245 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
             co = datetime.strptime(check_out, "%Y-%m-%d").date()
         except:
             return {"error": "Datas obrigatórias no formato YYYY-MM-DD."}
-
-        # 1. Busca Eventos no Período
-        event = db.query(models.Event).filter(
-            models.Event.start_date <= co,
-            models.Event.end_date >= ci
-        ).first()
-
-        days = calculate_daily_rates_count(ci, co, check_in_time, check_out_time)
+            
+        event = db.query(models.Event).filter(models.Event.start_date <= co, models.Event.end_date >= ci).first()
+        days = calculate_daily_rates_count(ci, co, "14:00", "14:00")
         settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
         active_rules = db.query(models.BusinessRule).filter(models.BusinessRule.is_active == True).all()
         
-        # --- AÇÃO: CHECK ---
-        if action == "check":
-            occupied = [r[0] for r in db.query(models.Booking.room_id).filter(
-                models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
-                models.Booking.check_out_date > ci,
-                models.Booking.check_in_date < co
-            ).all()]
-            rooms = db.query(models.Room).filter(models.Room.id.notin_(occupied), models.Room.status != models.RoomStatus.MANUTENCAO).all()
-            
-            # Aplicação de Restrições nas Salas Disponíveis
-            final_rooms = []
-            for r in rooms:
-                allowed = True
-                # Regra: Restrição de Casal
-                couple_rule = next((rule for rule in active_rules if rule.name == "Restrição de Casal"), None)
-                if couple_rule and group_size == 2:
-                    restricted_rooms = [rid.strip() for rid in couple_rule.config.get("room_ids", "").split(",") if rid.strip()]
-                    if r.id in restricted_rooms:
-                        # Verifica se há final de semana no período
-                        has_weekend = any((ci + timedelta(days=i)).weekday() in [4, 5, 6] for i in range(days))
-                        if has_weekend:
-                            allowed = False
-                
-                if allowed:
-                    final_rooms.append(r)
-
-            return {
-                "available_rooms": [{"id": r.id, "cap": r.max_capacity, "price": base_rate or r.price_per_night} for r in final_rooms],
-                "event_info": msg,
-                "total_capacity": sum(r.max_capacity for r in final_rooms),
-                "pricing_model": settings.get("pousada_pricing_model", "per_person"),
-                "rules_active": [r.name for r in active_rules]
-            }
-
-        # --- AÇÃO: RESERVE ---
-        if action == "reserve":
-            if not guest_id: return {"error": "guest_id é necessário para reserva."}
-            guest = db.query(models.Guest).get(guest_id)
-            if not guest: return {"error": "Hóspede não encontrado."}
-
-            # RESOLUÇÃO DE VALORES (Tabela de Evento vs Padrao)
-            total_amount = 0.0
-            daily_rate_label = ""
-            
-            if event and (event.daily_rate_single > 0 or event.daily_rate_couple > 0):
-                # Lógica de Tarifação de Evento
-                adults = 1 + len([c for c in companions if c.get('age', 18) >= 13])
-                children = len([c for c in companions if c.get('age', 0) < 13 and c.get('age', 0) >= 7])
-                
-                if adults == 1 and event.daily_rate_single > 0:
-                    total_amount = (event.daily_rate_single + (children * event.daily_rate_child)) * days
-                    daily_rate_label = f"Tarifa Solteiro Evento: R${event.daily_rate_single}"
-                elif adults >= 2 and event.daily_rate_couple > 0:
-                    extras = adults - 2
-                    total_amount = (event.daily_rate_couple + (extras * event.daily_rate_extra) + (children * event.daily_rate_child)) * days
-                    daily_rate_label = f"Tarifa Casal Evento: R${event.daily_rate_couple}"
-                else:
-                    # Fallback para diária por pessoa se não houver lógica de casal/solteiro
-                    daily_rate = event.daily_rate or 100.0
-                    ages = [guest.age or 18] + [int(c['age']) for c in companions]
-                    pricing = calculate_reservation_total(daily_rate, days, ages, settings=settings)
-                    total_amount = pricing["total"]
-                    daily_rate_label = f"Tarifa Especial Evento: R${daily_rate}/pessoa"
-            else:
-                # Tarifas Padrão da Pousada
-                room = db.query(models.Room).get(room_id)
-                daily_rate = room.price_per_night if room else 100.0
-                ages = [guest.age or 18] + [int(c['age']) for c in companions]
-                pricing = calculate_reservation_total(daily_rate, days, ages, settings=settings)
-                total_amount = pricing["total"]
-                daily_rate_label = f"Tarifa Padrão: R${daily_rate}"
-
-            # VALIDAÇÃO DE CONTEXTO (NORMAL)
-            if mode == "NORMAL":
-                if group_size > 1:
-                    # Verifica se todos os acompanhantes têm nome e idade
-                    if len(companions) < (group_size - 1):
-                        return {"error": f"Faltam dados dos acompanhantes. Preciso do nome e idade dos {group_size - 1} extras."}
-                    for c in companions:
-                        if not c.get("name") or not c.get("age"):
-                            return {"error": "Cada acompanhante deve ter nome e idade informados."}
-                
-                # --- APLICAR REGRAS DE NEGÓCIO AO TOTAL ---
-                final_total = total_amount
-                multiplier_label = ""
-                
-                # 1. Multiplicador de Fim de Semana
-                fds_rule = next((rule for rule in active_rules if rule.name == "Tarifa Fim de Semana"), None)
-                if fds_rule:
+        occupied = [r[0] for r in db.query(models.Booking.room_id).filter(
+            models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
+            models.Booking.check_out_date > ci,
+            models.Booking.check_in_date < co
+        ).all()]
+        
+        rooms = db.query(models.Room).filter(models.Room.id.notin_(occupied), models.Room.status != models.RoomStatus.MANUTENCAO).all()
+        
+        final_rooms = []
+        for r in rooms:
+            allowed = True
+            couple_rule = next((rule for rule in active_rules if rule.name == "Restrição de Casal"), None)
+            if couple_rule and group_size == 2:
+                restricted_rooms = [rid.strip() for rid in couple_rule.config.get("room_ids", "").split(",") if rid.strip()]
+                if r.id in restricted_rooms:
                     has_weekend = any((ci + timedelta(days=i)).weekday() in [4, 5, 6] for i in range(days))
                     if has_weekend:
-                        mult = float(fds_rule.config.get("multiplier", 1.0))
-                        final_total *= mult
-                        multiplier_label += f" | Ajuste FDS (x{mult})"
+                        allowed = False
+            if allowed:
+                final_rooms.append(r)
 
-                # 2. Desconto Estadia Longa
-                long_rule = next((rule for rule in active_rules if rule.name == "Desconto Estadia Longa"), None)
-                if long_rule:
-                    min_d = int(long_rule.config.get("min_days", 999))
-                    if days >= min_d:
-                        disc = float(long_rule.config.get("discount_percent", 0)) / 100.0
-                        final_total *= (1 - disc)
-                        multiplier_label += f" | Desc. Longa Estadia (-{disc*100}%)"
+        return {
+            "available_rooms": [{"id": r.id, "cap": r.max_capacity, "price": r.price_per_night} for r in final_rooms],
+            "event_info": getattr(event, "name", "Nenhum evento") if event else "Nenhum evento",
+            "total_capacity_available": sum(r.max_capacity for r in final_rooms),
+            "pricing_model": settings.get("pousada_pricing_model", "per_person"),
+            "rules_active": [r.name for r in active_rules]
+        }
 
-                # Criar 1 reserva
-                booking = models.Booking(
-                    guest_id=guest_id, room_id=room_id, check_in_date=ci, check_out_date=co,
-                    check_in_time=check_in_time, check_out_time=check_out_time,
-                    total_guests=group_size, daily_rate=0.0, total_amount=final_total, 
-                    mode=models.BookingMode.NORMAL, status=models.BookingStatus.PENDENTE,
-                    notes=f"{daily_rate_label}{multiplier_label}"
-                )
-                db.add(booking)
-                db.commit()
-                db.refresh(booking)
-                for c in companions:
-                    db.add(models.Companion(booking_id=booking.id, name=c['name'], age=int(c['age'])))
-                db.commit()
-                return {"success": True, "booking_id": booking.id, "total": final_total, "type": "FAMILIA", "label": f"{daily_rate_label}{multiplier_label}"}
+    @tool
+    def robot_guest_registrar(name: str, document: str, phone: str = "", birth_date: str = "", email: str = "") -> dict:
+        """
+        Cadastra um HÓSPEDE NOVO no sistema se ele não existir.
+        Use isto ANTES de tentar fazer uma reserva caso o 'find_guest' não ache a pessoa.
+        document (CPF) é obrigatório. birth_date deve ser YYYY-MM-DD.
+        """
+        set_tenant_context(db, tenant_id)
+        
+        clean_doc = "".join(filter(str.isdigit, document))
+        exists = db.query(models.Guest).filter(models.Guest.document == clean_doc).first()
+        if exists: return {"error": "CPF já cadastrado. Use find_guest.", "id": exists.id}
+        
+        bd = None
+        if birth_date:
+            try: bd = datetime.strptime(birth_date, "%Y-%m-%d").date()
+            except: pass
+            
+        g = models.Guest(name=name, document=clean_doc, phone=phone, email=email, birth_date=bd)
+        db.add(g)
+        db.commit()
+        db.refresh(g)
+        return {"success": True, "guest_id": g.id, "message": "Hóspede cadastrado com sucesso."}
 
-            # VALIDAÇÃO DE CONTEXTO (CARAVANA)
-            if mode == "CARAVANA":
-                if not event or event.daily_rate <= 0:
-                    return {"error": "Reservas de Caravana exigem um Evento cadastrado com tarifa por pessoa."}
-                
-                # Seleciona quartos disponíveis o suficiente para cobrir a capacidade
-                occupied = [r[0] for r in db.query(models.Booking.room_id).filter(
-                    models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
-                    models.Booking.check_out_date > ci,
-                    models.Booking.check_in_date < co
-                ).all()]
-                
-                # Busca quartos não ocupados, priorizando os de maior capacidade
-                available_rooms = db.query(models.Room).filter(
-                    models.Room.id.notin_(occupied),
-                    models.Room.status != models.RoomStatus.MANUTENCAO
-                ).order_by(models.Room.max_capacity.desc()).all()
-                
-                target_rooms = []
-                current_cap = 0
-                for r in available_rooms:
-                    target_rooms.append(r)
-                    current_cap += r.max_capacity
-                    if current_cap >= group_size:
-                        break
-                
-                if current_cap < group_size:
-                    return {"error": f"Capacidade insuficiente. Apenas {current_cap} vagas disponíveis, mas o grupo é de {group_size}."}
+    @tool
+    def robot_family_reservation(
+        guest_id: int, room_id: str, check_in: str, check_out: str, companions: List[dict], check_in_time: str = "14:00", check_out_time: str = "14:00"
+    ) -> dict:
+        """
+        Cria uma reserva FAMILIAR ou de AMIGOS para 1 único quarto (Até 6 pessoas).
+        Você OBRIGATORIAMENTE precisa passar a lista de companions (ex: [{"name":"Maria", "age":35}]).
+        """
+        try:
+            set_tenant_context(db, tenant_id)
+            ci = datetime.strptime(check_in, "%Y-%m-%d").date()
+            co = datetime.strptime(check_out, "%Y-%m-%d").date()
+        except:
+            return {"error": "Datas obrigatórias no formato YYYY-MM-DD."}
+            
+        group_size = 1 + len(companions)
+        guest = db.query(models.Guest).get(guest_id)
+        if not guest: return {"error": "Hóspede não encontrado."}
+        
+        if len(companions) < (group_size - 1):
+            return {"error": f"Faltam dados dos acompanhantes. Preciso do nome e idade dos {group_size - 1} extras."}
+        for c in companions:
+            if not c.get("name") or str(c.get("age", "")) == "":
+                return {"error": "Cada acompanhante deve ter nome e idade informados."}
 
-                total_amount_global = daily_rate * group_size * days
-                amount_per_room = total_amount_global / len(target_rooms) if target_rooms else 0
-                
-                main_booking_id = None
-                for r in target_rooms:
-                    b = models.Booking(
-                        guest_id=guest_id, room_id=r.id, check_in_date=ci, check_out_date=co,
-                        check_in_time=check_in_time, check_out_time=check_out_time,
-                        total_guests=group_size, daily_rate=daily_rate, total_amount=amount_per_room,
-                        mode=models.BookingMode.CARAVANA, status=models.BookingStatus.PENDENTE,
-                        notes=f"Líder da Caravana: {guest.name}. Grupo de {group_size} pessoas. (Vaga total selecionada: {current_cap})"
-                    )
-                    db.add(b)
-                    db.commit()
-                    db.refresh(b)
-                    if not main_booking_id: main_booking_id = b.id
-                
-                return {
-                    "success": True, 
-                    "leader_booking_id": main_booking_id, 
-                    "total": total_amount_global, 
-                    "rooms_blocked": len(target_rooms), 
-                    "total_capacity_reserved": current_cap,
-                    "type": "CARAVANA"
-                }
+        event = db.query(models.Event).filter(models.Event.start_date <= co, models.Event.end_date >= ci).first()
+        days = calculate_daily_rates_count(ci, co, check_in_time, check_out_time)
+        settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
+        active_rules = db.query(models.BusinessRule).filter(models.BusinessRule.is_active == True).all()
 
-        return {"error": "Ação inválida."}
+        total_amount = 0.0
+        daily_rate_label = ""
+        
+        if event and (event.daily_rate_single > 0 or event.daily_rate_couple > 0):
+            adults = 1 + len([c for c in companions if int(c.get('age', 18)) >= 13])
+            children = len([c for c in companions if 7 <= int(c.get('age', 0)) < 13])
+            if adults == 1 and event.daily_rate_single > 0:
+                total_amount = (event.daily_rate_single + (children * event.daily_rate_child)) * days
+                daily_rate_label = f"Tarifa Solteiro Evento: R${event.daily_rate_single}"
+            elif adults >= 2 and event.daily_rate_couple > 0:
+                extras = adults - 2
+                total_amount = (event.daily_rate_couple + (extras * event.daily_rate_extra) + (children * event.daily_rate_child)) * days
+                daily_rate_label = f"Tarifa Casal Evento: R${event.daily_rate_couple}"
+            else:
+                daily_rate = event.daily_rate or 100.0
+                g_age = 18
+                if getattr(guest, "birth_date", None):
+                    today = date.today()
+                    bd = guest.birth_date
+                    g_age = today.year - bd.year - ((today.month, today.day) < (bd.month, bd.day))
+                ages = [g_age] + [int(c.get('age', 18)) for c in companions]
+                pricing = calculate_reservation_total(daily_rate, days, ages, settings=settings)
+                total_amount = pricing["total"]
+                daily_rate_label = f"Tarifa Especial Evento: R${daily_rate}/pessoa"
+        else:
+            room = db.query(models.Room).get(room_id)
+            daily_rate = room.price_per_night if room else 100.0
+            g_age = 18
+            if getattr(guest, "birth_date", None):
+                today = date.today()
+                bd = guest.birth_date
+                g_age = today.year - bd.year - ((today.month, today.day) < (bd.month, bd.day))
+            ages = [g_age] + [int(c.get('age', 18)) for c in companions]
+            pricing = calculate_reservation_total(daily_rate, days, ages, settings=settings)
+            total_amount = pricing["total"]
+            daily_rate_label = f"Tarifa Padrão: R${daily_rate}"
+
+        final_total = total_amount
+        multiplier_label = ""
+        
+        fds_rule = next((rule for rule in active_rules if rule.name == "Tarifa Fim de Semana"), None)
+        if fds_rule:
+            has_weekend = any((ci + timedelta(days=i)).weekday() in [4, 5, 6] for i in range(days))
+            if has_weekend:
+                mult = float(fds_rule.config.get("multiplier", 1.0))
+                final_total *= mult
+                multiplier_label += f" | Ajuste FDS (x{mult})"
+
+        long_rule = next((rule for rule in active_rules if rule.name == "Desconto Estadia Longa"), None)
+        if long_rule:
+            min_d = int(long_rule.config.get("min_days", 999))
+            if days >= min_d:
+                disc = float(long_rule.config.get("discount_percent", 0)) / 100.0
+                final_total *= (1 - disc)
+                multiplier_label += f" | Desc. Longa Estadia (-{disc*100}%)"
+
+        booking = models.Booking(
+            guest_id=guest_id, room_id=room_id, check_in_date=ci, check_out_date=co,
+            check_in_time=check_in_time, check_out_time=check_out_time,
+            total_guests=group_size, daily_rate=0.0, total_amount=final_total, 
+            mode=models.BookingMode.NORMAL, status=models.BookingStatus.PENDENTE,
+            notes=f"{daily_rate_label}{multiplier_label}"
+        )
+        db.add(booking)
+        db.commit()
+        db.refresh(booking)
+        for c in companions:
+            db.add(models.Companion(booking_id=booking.id, name=c['name'], age=int(c.get('age', 18))))
+        db.commit()
+        return {"success": True, "booking_id": booking.id, "total": final_total, "type": "FAMILIA", "label": f"{daily_rate_label}{multiplier_label}"}
+
+    @tool
+    def robot_caravan_organizer(
+        guest_id: int, check_in: str, check_out: str, group_size: int, check_in_time: str = "14:00", check_out_time: str = "14:00"
+    ) -> dict:
+        """
+        Organiza e cria EXCURSÕES / CARAVANAS. Distribuindo as pessoas (ex: 45) pela capacidade dos quartos disponíveis!
+        O robô varre os quartos de maior capacidade e cria os SubBookings dinamicamente para comportar o grupo.
+        Você SÓ precisa solicitar a Quantidade Total de Pessoas e o CPF do LÍDER!
+        """
+        try:
+            set_tenant_context(db, tenant_id)
+            ci = datetime.strptime(check_in, "%Y-%m-%d").date()
+            co = datetime.strptime(check_out, "%Y-%m-%d").date()
+        except:
+            return {"error": "Datas obrigatórias no formato YYYY-MM-DD."}
+            
+        guest = db.query(models.Guest).get(guest_id)
+        if not guest: return {"error": "Líder da caravana (Hóspede) não encontrado."}
+        
+        event = db.query(models.Event).filter(models.Event.start_date <= co, models.Event.end_date >= ci).first()
+        if not event or event.daily_rate <= 0:
+            return {"error": "Reservas de Caravana exigem um Evento / Pacote cadastrado com tarifa por pessoa."}
+            
+        days = calculate_daily_rates_count(ci, co, check_in_time, check_out_time)
+        daily_rate = event.daily_rate
+
+        occupied = [r[0] for r in db.query(models.Booking.room_id).filter(
+            models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
+            models.Booking.check_out_date > ci,
+            models.Booking.check_in_date < co
+        ).all()]
+        
+        available_rooms = db.query(models.Room).filter(
+            models.Room.id.notin_(occupied),
+            models.Room.status != models.RoomStatus.MANUTENCAO
+        ).order_by(models.Room.max_capacity.desc()).all()
+        
+        target_rooms = []
+        current_cap = 0
+        for r in available_rooms:
+            target_rooms.append(r)
+            current_cap += r.max_capacity
+            if current_cap >= group_size:
+                break
+        
+        if current_cap < group_size:
+            return {"error": f"Capacidade insuficiente. Apenas {current_cap} vagas disponíveis, mas a caravana é de {group_size} pessoas."}
+
+        total_amount_global = daily_rate * group_size * days
+        amount_per_room = total_amount_global / len(target_rooms) if target_rooms else 0
+        
+        main_booking_id = None
+        for r in target_rooms:
+            b = models.Booking(
+                guest_id=guest_id, room_id=r.id, check_in_date=ci, check_out_date=co,
+                check_in_time=check_in_time, check_out_time=check_out_time,
+                total_guests=group_size, daily_rate=daily_rate, total_amount=amount_per_room,
+                mode=models.BookingMode.CARAVANA, status=models.BookingStatus.PENDENTE,
+                notes=f"Líder da Caravana: {guest.name}. Distribuição Alocada dinamicamente pelo Robô. (Vaga total selecionada: {current_cap})"
+            )
+            db.add(b)
+            db.commit()
+            db.refresh(b)
+            if not main_booking_id: main_booking_id = b.id
+        
+        return {
+            "success": True, 
+            "leader_booking_id": main_booking_id, 
+            "total": total_amount_global, 
+            "rooms_blocked": len(target_rooms), 
+            "total_capacity_reserved": current_cap,
+            "type": "CARAVANA"
+        }
 
     # Mantemos ferramentas de busca para o fluxo de identificação
     @tool
     def find_guest(cpf: str = "", name: str = "") -> dict:
-        """Busca hóspede por CPF ou Nome."""
+        """Busca hóspede por CPF ou Nome. Retorna o ID."""
+        set_tenant_context(db, tenant_id)
         if cpf:
             clean_cpf = "".join(filter(str.isdigit, cpf))
             g = db.query(models.Guest).filter(models.Guest.document == clean_cpf).first()
@@ -250,27 +287,25 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
         if name:
             gs = db.query(models.Guest).filter(models.Guest.name.ilike(f"%{name}%")).all()
             return {"results": [{"id": x.id, "name": x.name} for x in gs]}
-        return {"error": "Nenhum dado informado."}
+        return {"error": "Nenhum hóspede localizado. Talvez precise usar o robot_guest_registrar."}
 
-    tools = [smart_booking_engine, find_guest]
+    tools = [robot_availability_checker, robot_guest_registrar, robot_family_reservation, robot_caravan_organizer, find_guest]
     llm_with_tools = llm.bind_tools(tools)
 
     sys_msg = SystemMessage(content="""Você é o Especialista de Reservas da Pousada.
-Sua missão é conduzir o hóspede até a reserva, garantindo a coleta correta de dados.
+Sua missão é conduzir o hóspede até a reserva de ponta a ponta.
 
-DIRETRIZES DE COLETA:
-1. **IDENTIFICAÇÃO**: Peça sempre o CPF primeiro. Use 'find_guest'.
-2. **DISTINÇÃO DE MODO**:
-   - Se o grupo for Familiar (2-6 pessoas): Você DEVE obrigatoriamente pedir NOME e IDADE de cada companheiro antes de reservar. Não pule isso!
-   - Se o usuário falar em 'Caravana', 'Excursão' ou 'Grupo Grande': Use mode='CARAVANA'. Avise que a pousada toda será bloqueada para eles. Peça apenas o total de pessoas.
-3. **EVENTOS**: O robô de reserva já detecta eventos por data. Se encontrar um evento, informe a tarifa especial dele.
-4. **CÁLCULO**: O robô faz os cálculos. Apenas reporte o valor final.
-5. **RESPOSTA**: Seja gentil, use emojis e apresente um resumo claro antes de confirmar a reserva.
+DIRETRIZES DE FLUXO (Siga a Ordem):
+1. **IDENTIFICAÇÃO**: Peça sempre o CPF. Use `find_guest`.
+2. **CADASTRO**: Se o `find_guest` disse que não existe, você SÓ PODE AVANÇAR se usar a ferramenta `robot_guest_registrar`. Peça os dados origatórios primeiro!
+3. **PESQUISA**: Se o cliente quer saber preços e vagas, use o `robot_availability_checker`.
+4. **CHAMADA DE RESERVA**:
+   - Família/Amigos/Casal (2 a 6 pessoas): Use o `robot_family_reservation`. Você DEVE pedir nome e idade de TODOS OS ACOMPANHANTES antes de chamar a ferramenta! (O guest_id vem do find_guest ou registrar)
+   - Excursão/Grupo Grande/Caravana (+15 pessoas): Use o `robot_caravan_organizer`. Não precisa de nomes, apenas de 'Quantas pessoas ao todo?' As vagas serão organizadas nos quartos dinamicamente baseando-se na capacidade deles.
+5. **RESPOSTA**: Seja gentil, use emojis, relate o sucesso claramente e avise se alguma regra de negócio (desconto longa estadia, fim de semana) alterou o valor que você disse inicialmente.
+""")
 
-Lembre-se: Para Caravanas, não precisamos de nomes individuais, apenas do líder. Para Famílias, nomes e idades são obrigatórios para o preço estar certo.
-Sempre informe o hóspede caso alguma Regra de Negócio (como multiplicador de fim de semana ou desconto por longa estadia) seja aplicada ao valor final.""")
-
-    def call_model(state: MessagesState):
+    def call_model    def call_model(state: MessagesState):
         messages = [sys_msg] + state["messages"]
         response = llm_with_tools.invoke(messages)
         return {"messages": [response]}
