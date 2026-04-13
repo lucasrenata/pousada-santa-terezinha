@@ -20,3 +20,4 @@ aiohttp>=3.8.0
 alembic>=1.13.0
 psutil>=5.9.0
 cryptography>=42.0.0
+langchain-google-genai
