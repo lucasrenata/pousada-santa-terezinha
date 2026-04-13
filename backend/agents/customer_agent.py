@@ -413,6 +413,7 @@ def convert_history_to_langchain(history: list):
             lc_messages.append(HumanMessage(content=content))
         elif role == "assistant":
             if tool_calls:
+                # O Gemini exige que ToolCalls e ToolMessages estejam em pares exatos
                 lc_messages.append(AIMessage(content=content, tool_calls=tool_calls))
             else:
                 lc_messages.append(AIMessage(content=content))
@@ -443,37 +444,38 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
 
     @tool
     def robot_check_availability(check_in: str, check_out: str, group_size: int = 1, ages: List[int] = []) -> dict:
-        """Micro-robô para consultar vagas e preços. Datas formato DD/MM ou YYYY-MM-DD. 'ages' é lista de idades."""
+        """Micro-robô para consultar vagas e preços. Use sempre que o hóspede perguntar datas, valores ou disponibilidade. 
+        Datas devem estar no formato DD/MM ou YYYY-MM-DD. 'ages' é uma lista opcional de idades."""
         return availability_check_logic(tenant_id, check_in, check_out, group_size, ages)
 
     @tool
     def robot_find_guest(cpf: str = "", name: str = "") -> dict:
-        """Micro-robô para identificar hóspedes pelo CPF ou Nome."""
+        """Micro-robô para identificar hóspedes no banco de dados. Use para verificar se o cliente já existe antes de iniciar uma reserva."""
         return find_guest_logic(tenant_id, cpf, name, base_url)
 
     @tool
     def robot_pre_validate_checklist(group_size: int, companions: List[dict] = []) -> dict:
-        """Micro-robô CHECKLIST: Verifica se você já tem nomes e idades de todos os acompanhantes."""
+        """Micro-robô de validação: Verifique se os dados de todos os acompanhantes (Nome e Idade) foram coletados antes de prosseguir."""
         return pre_validation_logic(group_size, companions)
 
     @tool
     def robot_search_events(query: str) -> dict:
-        """Micro-robô especializado em descobrir datas de EVENTOS festivos."""
+        """Micro-robô de consulta de eventos: Descubra feriados ou eventos locais para justificar preços ou sugerir datas."""
         return search_events_logic(tenant_id, query)
 
     @tool
     def robot_book_with_payment(guest_id: int, room_id: str, check_in: str, check_out: str, group_size: int, companions: List[dict] = []) -> dict:
-        """Micro-robô FINALIZADOR: Cria a reserva e gera o PIX em um só passo."""
+        """Micro-robô FINALIZADOR: Realiza a reserva e gera a cobrança PIX. Só chame após confirmação explícita do hóspede e checklist 'ready'."""
         return unified_booking_flow(tenant_id, guest_id, room_id, check_in, check_out, group_size, companions)
 
     @tool
     def robot_confirm_payment(booking_id: int, method: str = "pix") -> dict:
-        """Micro-robô financeiro: Confirma pagamentos e libera a reserva."""
+        """Micro-robô financeiro: Confirma pagamentos e libera a reserva. Use para dar baixa em depósitos."""
         return confirm_payment_logic(tenant_id, booking_id, method)
 
     @tool
     def robot_record_knowledge(content: str, category: str = "geral", importance: int = 1, guest_id: int = None) -> dict:
-        """Micro-robô de APRENDIZADO: Salva fatos importantes ou preferências do hóspede na memória."""
+        """Micro-robô de Memória: Salva fatos, preferências (ex: 'prefere andar alto') ou regras aprendidas na memória de longo prazo."""
         print(f"[TOOL_CALL] robot_record_knowledge: {content[:50]}...")
         return store_operational_memory_logic(tenant_id, content, category, guest_id, importance)
 
@@ -548,7 +550,26 @@ ESTILO: Profissional, eficiente e acolhedor, mas focado na conclusão correta da
 
     try:
         final_state = await app.ainvoke({"messages": lc_messages})
-        return {"response": final_state["messages"][-1].content}
+        response_msg = final_state["messages"][-1]
+        response_content = response_msg.content
+        
+        # --- NORMALIZAÇÃO NATIVA (THE GEMINI WAY) ---
+        # Extrai o texto de blocos complexos ou serializa para String para o banco
+        if isinstance(response_content, list):
+            full_text = ""
+            for part in response_content:
+                if isinstance(part, dict):
+                    if part.get("type") == "text":
+                        full_text += part.get("text", "")
+                elif isinstance(part, str):
+                    full_text += part
+            response_content = full_text.strip()
+        
+        # Se for um AIMessage com chamadas de ferramenta mas sem texto, o Gemini às vezes retorna vazio
+        if not response_content and hasattr(response_msg, 'tool_calls') and response_msg.tool_calls:
+            response_content = "Processando informações com meus robôs... 🤖"
+
+        return {"response": response_content}
     except Exception as e:
         import traceback
         traceback.print_exc()
