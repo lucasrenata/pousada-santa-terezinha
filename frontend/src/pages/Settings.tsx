@@ -25,6 +25,7 @@ export default function Settings() {
     hasToken: false
   });
   const [testingMp, setTestingMp] = useState(false);
+  const [savingManual, setSavingManual] = useState(false);
   const [isValidated, setIsValidated] = useState(false);
   const { toast } = useToast();
   const tenantId = localStorage.getItem('tenant_id') || '0';
@@ -122,24 +123,23 @@ export default function Settings() {
     
     setTestingMp(true);
     try {
-      // 1. Validar via API (Se vazio enviamos string vazia e o backend testa o salvo)
+      // 1. Validar via API
       const testResp = await api.post('/payments/test-config', { token: mpConfig.accessToken });
       
       if (!testResp.data.valid) {
         toast({ 
           title: "Falha na Conexão", 
-          description: testResp.data.message || "As credenciais não são válidas. Verifique os dados e tente novamente.", 
+          description: testResp.data.message || "As credenciais não são válidas.", 
           variant: "destructive" 
         });
         return;
       }
 
-      // 2. Salvar configurações (Sempre salvamos para garantir que Public Key e PIX Manual persistam)
-      // O backend agora é inteligente: se mp_access_token for vazio, ele mantém o anterior.
+      // 2. Salvar configurações MP
       await api.post('/payments/config', {
         mp_access_token: mpConfig.accessToken,
         mp_public_key: mpConfig.publicKey,
-        manual_pix_key: mpConfig.manualPixKey
+        manual_pix_key: mpConfig.manualPixKey // Mantém a chave atual ao salvar MP
       });
 
       if (mpConfig.accessToken) {
@@ -147,12 +147,11 @@ export default function Settings() {
           title: "Configuração Atualizada!", 
           description: "Suas novas credenciais foram salvas e validadas.",
         });
-        // Limpa o campo de token da UI após salvar
         setMpConfig(prev => ({ ...prev, accessToken: '' }));
       } else {
         toast({ 
           title: "Conexão Ativa!", 
-          description: "A credencial já salva no sistema está funcionando perfeitamente.",
+          description: "A credencial salva está funcionando corretamente.",
         });
       }
       
@@ -162,11 +161,42 @@ export default function Settings() {
     } catch (error) {
       toast({ 
         title: "Erro de Conexão", 
-        description: "Não foi possível validar as credenciais. Tente novamente mais tarde.", 
+        description: "Não foi possível validar as credenciais.", 
         variant: "destructive" 
       });
     } finally {
       setTestingMp(false);
+    }
+  };
+
+  const handleSaveManualPix = async () => {
+    if (!mpConfig.manualPixKey) {
+      toast({ 
+        title: "Atenção", 
+        description: "Por favor, insira uma chave PIX válida.", 
+        variant: "destructive" 
+      });
+      return;
+    }
+    
+    setSavingManual(true);
+    try {
+      await api.post('/payments/config-manual', {
+        manual_pix_key: mpConfig.manualPixKey
+      });
+      toast({ 
+        title: "PIX Manual Salvo!", 
+        description: "Sua chave de fallback foi atualizada com sucesso.",
+      });
+      loadMpConfig();
+    } catch (error) {
+      toast({ 
+        title: "Erro ao Salvar", 
+        description: "Não foi possível salvar a chave PIX manual.", 
+        variant: "destructive" 
+      });
+    } finally {
+      setSavingManual(false);
     }
   };
 
@@ -384,15 +414,6 @@ export default function Settings() {
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Chave PIX Manual (Fallback)</label>
-                  <Input 
-                    placeholder="Sua chave PIX da pousada"
-                    value={mpConfig.manualPixKey}
-                    onChange={(e) => setMpConfig({...mpConfig, manualPixKey: e.target.value})}
-                  />
-                </div>
-
                 <div className="pt-2">
                   <Button 
                     onClick={handleTestAndSaveMp}
@@ -406,6 +427,31 @@ export default function Settings() {
             </Card>
 
             <div className="space-y-6">
+              <Card className="shadow-md border-slate-200 overflow-hidden">
+                <div className="h-2 bg-gradient-to-r from-blue-400 to-indigo-500" />
+                <CardHeader>
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <CreditCard size={18} className="text-blue-500" /> Chave PIX Manual (Fallback)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Input 
+                      placeholder="Sua chave PIX da pousada"
+                      value={mpConfig.manualPixKey}
+                      onChange={(e) => setMpConfig({...mpConfig, manualPixKey: e.target.value})}
+                    />
+                  </div>
+                  <Button 
+                    onClick={handleSaveManualPix}
+                    disabled={savingManual}
+                    variant="secondary"
+                    className="w-full bg-slate-100 hover:bg-slate-200 text-slate-900 border"
+                  >
+                    {savingManual ? "Salvando..." : <><Save className="w-4 h-4 mr-2" /> Salvar Chave Manual</>}
+                  </Button>
+                </CardContent>
+              </Card>
               <Card className="shadow-md border-slate-200 overflow-hidden">
                 <div className="h-1.5 bg-slate-400" />
                 <CardHeader>

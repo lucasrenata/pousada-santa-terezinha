@@ -14,6 +14,9 @@ router = APIRouter(prefix="/payments", tags=["Payments"])
 class TokenTestRequest(BaseModel):
     token: str
 
+class ManualPixSaveRequest(BaseModel):
+    manual_pix_key: str
+
 def get_tenant_mp_token(db: Session, tenant_id: int):
     config = db.query(models.TenantConfig).filter(
         models.TenantConfig.tenant_id == tenant_id, 
@@ -78,11 +81,9 @@ def get_mp_config(db: Session = Depends(get_db), current_user = Depends(get_curr
 def save_mp_config(req: ConfigSaveRequest, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
     crypto = CryptoService()
     # Limpeza de espaços no momento do salvamento
-    clean_token = req.mp_access_token.strip()
-    clean_public_key = req.mp_public_key.strip()
+    clean_token = req.mp_access_token.strip() if req.mp_access_token else ""
+    clean_public_key = req.mp_public_key.strip() if req.mp_public_key else ""
     clean_manual_pix = req.manual_pix_key.strip() if req.manual_pix_key else None
-    
-    encrypted_token = crypto.encrypt_token(clean_token)
     
     config = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_id == current_user.tenant_id).first()
     
@@ -103,12 +104,33 @@ def save_mp_config(req: ConfigSaveRequest, db: Session = Depends(get_db), curren
     else:
         if encrypted_token:
             config.mp_access_token = encrypted_token
-        config.mp_public_key = clean_public_key
+        if clean_public_key:
+            config.mp_public_key = clean_public_key
+        # Note: manual_pix_key can still be updated here but we are adding a dedicated endpoint too
         config.manual_pix_key = clean_manual_pix
         config.is_active = True
         
     db.commit()
-    return {"message": "Configuração salva com sucesso!"}
+    return {"message": "Configuração MP salva com sucesso!"}
+
+@router.post("/config-manual")
+def save_manual_pix_config(req: ManualPixSaveRequest, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+    clean_manual_pix = req.manual_pix_key.strip() if req.manual_pix_key else None
+    
+    config = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_id == current_user.tenant_id).first()
+    
+    if not config:
+        config = models.TenantConfig(
+            tenant_id=current_user.tenant_id,
+            manual_pix_key=clean_manual_pix,
+            is_active=True
+        )
+        db.add(config)
+    else:
+        config.manual_pix_key = clean_manual_pix
+        
+    db.commit()
+    return {"message": "Chave PIX Manual salva com sucesso!"}
 
 def _cpf_digits(doc: str) -> str:
     return "".join([c for c in (doc or "") if c.isdigit()])

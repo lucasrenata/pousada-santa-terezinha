@@ -10,7 +10,10 @@ router = APIRouter(prefix="/guests", tags=["Guests"])
 @router.post("/", response_model=schemas.GuestResponse)
 def create_guest(guest: schemas.GuestCreate, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
     if db.query(models.Guest).filter(models.Guest.document == guest.document).first():
-        raise HTTPException(status_code=400, detail="CPF/RG já cadastrado")
+        raise HTTPException(status_code=400, detail="Este CPF/RG já está cadastrado no sistema.")
+    
+    if guest.email and db.query(models.Guest).filter(models.Guest.email == guest.email).first():
+        raise HTTPException(status_code=400, detail="Este e-mail já está sendo utilizado por outro hóspede.")
     
     new_guest = models.Guest(**guest.model_dump())
     db.add(new_guest)
@@ -35,6 +38,10 @@ def create_guest_public(guest_data: schemas.GuestPublicCreate, db: Session = Dep
         return existing
     
     # Como o RLS já ativa o before_flush, não precisa injetar o tenant explicitamente
+    # 2. Verifica se o e-mail já existe (evita Erro 500 por UniqueViolation)
+    if guest_data.email and db.query(models.Guest).filter(models.Guest.email == guest_data.email).first():
+        raise HTTPException(status_code=400, detail="O e-mail informado já está sendo utilizado por outro cadastro.")
+
     new_guest_dict = guest_data.model_dump(exclude={'tenant_id'})
     new_guest = models.Guest(**new_guest_dict)
     db.add(new_guest)
