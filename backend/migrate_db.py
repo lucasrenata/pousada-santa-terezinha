@@ -26,10 +26,23 @@ def migrate():
                 "users", "rooms", "guests", "products", "bookings", 
                 "companions", "consumptions", "revenues", "business_rules", 
                 "chat_messages", "stock_entries", "stock_entry_items", 
-                "settings", "events"
+                "settings", "events", "tenant_configs"
             ]
             for table in tables:
-                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id)"))
+                if table == "tenant_configs":
+                    # Cria a tabela tenant_configs manualmente se não existir (para evitar dependência de mixin)
+                    conn.execute(text("""
+                        CREATE TABLE IF NOT EXISTS tenant_configs (
+                            id SERIAL PRIMARY KEY,
+                            tenant_id INTEGER UNIQUE REFERENCES tenants(id),
+                            mp_access_token VARCHAR,
+                            mp_public_key VARCHAR,
+                            is_active BOOLEAN DEFAULT TRUE,
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """))
+                else:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id)"))
             
             conn.commit()
             print("✅ Colunas de negócio e multitenancy (tenant_id) injetadas com sucesso!")

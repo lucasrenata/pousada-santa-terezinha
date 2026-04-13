@@ -1,6 +1,6 @@
 import { useState, useEffect, type ChangeEvent } from 'react';
 import api from '../services/api';
-import { Save, Settings as SettingsIcon, AlertCircle, ListChecks, Copy } from 'lucide-react';
+import { Save, Settings as SettingsIcon, AlertCircle, ListChecks, Copy, CreditCard, Lock, CheckCircle2, Globe } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
@@ -18,6 +18,14 @@ export default function Settings() {
   const [settings, setSettings] = useState<Setting[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [mpConfig, setMpConfig] = useState({
+    accessToken: '',
+    publicKey: '',
+    manualPixKey: '',
+    hasToken: false
+  });
+  const [testingMp, setTestingMp] = useState(false);
+  const [isValidated, setIsValidated] = useState(false);
   const { toast } = useToast();
   const tenantId = localStorage.getItem('tenant_id') || '0';
   const publicAgentUrl = `${window.location.origin}/${tenantId}/atendimento`;
@@ -42,8 +50,23 @@ export default function Settings() {
     }
   };
 
+  const loadMpConfig = async () => {
+    try {
+      const resp = await api.get('/payments/config');
+      setMpConfig(prev => ({
+        ...prev,
+        publicKey: resp.data.mp_public_key,
+        manualPixKey: resp.data.manual_pix_key,
+        hasToken: resp.data.has_token
+      }));
+    } catch (error) {
+      console.error('Erro ao carregar MP config:', error);
+    }
+  };
+
   useEffect(() => {
     loadSettings();
+    loadMpConfig();
   }, []);
 
   const handleUpdateSetting = async (key: string, value: string, description: string | null) => {
@@ -87,6 +110,66 @@ export default function Settings() {
     });
   };
 
+  const handleTestAndSaveMp = async () => {
+    if (!mpConfig.accessToken && !mpConfig.hasToken) {
+      toast({ 
+        title: "Campo Vazio", 
+        description: "Por favor, insira o seu Access Token para configurar.", 
+        variant: "destructive" 
+      });
+      return;
+    }
+    
+    setTestingMp(true);
+    try {
+      // 1. Validar via API (Se vazio enviamos string vazia e o backend testa o salvo)
+      const testResp = await api.post('/payments/test-config', { token: mpConfig.accessToken });
+      
+      if (!testResp.data.valid) {
+        toast({ 
+          title: "Falha na Conexão", 
+          description: testResp.data.message || "As credenciais não são válidas. Verifique os dados e tente novamente.", 
+          variant: "destructive" 
+        });
+        return;
+      }
+
+      // Se o usuário digitou algo novo, salvamos. Se estava vazio e deu válido, avisamos que a conexão atual está OK.
+      if (mpConfig.accessToken) {
+        await api.post('/payments/config', {
+          mp_access_token: mpConfig.accessToken,
+          mp_public_key: mpConfig.publicKey,
+          manual_pix_key: mpConfig.manualPixKey
+        });
+        toast({ 
+          title: "Configuração Atualizada!", 
+          description: "Suas novas credenciais foram salvas e validadas.",
+        });
+      } else {
+        toast({ 
+          title: "Conexão Ativa!", 
+          description: "A credencial já salva no sistema está funcionando perfeitamente.",
+        });
+      }
+      
+      toast({ 
+        title: "Configuração Salva!", 
+        description: "Sua integração com o Mercado Pago está ativa e funcional.",
+      });
+      setIsValidated(true);
+      setTimeout(() => setIsValidated(false), 5000);
+      loadMpConfig();
+    } catch (error) {
+      toast({ 
+        title: "Erro de Conexão", 
+        description: "Não foi possível validar as credenciais. Tente novamente mais tarde.", 
+        variant: "destructive" 
+      });
+    } finally {
+      setTestingMp(false);
+    }
+  };
+
   if (loading) return <div className="p-8 text-center text-slate-500">Carregando configurações...</div>;
 
   return (
@@ -100,20 +183,26 @@ export default function Settings() {
       </div>
 
       <Tabs defaultValue="general" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 bg-slate-100 p-1 rounded-xl mb-6">
+        <TabsList className="grid w-full grid-cols-3 bg-slate-100 p-1 rounded-xl mb-6">
           <TabsTrigger value="general" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2">
             <SettingsIcon className="w-4 h-4 mr-2" /> Geral
           </TabsTrigger>
           <TabsTrigger value="rules" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2">
             <ListChecks className="w-4 h-4 mr-2" /> Regras de Negócio
           </TabsTrigger>
+          <TabsTrigger value="mercadopago" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm py-2">
+            <CreditCard className="w-4 h-4 mr-2" /> Mercado Pago
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <Card className="shadow-sm border-slate-200">
+            <Card className="shadow-md border-slate-200 overflow-hidden">
+              <div className="h-2 bg-gradient-to-r from-blue-600 to-cyan-500" />
               <CardHeader>
-                <CardTitle>Regras de Precificação</CardTitle>
+                <CardTitle className="flex items-center gap-2">
+                  <ListChecks className="w-5 h-5 text-blue-600" /> Regras de Precificação
+                </CardTitle>
                 <CardDescription>Valores utilizados no cálculo automático de reservas.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -175,9 +264,12 @@ export default function Settings() {
               </CardContent>
             </Card>
 
-            <Card className="shadow-sm border-slate-200">
+            <Card className="shadow-md border-slate-200 overflow-hidden">
+              <div className="h-2 bg-gradient-to-r from-indigo-500 to-purple-500" />
               <CardHeader>
-                <CardTitle>Informações Gerais</CardTitle>
+                <CardTitle className="flex items-center gap-2">
+                  <SettingsIcon className="w-5 h-5 text-indigo-600" /> Informações Gerais
+                </CardTitle>
                 <CardDescription>Dados públicos da pousada.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -241,6 +333,130 @@ export default function Settings() {
 
         <TabsContent value="rules">
           <BusinessRulesTab />
+        </TabsContent>
+
+        <TabsContent value="mercadopago" className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <Card className="shadow-md border-slate-200 overflow-hidden">
+              <div className="h-2 bg-gradient-to-r from-blue-600 to-blue-800" />
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                       <Lock className="w-5 h-5 text-blue-600" /> Credenciais MP
+                    </CardTitle>
+                    <CardDescription>Configure suas chaves oficiais para habilitar pagamentos.</CardDescription>
+                  </div>
+                  {mpConfig.hasToken && (
+                    <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-semibold border border-emerald-100 italic animate-pulse">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> ATIVO
+                    </div>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium">Access Token</label>
+                    {isValidated && (
+                      <span className="text-[10px] font-bold text-emerald-600 flex items-center gap-0.5 animate-bounce">
+                        <CheckCircle2 size={12} /> VALIDADO!
+                      </span>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <Input 
+                      type="password"
+                      placeholder={mpConfig.hasToken ? "••••••••••••••••••••••••••••" : "APP_USR-..."}
+                      value={mpConfig.accessToken}
+                      onChange={(e) => {setMpConfig({...mpConfig, accessToken: e.target.value}); setIsValidated(false);}}
+                    />
+                    <Lock className="absolute right-3 top-2.5 w-4 h-4 text-slate-300" />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Public Key</label>
+                  <Input 
+                    placeholder="APP_USR-..."
+                    value={mpConfig.publicKey}
+                    onChange={(e) => setMpConfig({...mpConfig, publicKey: e.target.value})}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Chave PIX Manual (Fallback)</label>
+                  <Input 
+                    placeholder="Sua chave PIX da pousada"
+                    value={mpConfig.manualPixKey}
+                    onChange={(e) => setMpConfig({...mpConfig, manualPixKey: e.target.value})}
+                  />
+                </div>
+
+                <div className="pt-2">
+                  <Button 
+                    onClick={handleTestAndSaveMp}
+                    disabled={testingMp}
+                    className="w-full bg-blue-600 hover:bg-blue-700"
+                  >
+                    {testingMp ? "Validando..." : <><Save className="w-4 h-4 mr-2" /> Testar e Salvar</>}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="space-y-6">
+              <Card className="shadow-md border-slate-200 overflow-hidden">
+                <div className="h-1.5 bg-slate-400" />
+                <CardHeader>
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Globe size={16} className="text-slate-500" /> Webhook de Notificações
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex gap-2">
+                    <Input 
+                      readOnly 
+                      value="https://hotelaria.parceriacomia.com.br/api/payments/webhook" 
+                      className="bg-slate-50 text-xs font-mono"
+                    />
+                    <Button 
+                      variant="outline"
+                      onClick={() => {
+                        navigator.clipboard.writeText("https://hotelaria.parceriacomia.com.br/api/payments/webhook");
+                        toast({ title: "Copiado!" });
+                      }}
+                      size="icon"
+                    >
+                      <Copy size={14} />
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-relaxed italic">
+                    Use este link no campo "URL de Notificação" do Mercado Pago para baixar automático de reservas via PIX.
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-blue-50/50 border-blue-100 shadow-none border-dashed border-2">
+                <CardContent className="p-4 flex flex-col gap-3">
+                  <div className="flex items-center gap-2 text-blue-700 font-bold text-xs uppercase">
+                    <AlertCircle size={14} /> Dica de Configuração
+                  </div>
+                  <p className="text-xs text-blue-600 leading-relaxed">
+                    As chaves de produção ficam em "Suas Aplicações" dentro do painel do Mercado Pago. Nunca compartilhe seu Access Token com ninguém.
+                  </p>
+                  <a 
+                    href="https://www.mercadopago.com.br/developers/panel" 
+                    target="_blank" 
+                    rel="noreferrer"
+                    className="text-xs font-bold text-blue-700 hover:underline flex items-center gap-1"
+                  >
+                    Abrir Painel do Desenvolvedor <Globe size={12} />
+                  </a>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
         </TabsContent>
       </Tabs>
 

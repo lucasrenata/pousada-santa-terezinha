@@ -58,6 +58,25 @@ class Tenant(Base):
     created_at = Column(DateTime, default=datetime.now)
 
     users = relationship("User", back_populates="tenant")
+    configs = relationship("TenantConfig", back_populates="tenant")
+
+class TenantConfig(Base):
+    """Configurações Sensíveis por Tenant (ex: Mercado Pago)"""
+    __tablename__ = "tenant_configs"
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), unique=True)
+    
+    # Mercado Pago - Tokens Criptografados
+    mp_access_token = Column(String, nullable=True) # Valor Criptografado
+    mp_public_key = Column(String, nullable=True)
+    
+    # Chave PIX Manual para Fallback e Agent Chat
+    manual_pix_key = Column(String, nullable=True)
+    
+    is_active = Column(Boolean, default=True)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    tenant = relationship("Tenant", back_populates="configs")
 
 class User(Base):
     """Usuários do Sistema (Login)"""

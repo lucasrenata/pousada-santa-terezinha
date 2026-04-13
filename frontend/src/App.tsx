@@ -22,6 +22,8 @@ import GuestLayout from './components/GuestLayout';
 import GuestChatPage from './pages/GuestChatPage';
 import GuestRegistrationPage from './pages/GuestRegistrationPage';
 
+import { Toaster } from './components/ui/toaster';
+
 function App() {
   return (
     <BrowserRouter>
@@ -61,7 +63,9 @@ function App() {
         {/* Redireciona qualquer rota doida para a Landing */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      <Toaster />
     </BrowserRouter>
   );
 }
+
 export default App;

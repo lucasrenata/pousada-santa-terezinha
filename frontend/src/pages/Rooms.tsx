@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import api from '../services/api';
 import type { AxiosError } from 'axios';
-import { BedDouble, X, CheckCircle, Plus, ShoppingCart, Trash2, Edit } from 'lucide-react';
+import { BedDouble, X, CheckCircle, Plus, ShoppingCart, Trash2, Edit, QrCode, CreditCard, Wallet } from 'lucide-react';
 import RoomModal from '../components/RoomModal';
 import { ReservationForm } from '../components/ReservationForm';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import type { Reservation } from '../hooks/useReservations';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useToast } from '../hooks/use-toast';
 
 type RoomStatus = 'disponivel' | 'ocupado' | 'limpeza' | 'manutencao';
 
@@ -31,6 +32,7 @@ interface Product {
 export default function Rooms() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { toast } = useToast();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +66,10 @@ export default function Rooms() {
   const [isResModalOpen, setIsResModalOpen] = useState(false);
   const [editingReservation, setEditingReservation] = useState<Reservation | null>(null);
   const [currentConsumptions, setCurrentConsumptions] = useState<any[]>([]);
+  const [qrCodeData, setQrCodeData] = useState<string | null>(null);
+  const [paymentLink, setPaymentLink] = useState<string | null>(null);
+  const [isGeneratingPayment, setIsGeneratingPayment] = useState(false);
+  const [isPolling, setIsPolling] = useState(false);
 
   async function loadRooms() {
     try {
@@ -266,11 +272,44 @@ export default function Rooms() {
   } | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<'pix' | 'credito' | 'debito' | 'dinheiro'>('pix');
 
+
+  
+  async function generatePixCheckout() {
+    if (!checkoutInfo) return;
+    setIsGeneratingPayment(true);
+    setPaymentLink(null);
+    try {
+      const res = await api.post(`/payments/checkout/${checkoutInfo.roomId}/pix`);
+      setQrCodeData(res.data.qr_code);
+    } catch (err) {
+      alert('Falha ao gerar PIX do Mercado Pago');
+    } finally {
+      setIsGeneratingPayment(false);
+    }
+  }
+
+  async function generateLinkCheckout() {
+    if (!checkoutInfo) return;
+    setIsGeneratingPayment(true);
+    setQrCodeData(null);
+    try {
+      const res = await api.post(`/payments/checkout/${checkoutInfo.roomId}/card`);
+      setPaymentLink(res.data.init_point);
+    } catch (err) {
+      alert('Falha ao gerar link de pagamento');
+    } finally {
+      setIsGeneratingPayment(false);
+    }
+  }
+
   async function confirmCheckout() {
     try {
       if (!checkoutInfo) return;
       await api.post(`/bookings/checkout/${checkoutInfo.roomId}`, { payment_method: paymentMethod });
-      alert('Check-out realizado');
+      toast({ 
+        title: "Check-out realizado!", 
+        description: `O quarto ${checkoutInfo.roomId} foi liberado e a receita lançada.` 
+      });
       setCheckoutOpen(false);
       setCheckoutInfo(null);
       await loadRooms();
@@ -280,6 +319,46 @@ export default function Rooms() {
       alert(msg);
     }
   }
+
+  // --- NOVO: Polling de Status do Pagamento ---
+  useEffect(() => {
+    let interval: any = null;
+    
+    const checkPaymentStatus = async () => {
+      if (!checkoutInfo?.bookingId) return;
+      try {
+        const res = await api.get(`/bookings/${checkoutInfo.bookingId}`);
+        // Se a reserva foi confirmada ou paga pelo webhook
+        if (res.data.status === 'CONFIRMADO' || res.data.payment_status === 'PAGO') {
+          toast({ 
+            title: "Pagamento Confirmado! 🎉", 
+            description: `A reserva #${checkoutInfo.bookingId} foi processada e o quarto liberado.`,
+          });
+          setQrCodeData(null);
+          setPaymentLink(null);
+          setCheckoutOpen(false);
+          setCheckoutInfo(null);
+          loadRooms();
+          clearInterval(interval);
+          setIsPolling(false);
+        }
+      } catch (err) {
+        console.error('Erro no polling:', err);
+      }
+    };
+
+    if (qrCodeData || paymentLink) {
+      setIsPolling(true);
+      interval = setInterval(checkPaymentStatus, 4000); // Consulta a cada 4 segundos
+    } else {
+      setIsPolling(false);
+      if (interval) clearInterval(interval);
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [qrCodeData, paymentLink, checkoutInfo]);
 
   function getStatusBadge(status: RoomStatus) {
     const base = 'px-2 py-1 rounded-full text-xs font-medium';
@@ -668,34 +747,160 @@ export default function Rooms() {
             )}
 
             {checkoutOpen && checkoutInfo && (
-              <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setCheckoutOpen(false)}>
-                <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-                  <div className="mb-4">
-                    <h3 className="text-lg font-bold text-slate-800">Check-out</h3>
-                    <p className="text-sm text-slate-600">Resumo de valores</p>
-                  </div>
-                  <div className="space-y-2 text-sm">
-                    <p className="flex justify-between"><span>Diárias</span><span className="font-semibold">R$ {checkoutInfo.dailyTotal.toFixed(2)}</span></p>
-                    <p className="flex justify-between"><span>Consumo</span><span className="font-semibold">R$ {checkoutInfo.consumptionTotal.toFixed(2)}</span></p>
-                    <hr />
-                    <p className="flex justify-between text-base"><span>Total</span><span className="font-bold">R$ {checkoutInfo.grandTotal.toFixed(2)}</span></p>
-                  </div>
-                  <div className="mt-4">
-                    <label className="block text-xs font-medium text-slate-500 mb-1">Forma de pagamento</label>
-                    <select
-                      value={paymentMethod}
-                      onChange={(e) => setPaymentMethod(e.target.value as typeof paymentMethod)}
-                      className="w-full px-3 py-2 border rounded-lg bg-white"
+              <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4" onClick={() => { setCheckoutOpen(false); setQrCodeData(null); setPaymentLink(null); }}>
+                <div className="bg-white rounded-3xl w-full max-w-lg p-0 shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200" onClick={(e) => e.stopPropagation()}>
+                  <div className="bg-slate-900 p-6 text-white text-center relative">
+                    <button 
+                      onClick={() => { setCheckoutOpen(false); setQrCodeData(null); setPaymentLink(null); }}
+                      className="absolute right-4 top-4 p-2 hover:bg-white/10 rounded-full transition"
                     >
-                      <option value="pix">PIX</option>
-                      <option value="debito">Débito</option>
-                      <option value="credito">Crédito</option>
-                      <option value="dinheiro">Dinheiro</option>
-                    </select>
+                      <X size={20} />
+                    </button>
+                    <Wallet className="mx-auto mb-2 text-blue-400" size={32} />
+                    <h3 className="text-xl font-bold">Check-out do Quarto {checkoutInfo.roomId}</h3>
+                    <p className="text-slate-400 text-sm">Resumo Final da Estadia</p>
                   </div>
-                  <div className="flex gap-2 mt-4">
-                    <button onClick={confirmCheckout} className="px-3 py-2 rounded-lg bg-blue-600 text-white">Pagar e Check-out</button>
-                    <button onClick={() => setCheckoutOpen(false)} className="px-3 py-2 rounded-lg border bg-white">Cancelar</button>
+
+                  <div className="p-8 space-y-6">
+                    <div className="space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                      <div className="flex justify-between text-slate-600">
+                        <span>Diárias</span>
+                        <span className="font-semibold">R$ {checkoutInfo.dailyTotal.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-slate-600">
+                        <span>Consumo Extra</span>
+                        <span className="font-semibold">R$ {checkoutInfo.consumptionTotal.toFixed(2)}</span>
+                      </div>
+                      <div className="pt-3 border-t-2 border-dashed border-slate-200 flex justify-between items-center">
+                        <span className="font-bold text-slate-900 border-b-2 border-blue-500 pb-1 uppercase tracking-wider text-xs">Total Geral</span>
+                        <span className="text-2xl font-black text-blue-600">R$ {checkoutInfo.grandTotal.toFixed(2)}</span>
+                      </div>
+                    </div>
+
+                    {!qrCodeData && !paymentLink && (
+                      <div className="grid grid-cols-1 gap-3">
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest text-center mb-1">Escolha o Método de Pagamento</p>
+                        
+                        <div className="grid grid-cols-2 gap-3">
+                          <button 
+                            onClick={generatePixCheckout}
+                            disabled={isGeneratingPayment}
+                            className="bg-blue-600 hover:bg-blue-700 text-white p-4 rounded-2xl flex flex-col items-center gap-2 shadow-lg shadow-blue-100 transition-all active:scale-95 group"
+                          >
+                            <div className="p-2 bg-white/10 rounded-xl group-hover:scale-110 transition">
+                              <QrCode size={24} />
+                            </div>
+                            <span className="font-bold text-sm">PIX Automático</span>
+                          </button>
+
+                          <button 
+                            onClick={generateLinkCheckout}
+                            disabled={isGeneratingPayment}
+                            className="bg-slate-900 hover:bg-black text-white p-4 rounded-2xl flex flex-col items-center gap-2 transition-all active:scale-95 group"
+                          >
+                            <div className="p-2 bg-white/10 rounded-xl group-hover:scale-110 transition text-blue-400">
+                              <CreditCard size={24} />
+                            </div>
+                            <span className="font-bold text-sm">Cartão (Link)</span>
+                          </button>
+                        </div>
+
+                        <div className="relative py-4">
+                          <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-slate-200 shadow-sm" /></div>
+                          <div className="relative flex justify-center text-xs uppercase"><span className="bg-white px-3 text-slate-400 font-black">OU</span></div>
+                        </div>
+
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Pagamento Manual (Fora do sistema)</label>
+                          <div className="flex gap-2">
+                             <select
+                                value={paymentMethod}
+                                onChange={(e) => setPaymentMethod(e.target.value as any)}
+                                className="flex-1 px-4 py-3 border rounded-xl bg-white shadow-sm font-medium text-slate-700 focus:ring-2 focus:ring-blue-500"
+                              >
+                                <option value="pix">Dinheiro / Pix Manual</option>
+                                <option value="debito">Cartão Débito</option>
+                                <option value="credito">Cartão Crédito</option>
+                              </select>
+                              <button 
+                                onClick={confirmCheckout}
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 font-bold rounded-xl transition shadow-lg shadow-emerald-50 active:scale-95"
+                              >
+                                Dar Baixa
+                              </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {isGeneratingPayment && (
+                      <div className="py-12 flex flex-col items-center justify-center gap-4">
+                        <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent" />
+                        <p className="text-slate-500 font-medium animate-pulse">Conectando ao Mercado Pago...</p>
+                      </div>
+                    )}
+
+                    {qrCodeData && (
+                      <div className="py-2 space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                        <div className="bg-slate-100 p-6 rounded-3xl flex flex-col items-center justify-center border-2 border-blue-100 shadow-inner">
+                          <div className="bg-white p-4 rounded-2xl shadow-xl mb-4 border-4 border-blue-500">
+                            <img 
+                              src={`data:image/png;base64,${qrCodeData}`} 
+                              alt="QR Code PIX" 
+                              className="w-48 h-48"
+                            />
+                          </div>
+                          <div className="text-center">
+                            <span className="bg-blue-600 text-white px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest mb-2 inline-block animate-pulse">
+                              Aguardando Pagamento
+                            </span>
+                            <p className="text-xs text-slate-500 font-bold px-4">
+                              O quarto será liberado automaticamente assim que o PIX for confirmado.
+                            </p>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={() => { setQrCodeData(null); setPaymentLink(null); }}
+                          className="w-full text-slate-400 text-sm font-bold hover:text-slate-600 transition"
+                        >
+                          Trocar Método de Pagamento
+                        </button>
+                      </div>
+                    )}
+
+                    {paymentLink && (
+                      <div className="py-8 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                        <div className="text-center space-y-2">
+                           <h4 className="font-black text-slate-900 uppercase">Link de Cartão Gerado</h4>
+                           <p className="text-sm text-slate-500">Clique para abrir o checkout ou copie o link para o cliente.</p>
+                        </div>
+                        <div className="space-y-3">
+                          <a 
+                            href={paymentLink} 
+                            target="_blank" 
+                            rel="noreferrer"
+                            className="bg-blue-600 hover:bg-blue-700 text-white w-full py-4 rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg transition active:scale-95"
+                          >
+                            <CreditCard size={20} /> Abrir Checkout
+                          </a>
+                          <button 
+                            onClick={() => {
+                              navigator.clipboard.writeText(paymentLink);
+                              alert('Link copiado!');
+                            }}
+                            className="w-full py-3 border-2 border-dashed border-slate-300 rounded-2xl text-slate-500 font-bold hover:border-blue-300 hover:text-blue-500 transition"
+                          >
+                            Copiar Link de Pagamento
+                          </button>
+                        </div>
+                        <button 
+                          onClick={() => { setQrCodeData(null); setPaymentLink(null); }}
+                          className="w-full text-slate-400 text-sm font-bold hover:text-slate-600 transition"
+                        >
+                          Trocar Método de Pagamento
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

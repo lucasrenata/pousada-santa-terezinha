@@ -6,8 +6,92 @@ import models
 from database import get_db, SessionLocal, set_tenant_context
 from payments.mercadopago_service import MercadoPagoService, MercadoPagoUnavailable
 from .auth import get_current_staff
+from core.crypto import CryptoService
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
+
+class TokenTestRequest(BaseModel):
+    token: str
+
+def get_tenant_mp_token(db: Session, tenant_id: int):
+    config = db.query(models.TenantConfig).filter(
+        models.TenantConfig.tenant_id == tenant_id, 
+        models.TenantConfig.is_active == True
+    ).first()
+    
+    if not config or not config.mp_access_token:
+        # Fallback para o env se não houver config no DB
+        token = os.getenv("MERCADOPAGO_ACCESS_TOKEN")
+        if not token:
+            raise HTTPException(status_code=400, detail="Configuração do Mercado Pago não encontrada para este Tenant")
+        return token
+    
+    crypto = CryptoService()
+    try:
+        return crypto.decrypt_token(config.mp_access_token)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Erro ao descriptografar token do Mercado Pago")
+
+@router.post("/test-config")
+def test_mp_config(req: TokenTestRequest, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+    token = req.token.strip() if req.token else ""
+    
+    # Se o token enviado for vazio, tenta testar o token já salvo para este tenant
+    if not token:
+        try:
+            token = get_tenant_mp_token(db, current_user.tenant_id)
+        except Exception:
+            return {"valid": False, "message": "Nenhum token salvo para testar."}
+            
+    mp = MercadoPagoService()
+    is_valid = mp.test_connection(token)
+    return {"valid": is_valid}
+
+class ConfigSaveRequest(BaseModel):
+    mp_access_token: str
+    mp_public_key: str
+    manual_pix_key: str | None = None
+
+@router.get("/config")
+def get_mp_config(db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+    config = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_id == current_user.tenant_id).first()
+    if not config:
+        return {"mp_public_key": "", "has_token": False, "manual_pix_key": ""}
+    return {
+        "mp_public_key": config.mp_public_key,
+        "has_token": bool(config.mp_access_token),
+        "manual_pix_key": config.manual_pix_key or "",
+        "is_active": config.is_active
+    }
+
+@router.post("/config")
+def save_mp_config(req: ConfigSaveRequest, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+    crypto = CryptoService()
+    # Limpeza de espaços no momento do salvamento
+    clean_token = req.mp_access_token.strip()
+    clean_public_key = req.mp_public_key.strip()
+    clean_manual_pix = req.manual_pix_key.strip() if req.manual_pix_key else None
+    
+    encrypted_token = crypto.encrypt_token(clean_token)
+    
+    config = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_id == current_user.tenant_id).first()
+    if not config:
+        config = models.TenantConfig(
+            tenant_id=current_user.tenant_id,
+            mp_access_token=encrypted_token,
+            mp_public_key=clean_public_key,
+            manual_pix_key=clean_manual_pix
+        )
+        db.add(config)
+    else:
+        config.mp_access_token = encrypted_token
+        config.mp_public_key = req.mp_public_key
+        config.manual_pix_key = req.manual_pix_key
+        config.is_active = True
+        
+    db.commit()
+    return {"message": "Configuração salva com sucesso!"}
 
 def _cpf_digits(doc: str) -> str:
     return "".join([c for c in (doc or "") if c.isdigit()])
@@ -27,7 +111,7 @@ def _cpf_valid(doc: str) -> bool:
     d2 = 0 if d2 == 10 else d2
     return d2 == nums[10]
 
-def compute_checkout_summary(db: Session, room_id: int):
+def compute_checkout_summary(db: Session, room_id: str):
     booking = db.query(models.Booking).filter(
         models.Booking.room_id == room_id,
         models.Booking.status == models.BookingStatus.ATIVO
@@ -47,7 +131,7 @@ def compute_checkout_summary(db: Session, room_id: int):
     return booking, daily_total, consumption_total, daily_total + consumption_total
 
 @router.get("/summary/{room_id}")
-def summary(room_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+def summary(room_id: str, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
     booking, daily_total, consumption_total, grand_total = compute_checkout_summary(db, room_id)
     room = db.query(models.Room).filter(models.Room.id == room_id).first()
     guest = booking.guest
@@ -62,7 +146,7 @@ def summary(room_id: int, db: Session = Depends(get_db), current_user = Depends(
         "grand_total": grand_total
     }
 
-def perform_checkout(db: Session, room_id: int, method: models.PaymentMethod):
+def perform_checkout(db: Session, room_id: str, method: models.PaymentMethod):
     booking = db.query(models.Booking).with_for_update().filter(
         models.Booking.room_id == room_id,
         models.Booking.status.in_([models.BookingStatus.ATIVO, models.BookingStatus.CONFIRMADO])
@@ -95,7 +179,7 @@ def perform_checkout(db: Session, room_id: int, method: models.PaymentMethod):
     return {"message": "Check-out realizado e Receita Lançada", "total": final_total}
 
 @router.post("/checkout/{room_id}/pix")
-def start_pix_checkout(room_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+def start_pix_checkout(room_id: str, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
     try:
         mp = MercadoPagoService()
     except MercadoPagoUnavailable as e:
@@ -127,7 +211,7 @@ def start_pix_checkout(room_id: int, db: Session = Depends(get_db), current_user
             }
     except Exception:
         payer = None
-    result = mp.create_pix_payment(grand_total, description, metadata, payer=payer) or {}
+    result = mp.create_pix_payment(token, current_user.tenant_id, grand_total, description, metadata, payer=payer) or {}
     status_code = result.get("status")
     response = result.get("response") or {}
     if status_code and int(status_code) >= 400:
@@ -157,11 +241,13 @@ def start_pix_checkout(room_id: int, db: Session = Depends(get_db), current_user
     }
 
 @router.post("/checkout/{room_id}/card")
-def start_card_checkout(room_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+def start_card_checkout(room_id: str, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
     try:
         mp = MercadoPagoService()
     except MercadoPagoUnavailable as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+    token = get_tenant_mp_token(db, current_user.tenant_id)
     booking, daily_total, consumption_total, grand_total = compute_checkout_summary(db, room_id)
     metadata = {"room_id": room_id, "booking_id": booking.id, "type": "checkout", "tenant_id": current_user.tenant_id}
     title = f"Check-out Reserva #{booking.id} Quarto {booking.room.number if booking.room else ''}"
@@ -171,7 +257,7 @@ def start_card_checkout(room_id: int, db: Session = Depends(get_db), current_use
         "pending": fe + "/payments",
         "failure": fe + "/payments"
     }
-    result = mp.create_card_preference(grand_total, title, metadata, back_urls=back_urls) or {}
+    result = mp.create_card_preference(token, current_user.tenant_id, grand_total, title, metadata, back_urls=back_urls) or {}
     status_code = result.get("status")
     response = result.get("response") or {}
     if status_code and int(status_code) >= 400:
@@ -201,6 +287,8 @@ def start_public_card(booking_id: int, tenant_id: int, db: Session = Depends(get
         mp = MercadoPagoService()
     except MercadoPagoUnavailable as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+    token = get_tenant_mp_token(db, tenant_id)
     booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
     if not booking:
         raise HTTPException(status_code=404, detail="Reserva não encontrada")
@@ -213,7 +301,7 @@ def start_public_card(booking_id: int, tenant_id: int, db: Session = Depends(get
         "pending": fe + "/public/book",
         "failure": fe + "/public/book"
     }
-    result = mp.create_card_preference(amount, title, metadata, back_urls=back_urls) or {}
+    result = mp.create_card_preference(token, tenant_id, amount, title, metadata, back_urls=back_urls) or {}
     status_code = result.get("status")
     response = result.get("response") or {}
     if status_code and int(status_code) >= 400:
@@ -238,114 +326,130 @@ def payment_status(payment_id: int):
         mp = MercadoPagoService()
     except MercadoPagoUnavailable as e:
         raise HTTPException(status_code=500, detail=str(e))
-    status = mp.get_status(payment_id)
+    
+    # Nota: get_status dinâmico precisaria de tenant_id aqui. 
+    # Como este endpoint é simples, tentaremos com o token global se disponível.
+    token = os.getenv("MERCADOPAGO_ACCESS_TOKEN")
+    status = mp.get_status(payment_id) # Este método mp.get_status ainda não foi refatado para token dinâmico no service
     return {"status": status}
 
-@router.post("/webhook")
-async def webhook(req: Request, db: Session = Depends(get_db)):
-    raw = await req.body()
-    secret = os.getenv("MP_WEBHOOK_SECRET")
-    sig_header = req.headers.get("x-signature") or req.headers.get("X-Signature")
-    if secret:
-        if not sig_header:
-            raise HTTPException(status_code=401, detail="Assinatura ausente")
-        expected = hmac.new(bytes.fromhex(secret), raw, hashlib.sha256).hexdigest()
-        provided = sig_header.split("=", 1)[-1].strip() if "=" in sig_header else sig_header.strip()
-        if not hmac.compare_digest(expected, provided):
-            raise HTTPException(status_code=401, detail="Assinatura inválida")
+def handle_mercadopago_payment(pid: int, db: Session):
+    """Processamento pesado em background para evitar timeouts do Mercado Pago"""
     try:
         mp = MercadoPagoService()
-    except MercadoPagoUnavailable:
-        return {"ok": True}
-    payload = await req.json()
-    pid = None
-    if isinstance(payload, dict):
-        if payload.get("data") and isinstance(payload.get("data"), dict):
-            pid = payload["data"].get("id")
-        if not pid and payload.get("id"):
-            pid = payload.get("id")
-    if not pid:
-        return {"ok": True}
-    try:
-        result = mp.get_payment(int(pid)) or {}
+        # 1. Tenta inicialmente com o token global para descobrir o tenant
+        token = os.getenv("MERCADOPAGO_ACCESS_TOKEN")
+        
+        result = mp.get_payment(token, int(pid)) or {}
         response = result.get("response") or {}
+        
+        ext_ref = response.get("external_reference")
+        tenant_id = None
+        booking_id = None
+        
+        # Extração de Identidade (Tenant e Reserva)
+        if ext_ref and ":" in str(ext_ref):
+            try:
+                parts = str(ext_ref).split(":")
+                tenant_id = int(parts[0])
+                booking_id = int(parts[1])
+            except:
+                pass
+        
+        if not tenant_id:
+            # Fallback para metadata
+            metadata = response.get("metadata") or {}
+            tenant_id = metadata.get("tenant_id")
+            booking_id = metadata.get("booking_id")
+            
+        if not tenant_id:
+            print(f"[WEBHOOK WARNING] Pagamento {pid} sem tenant_id identificado.")
+            return
+
+        # 2. Troca de Contexto e Descriptografia
+        set_tenant_context(db, int(tenant_id))
+        token = get_tenant_mp_token(db, int(tenant_id))
+        
+        # 3. Re-validação com o token do dono do pagamento
+        result = mp.get_payment(token, int(pid)) or {}
+        response = result.get("response") or {}
+        
         status = response.get("status")
+        amount = response.get("transaction_amount")
         metadata = response.get("metadata") or {}
         
-        # 1. Ativa contexto RLS para o Tenant apropriado do pagamento
-        tenant_id = metadata.get("tenant_id")
-        if tenant_id:
-            set_tenant_context(db, int(tenant_id))
-
         if status == "approved":
-            room_id = metadata.get("room_id")
-            if room_id:
-                try:
+            # Automação de Reserva
+            if booking_id:
+                booking = db.query(models.Booking).filter(models.Booking.id == int(booking_id)).first()
+                if booking and booking.status != models.BookingStatus.CONFIRMADO:
+                    booking.status = models.BookingStatus.CONFIRMADO
+                    
+                    # Automação Financeira: Registro de Receita
                     method = models.PaymentMethod.PIX
-                    m_id = (response.get("payment_method_id") or "") or ""
-                    m_type = (response.get("payment_type_id") or "") or ""
-                    txt = f"{m_id}:{m_type}".lower()
-                    if "credit" in txt:
+                    m_id = (response.get("payment_method_id") or "").lower()
+                    if "credit" in m_id or "card" in m_id:
                         method = models.PaymentMethod.CREDITO
-                    perform_checkout(db, int(room_id), method)
-                except Exception:
-                    pass
-            if (metadata.get("type") or "") == "public":
-                booking_id = metadata.get("booking_id")
-                if booking_id:
-                    try:
-                        booking = db.query(models.Booking).filter(models.Booking.id == int(booking_id)).first()
-                        if booking:
-                            booking.status = models.BookingStatus.CONFIRMADO
-                            db.commit()
-                    except Exception:
-                        pass
-    except Exception:
-        pass
-    return {"ok": True}
+                    
+                    revenue_entry = models.Revenue(
+                        description=f"Pagamento MP #{pid} - Reserva #{booking.id}",
+                        amount=float(amount),
+                        category=models.RevenueCategory.HOSPEDAGEM,
+                        payment_method=method,
+                        booking_id=booking.id,
+                        tenant_id=int(tenant_id),
+                        created_at=datetime.now()
+                    )
+                    db.add(revenue_entry)
+                    db.commit()
+                    print(f"[WEBHOOK SUCCESS] Tenant {tenant_id}: Reserva {booking_id} paga e receita lançada.")
 
-@router.get("/webhook")
-def webhook_get(id: int | None = None, background_tasks: BackgroundTasks = None):
-    if not id:
-        return {"ok": True}
-    def handle(pid: int):
-        db = SessionLocal()
-        try:
-            try:
-                mp = MercadoPagoService()
-            except MercadoPagoUnavailable:
-                return
-            result = mp.get_payment(int(pid)) or {}
-            response = result.get("response") or {}
-            status = response.get("status")
-            metadata = response.get("metadata") or {}
-            
-            tenant_id = metadata.get("tenant_id")
-            if tenant_id:
-                set_tenant_context(db, int(tenant_id))
-
-            if status == "approved":
+            # Checkout Automático se for do tipo 'checkout'
+            if (metadata.get("type") or "") == "checkout":
                 room_id = metadata.get("room_id")
                 if room_id:
                     try:
                         perform_checkout(db, int(room_id), models.PaymentMethod.PIX)
-                    except Exception:
+                    except:
                         pass
-                if (metadata.get("type") or "") == "public":
-                    booking_id = metadata.get("booking_id")
-                    if booking_id:
-                        try:
-                            booking = db.query(models.Booking).filter(models.Booking.id == int(booking_id)).first()
-                            if booking:
-                                booking.status = models.BookingStatus.CONFIRMADO
-                                db.commit()
-                        except Exception:
-                            pass
-        finally:
-            db.close()
+    except Exception as e:
+        print(f"[WEBHOOK BACKGROUND ERROR] Payment {pid}: {e}")
+
+@router.post("/webhook")
+async def webhook(req: Request, background_tasks: BackgroundTasks):
     try:
-        if background_tasks is not None:
-            background_tasks.add_task(handle, int(id))
-    except Exception:
-        pass
+        # Validação Rápida de Segurança
+        secret = os.getenv("MP_WEBHOOK_SECRET")
+        sig_header = req.headers.get("x-signature") or req.headers.get("X-Signature")
+        if secret and sig_header:
+            raw = await req.body()
+            expected = hmac.new(bytes.fromhex(secret), raw, hashlib.sha256).hexdigest()
+            provided = sig_header.split("=", 1)[-1].strip() if "=" in sig_header else sig_header.strip()
+            if not hmac.compare_digest(expected, provided):
+                raise HTTPException(status_code=401, detail="Assinatura inválida")
+
+        payload = await req.json()
+        pid = None
+        if isinstance(payload, dict):
+            if payload.get("data") and isinstance(payload.get("data"), dict):
+                pid = payload["data"].get("id")
+            if not pid and payload.get("id"):
+                pid = payload.get("id")
+        
+        if pid:
+            # Envia para processamento em background e libera o Mercado Pago imediatamente
+            db = SessionLocal()
+            background_tasks.add_task(handle_mercadopago_payment, int(pid), db)
+            
+    except Exception as e:
+        print(f"[WEBHOOK POST ERROR] {e}")
+        
+    return {"ok": True}
+
+@router.get("/webhook")
+def webhook_get(id: int | None = None, background_tasks: BackgroundTasks = None):
+    """Versão GET para testes e legacy"""
+    if id and background_tasks:
+        db = SessionLocal()
+        background_tasks.add_task(handle_mercadopago_payment, int(id), db)
     return {"ok": True}
