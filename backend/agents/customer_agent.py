@@ -78,32 +78,16 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
             return {"error": f"Erro técnico na verificação de disponibilidade: {str(e)}"}
 
     @tool
-    def robot_guest_registrar(name: str, document: str, phone: str = "", birth_date: str = "", email: str = "") -> dict:
+    def robot_get_registration_link(cpf: str = "") -> dict:
         """
-        Cadastra um HÓSPEDE NOVO no sistema se ele não existir.
-        Use isto ANTES de tentar fazer uma reserva caso o 'find_guest' não ache a pessoa.
-        document (CPF) é obrigatório. birth_date deve ser YYYY-MM-DD.
+        Gera o link oficial de cadastro para o hóspede. 
+        Use SEMPRE que o hóspede não for encontrado pelo CPF no sistema.
         """
-        set_tenant_context(db, tenant_id)
-        
-        clean_doc = "".join(filter(str.isdigit, document))
-        exists = db.query(models.Guest).filter(models.Guest.document == clean_doc).first()
-        if exists: return {"error": "CPF já cadastrado. Use find_guest.", "id": exists.id}
-        
-        try:
-            bd = None
-            if birth_date:
-                try: bd = datetime.strptime(birth_date, "%Y-%m-%d").date()
-                except: pass
-                
-            g = models.Guest(name=name, document=clean_doc, phone=phone, email=email, birth_date=bd)
-            db.add(g)
-            db.commit()
-            db.refresh(g)
-            return {"success": True, "guest_id": g.id, "message": "Hóspede cadastrado com sucesso."}
-        except Exception as e:
-            db.rollback()
-            return {"error": f"Erro técnico ao cadastrar: {str(e)}"}
+        link = f"/{tenant_id}/registrar?cpf={cpf}"
+        return {
+            "link": link,
+            "instructions": "Peça ao hóspede para clicar no link, preencher a ficha e clicar em 'Voltar para o Chat' para continuar a reserva."
+        }
 
     @tool
     def robot_family_reservation(
@@ -302,12 +286,12 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
             if name:
                 gs = db.query(models.Guest).filter(models.Guest.name.ilike(f"%{name}%")).all()
                 return {"results": [{"id": x.id, "name": x.name} for x in gs]}
-            return {"error": "Nenhum hóspede localizado. Talvez precise usar o robot_guest_registrar."}
+            return {"error": "Nenhum hóspede localizado com este CPF. Por favor, use a ferramenta 'robot_get_registration_link' para enviar o link de cadastro ao cliente."}
         except Exception as e:
             db.rollback()
             return {"error": f"Erro técnico ao buscar hópede: {str(e)}"}
 
-    tools = [robot_availability_checker, robot_guest_registrar, robot_family_reservation, robot_caravan_organizer, find_guest]
+    tools = [robot_availability_checker, robot_get_registration_link, robot_family_reservation, robot_caravan_organizer, find_guest]
     llm_with_tools = llm.bind_tools(tools)
 
     sys_msg = SystemMessage(content="""Você é o Especialista de Reservas da Pousada.
@@ -315,7 +299,8 @@ Sua missão é conduzir o hóspede até a reserva de ponta a ponta.
 
 DIRETRIZES DE FLUXO (Siga a Ordem):
 1. **IDENTIFICAÇÃO**: Peça sempre o CPF. Use `find_guest`.
-2. **CADASTRO**: Se o `find_guest` disse que não existe, você SÓ PODE AVANÇAR se usar a ferramenta `robot_guest_registrar`. Peça os dados origatórios primeiro!
+2. **CADASTRO**: Se o `find_guest` retornar erro dizendo que não localizou o CPF, você DEVE usar a ferramenta `robot_get_registration_link`. **Não tente cadastrar por texto**.
+   Envie o link de forma amigável: "Não te encontrei por aqui, mas não se preocupe! Clique no link abaixo para preencher sua ficha rapidinho. Quando terminar, basta clicar no botão 'Voltar para o Chat' que eu já estarei aqui te esperando para finalizar sua reserva!"
 3. **PESQUISA**: Se o cliente quer saber preços e vagas, use o `robot_availability_checker`.
 4. **CHAMADA DE RESERVA**:
    - Família/Amigos/Casal (2 a 6 pessoas): Use o `robot_family_reservation`. Você DEVE pedir nome e idade de TODOS OS ACOMPANHANTES antes de chamar a ferramenta! (O guest_id vem do find_guest ou registrar)

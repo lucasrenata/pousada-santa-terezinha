@@ -108,7 +108,11 @@ export default function GuestRegistrationPage() {
       });
 
       setSuccess(true);
-      setTimeout(() => navigate(`/${tenant_id || "1"}/atendimento`), 3000);
+      // Redirecionamento automático mais rápido
+      setTimeout(() => {
+        const target = `/${tenant_id || "1"}/atendimento`;
+        navigate(target);
+      }, 2000);
     } catch (err: any) {
       console.error("Erro ao salvar cadastro:", err);
       setError(err.response?.data?.detail || "Ocorreu um erro ao salvar seus dados. Verifique os campos ou tente novamente.");
@@ -120,16 +124,16 @@ export default function GuestRegistrationPage() {
   if (success) {
     return (
       <div className="max-w-md mx-auto h-screen flex flex-col items-center justify-center p-6 text-center animate-in zoom-in duration-500">
-        <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-6 shadow-lg">
-          <CheckCircle size={48} />
+        <div className="w-24 h-24 bg-green-500 text-white rounded-full flex items-center justify-center mb-6 shadow-2xl shadow-green-200 animate-bounce">
+          <CheckCircle size={56} />
         </div>
-        <h2 className="text-2xl font-black text-slate-800 mb-2">Cadastro Concluído!</h2>
-        <p className="text-slate-500 font-medium mb-8">Agora você pode voltar ao chat e finalizar sua reserva em segundos.</p>
+        <h2 className="text-3xl font-black text-slate-800 mb-2">Tudo Pronto!</h2>
+        <p className="text-slate-500 font-medium mb-10 text-lg">Cadastro realizado com sucesso. Estamos te levando de volta para o chat...</p>
         <button 
           onClick={() => navigate(`/${tenant_id || "1"}/atendimento`)}
-          className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-slate-800 transition-all"
+          className="w-full bg-slate-900 text-white py-5 rounded-3xl font-black text-xl flex items-center justify-center gap-3 hover:scale-105 active:scale-95 transition-all shadow-xl shadow-slate-200"
         >
-          Voltar para o Chat <ArrowRight size={18} />
+          Voltar para o Chat <ArrowRight size={24} />
         </button>
       </div>
     );
