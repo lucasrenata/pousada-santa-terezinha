@@ -312,13 +312,23 @@ def payment_info_logic(tenant_id: int, booking_id: int) -> dict:
                 if token:
                     mp = MercadoPagoService()
                     description = f"Reserva #{booking.id} - {booking.guest.name}"
+                    # Prioriza e-mail de teste se estiver em dev
+                    env = (os.getenv("ENVIRONMENT") or "development").lower()
+                    test_email = os.getenv("TEST_PAYER_EMAIL")
+                    email_to_use = booking.guest.email or (test_email if env != "production" else "guest@pousada.com")
+
                     payer = {
-                        "email": booking.guest.email or "guest@test.com",
+                        "email": email_to_use,
                         "first_name": booking.guest.name.split()[0],
                         "last_name": booking.guest.name.split()[-1] if " " in booking.guest.name else "Hóspede",
                         "identification": {"type": "CPF", "number": "".join(filter(str.isdigit, booking.guest.document or "19119119100"))}
                     }
                     res = mp.create_pix_payment(token, tenant_id, booking.total_amount, description, {"booking_id": booking.id}, payer=payer)
+                    
+                    status_code = res.get("status")
+                    if status_code and int(status_code) >= 400:
+                        print(f"[PAYMENT_LOG] Erro Mercado Pago (Status {status_code}): {res.get('response')}")
+                    
                     poi = (res.get("response") or {}).get("point_of_interaction", {}).get("transaction_data", {})
                     qr_data = {"image": poi.get("qr_code_base64"), "code": poi.get("qr_code")}
                     if qr_data.get("code"):
