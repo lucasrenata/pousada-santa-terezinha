@@ -6,6 +6,29 @@ from database import SessionLocal, set_tenant_context
 from utils.pricing import calculate_daily_rates_count, calculate_reservation_total
 from datetime import datetime, date, timedelta
 from typing import Optional, List
+import traceback
+
+# --- UTILS DE DATA (UNIVERSAL) ---
+def universal_date_parser(date_str):
+    """Interpreta datas em formato DD/MM, DD/MM/YYYY ou YYYY-MM-DD."""
+    if not date_str: return None
+    date_str = date_str.strip()
+    now = datetime.now()
+    try:
+        if "/" in date_str:
+            parts = date_str.split("/")
+            day = int(parts[0])
+            month = int(parts[1])
+            year = int(parts[2]) if len(parts) > 2 else now.year
+            target_date = date(year, month, day)
+            
+            # Se a data for no passado e o ano não foi especificado, assume o próximo ano para reservas
+            if len(parts) <= 2 and target_date < now.date():
+                target_date = date(year + 1, month, day)
+            return target_date
+        return datetime.strptime(date_str, "%Y-%m-%d").date()
+    except:
+        return None
 
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
@@ -103,33 +126,12 @@ def availability_check_logic(tenant_id: int, check_in: str, check_out: str, grou
         with SessionLocal() as db:
             set_tenant_context(db, tenant_id)
             
-            # --- SMART DATE PARSER (SENIOR VERSION) ---
             now = datetime.now()
-            def parse_smart_date(date_str):
-                date_str = date_str.strip()
-                try:
-                    target_date = None
-                    if "/" in date_str:
-                        parts = date_str.split("/")
-                        day = int(parts[0])
-                        month = int(parts[1])
-                        year = int(parts[2]) if len(parts) > 2 else now.year
-                        target_date = date(year, month, day)
-                        
-                        # Se a data for no passado e o ano não foi especificado, assume o próximo ano
-                        if len(parts) <= 2 and target_date < now.date():
-                            target_date = date(year + 1, month, day)
-                    else:
-                        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-                    return target_date
-                except:
-                    return None
-
-            ci = parse_smart_date(check_in)
-            co = parse_smart_date(check_out)
+            ci = universal_date_parser(check_in)
+            co = universal_date_parser(check_out)
 
             if not ci or not co:
-                return {"error": f"Formato de data inválido ({check_in} a {check_out}). Use DD/MM ou AAAA-MM-DD."}
+                return {"error": f"Data inválida ({check_in} a {check_out}). Use o formato DD/MM."}
 
             print(f"[TOOL_CALL] robot_check_availability: {ci} to {co}, group={group_size}")
 
@@ -253,8 +255,11 @@ def booking_creation_logic(tenant_id: int, guest_id: int, room_id: str, check_in
     try:
         with SessionLocal() as db:
             set_tenant_context(db, tenant_id)
-            ci = datetime.strptime(check_in, "%Y-%m-%d").date()
-            co = datetime.strptime(check_out, "%Y-%m-%d").date()
+            ci = universal_date_parser(check_in)
+            co = universal_date_parser(check_out)
+            
+            if not ci or not co:
+                return {"error": "As datas da reserva estão inválidas. Por favor, verifique."}
             
             guest = db.query(models.Guest).get(guest_id)
             if not guest: return {"error": "Hóspede principal não localizado."}
@@ -523,7 +528,8 @@ REGRAS OBRIGATÓRIAS DE ORQUESTRAÇÃO:
    - Trate erros de robôs de forma transparente: se um robô falhar (ex: 'Idade inválida'), explique ao hóspede o que falhou e peça a correção.
 
 5. INTELIGÊNCIA DE DATAS:
-   - O robô entende formatos brasileiros (DD/MM). Se hoje é Dezembro e o hóspede diz "Janeiro", o robô saberá que é o ano seguinte.
+   - O robô entende QUALQUER formato de data (DD/MM, DD/MM/YYYY).
+   - VOCÊ É PROIBIDO de pedir para o hóspede formatar a data ou confirmar se o formato está certo. Basta passar o que ele disse para o robô e ele resolverá.
 
 ESTILO: Profissional, eficiente e acolhedor, mas focado na conclusão correta da transação.
 """)
