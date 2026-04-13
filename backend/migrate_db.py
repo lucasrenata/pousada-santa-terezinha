@@ -3,25 +3,35 @@ from sqlalchemy import text
 
 def migrate():
     with engine.connect() as conn:
-        print("Iniciando migração do banco de dados...")
+        print("Iniciando migração do banco de dados completo...")
         try:
-            # Adiciona colunas de horário se não existirem
+            # 1. Colunas de Horários e Preços base
             conn.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS check_in_time VARCHAR DEFAULT '14:00'"))
             conn.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS check_out_time VARCHAR DEFAULT '14:00'"))
             conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS cost_price FLOAT DEFAULT 0.0"))
             conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS markup_percent FLOAT DEFAULT 0.0"))
-            # Adicionando colunas recém-criadas na branch main que não estavam na nuvem
+            
+            # 2. Usuários e Quartos
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name VARCHAR"))
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR"))
-            
             conn.execute(text("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS max_capacity INTEGER DEFAULT 2"))
             conn.execute(text("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS maintenance_note TEXT"))
             
+            # 3. Hóspedes
             conn.execute(text("ALTER TABLE guests ADD COLUMN IF NOT EXISTS document VARCHAR"))
             conn.execute(text("ALTER TABLE guests ADD COLUMN IF NOT EXISTS birth_date DATE"))
             conn.execute(text("ALTER TABLE guests ADD COLUMN IF NOT EXISTS profession VARCHAR"))
             
-            # Adicionando tenant_id nas tabelas legadas para a VPS
+            # 4. NOVAS COLUNAS: Eventos e Configurações (Preços inteligentes)
+            conn.execute(text("ALTER TABLE events ADD COLUMN IF NOT EXISTS daily_rate FLOAT DEFAULT 0.0"))
+            conn.execute(text("ALTER TABLE events ADD COLUMN IF NOT EXISTS daily_rate_single FLOAT DEFAULT 0.0"))
+            conn.execute(text("ALTER TABLE events ADD COLUMN IF NOT EXISTS daily_rate_couple FLOAT DEFAULT 0.0"))
+            conn.execute(text("ALTER TABLE events ADD COLUMN IF NOT EXISTS daily_rate_extra FLOAT DEFAULT 0.0"))
+            conn.execute(text("ALTER TABLE events ADD COLUMN IF NOT EXISTS daily_rate_child FLOAT DEFAULT 0.0"))
+            
+            conn.execute(text("ALTER TABLE tenant_configs ADD COLUMN IF NOT EXISTS manual_pix_key VARCHAR"))
+
+            # 5. Multi-tenancy (tenant_id em todas as tabelas)
             tables = [
                 "users", "rooms", "guests", "products", "bookings", 
                 "companions", "consumptions", "revenues", "business_rules", 
@@ -30,7 +40,6 @@ def migrate():
             ]
             for table in tables:
                 if table == "tenant_configs":
-                    # Cria a tabela tenant_configs manualmente se não existir (para evitar dependência de mixin)
                     conn.execute(text("""
                         CREATE TABLE IF NOT EXISTS tenant_configs (
                             id SERIAL PRIMARY KEY,
@@ -45,9 +54,9 @@ def migrate():
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id)"))
             
             conn.commit()
-            print("✅ Colunas de negócio e multitenancy (tenant_id) injetadas com sucesso!")
+            print("✅ Banco de dados sincronizado com sucesso!")
         except Exception as e:
-            print(f"❌ Erro na migração das tabelas (A tabela 'tenants' já foi gerada pelo FastAPI?): {e}")
+            print(f"❌ Erro na migração: {e}")
 
 if __name__ == "__main__":
     migrate()
