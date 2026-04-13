@@ -32,8 +32,9 @@ def get_db():
 def before_flush(session, flush_context, instances):
     # Tenta pegar o tenant_id da configuração da sessão
     try:
-        res = session.execute(text("SHOW app.current_tenant")).fetchone()
-        current_tid = int(res[0]) if res and res[0].isdigit() and res[0] != '0' else None
+        # Usa current_setting com 'true' para não dar erro se o parâmetro não existir
+        res = session.execute(text("SELECT current_setting('app.current_tenant', true)")).fetchone()
+        current_tid = int(res[0]) if res and res[0] and res[0].isdigit() and res[0] != '0' else None
         
         if current_tid:
             for obj in session.new:

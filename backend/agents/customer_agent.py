@@ -39,42 +39,43 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
             set_tenant_context(db, tenant_id)
             ci = datetime.strptime(check_in, "%Y-%m-%d").date()
             co = datetime.strptime(check_out, "%Y-%m-%d").date()
-        except:
-            return {"error": "Datas obrigatórias no formato YYYY-MM-DD."}
             
-        event = db.query(models.Event).filter(models.Event.start_date <= co, models.Event.end_date >= ci).first()
-        days = calculate_daily_rates_count(ci, co, "14:00", "14:00")
-        settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
-        active_rules = db.query(models.BusinessRule).filter(models.BusinessRule.is_active == True).all()
-        
-        occupied = [r[0] for r in db.query(models.Booking.room_id).filter(
-            models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
-            models.Booking.check_out_date > ci,
-            models.Booking.check_in_date < co
-        ).all()]
-        
-        rooms = db.query(models.Room).filter(models.Room.id.notin_(occupied), models.Room.status != models.RoomStatus.MANUTENCAO).all()
-        
-        final_rooms = []
-        for r in rooms:
-            allowed = True
-            couple_rule = next((rule for rule in active_rules if rule.name == "Restrição de Casal"), None)
-            if couple_rule and group_size == 2:
-                restricted_rooms = [rid.strip() for rid in couple_rule.config.get("room_ids", "").split(",") if rid.strip()]
-                if r.id in restricted_rooms:
-                    has_weekend = any((ci + timedelta(days=i)).weekday() in [4, 5, 6] for i in range(days))
-                    if has_weekend:
-                        allowed = False
-            if allowed:
-                final_rooms.append(r)
+            event = db.query(models.Event).filter(models.Event.start_date <= co, models.Event.end_date >= ci).first()
+            days = calculate_daily_rates_count(ci, co, "14:00", "14:00")
+            settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
+            active_rules = db.query(models.BusinessRule).filter(models.BusinessRule.is_active == True).all()
+            
+            occupied = [r[0] for r in db.query(models.Booking.room_id).filter(
+                models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
+                models.Booking.check_out_date > ci,
+                models.Booking.check_in_date < co
+            ).all()]
+            
+            rooms = db.query(models.Room).filter(models.Room.id.notin_(occupied), models.Room.status != models.RoomStatus.MANUTENCAO).all()
+            
+            final_rooms = []
+            for r in rooms:
+                allowed = True
+                couple_rule = next((rule for rule in active_rules if rule.name == "Restrição de Casal"), None)
+                if couple_rule and group_size == 2:
+                    restricted_rooms = [rid.strip() for rid in couple_rule.config.get("room_ids", "").split(",") if rid.strip()]
+                    if r.id in restricted_rooms:
+                        has_weekend = any((ci + timedelta(days=i)).weekday() in [4, 5, 6] for i in range(days))
+                        if has_weekend:
+                            allowed = False
+                if allowed:
+                    final_rooms.append(r)
 
-        return {
-            "available_rooms": [{"id": r.id, "cap": r.max_capacity, "price": r.price_per_night} for r in final_rooms],
-            "event_info": getattr(event, "name", "Nenhum evento") if event else "Nenhum evento",
-            "total_capacity_available": sum(r.max_capacity for r in final_rooms),
-            "pricing_model": settings.get("pousada_pricing_model", "per_person"),
-            "rules_active": [r.name for r in active_rules]
-        }
+            return {
+                "available_rooms": [{"id": r.id, "cap": r.max_capacity, "price": r.price_per_night} for r in final_rooms],
+                "event_info": getattr(event, "name", "Nenhum evento") if event else "Nenhum evento",
+                "total_capacity_available": sum(r.max_capacity for r in final_rooms),
+                "pricing_model": settings.get("pousada_pricing_model", "per_person"),
+                "rules_active": [r.name for r in active_rules]
+            }
+        except Exception as e:
+            db.rollback()
+            return {"error": f"Erro técnico na verificação de disponibilidade: {str(e)}"}
 
     @tool
     def robot_guest_registrar(name: str, document: str, phone: str = "", birth_date: str = "", email: str = "") -> dict:
@@ -292,15 +293,19 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
     @tool
     def find_guest(cpf: str = "", name: str = "") -> dict:
         """Busca hóspede por CPF ou Nome. Retorna o ID."""
-        set_tenant_context(db, tenant_id)
-        if cpf:
-            clean_cpf = "".join(filter(str.isdigit, cpf))
-            g = db.query(models.Guest).filter(models.Guest.document == clean_cpf).first()
-            if g: return {"id": g.id, "name": g.name, "cpf": g.document}
-        if name:
-            gs = db.query(models.Guest).filter(models.Guest.name.ilike(f"%{name}%")).all()
-            return {"results": [{"id": x.id, "name": x.name} for x in gs]}
-        return {"error": "Nenhum hóspede localizado. Talvez precise usar o robot_guest_registrar."}
+        try:
+            set_tenant_context(db, tenant_id)
+            if cpf:
+                clean_cpf = "".join(filter(str.isdigit, cpf))
+                g = db.query(models.Guest).filter(models.Guest.document == clean_cpf).first()
+                if g: return {"id": g.id, "name": g.name, "cpf": g.document}
+            if name:
+                gs = db.query(models.Guest).filter(models.Guest.name.ilike(f"%{name}%")).all()
+                return {"results": [{"id": x.id, "name": x.name} for x in gs]}
+            return {"error": "Nenhum hóspede localizado. Talvez precise usar o robot_guest_registrar."}
+        except Exception as e:
+            db.rollback()
+            return {"error": f"Erro técnico ao buscar hópede: {str(e)}"}
 
     tools = [robot_availability_checker, robot_guest_registrar, robot_family_reservation, robot_caravan_organizer, find_guest]
     llm_with_tools = llm.bind_tools(tools)
