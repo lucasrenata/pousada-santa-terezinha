@@ -136,10 +136,12 @@ def availability_check_logic(tenant_id: int, check_in: str, check_out: str, grou
             if ci < now.date():
                 return {"error": "Ops! Essa data já passou. Que tal escolhermos uma data futura?"}
 
-            # 1. Busca quartos disponíveis e calcula orçamento unificado
-            days = calculate_daily_rates_count(ci, co, check_in_time, check_out_time)
             settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
             active_rules = db.query(models.BusinessRule).filter(models.BusinessRule.is_active == True).all()
+            
+            check_in_time = settings.get("check_in_time", "14:00")
+            check_out_time = settings.get("check_out_time", "12:00")
+            days = calculate_daily_rates_count(ci, co, check_in_time, check_out_time)
             
             occupied = [r[0] for r in db.query(models.Booking.room_id).filter(
                 models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
@@ -175,6 +177,8 @@ def availability_check_logic(tenant_id: int, check_in: str, check_out: str, grou
                 "pricing_model": settings.get("pousada_pricing_model", "per_person")
             }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return {"error": f"Erro na consulta de disponibilidade: {str(e)}"}
 
 def search_events_logic(tenant_id: int, query: str) -> dict:
