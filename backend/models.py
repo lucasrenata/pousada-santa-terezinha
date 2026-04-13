@@ -286,3 +286,19 @@ class Event(Base, TenantMixin):
     daily_rate_child = Column(Float, default=0.0)
     color = Column(String, default="#6366f1")  # Cor do card no calendário
     created_at = Column(DateTime, default=datetime.now)
+
+class TenantMemory(Base):
+    __tablename__ = "tenant_memories"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, index=True)
+    guest_id = Column(Integer, ForeignKey("guests.id"), nullable=True)
+    
+    category = Column(String, default="geral") # 'preferencia', 'regra_negocio', 'logistica'
+    content = Column(String, nullable=False)
+    importance = Column(Integer, default=1) # 1 a 5
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
+
+    guest = relationship("Guest")

@@ -9,9 +9,9 @@ from typing import Optional, List
 
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 
 # =============================================================================
 # MOTOR DE CÁLCULO UNIFICADO
@@ -101,13 +101,32 @@ def availability_check_logic(tenant_id: int, check_in: str, check_out: str, grou
             
         with SessionLocal() as db:
             set_tenant_context(db, tenant_id)
-            try:
-                ci = datetime.strptime(check_in, "%Y-%m-%d").date()
-                co = datetime.strptime(check_out, "%Y-%m-%d").date()
-            except ValueError:
-                return {"error": "As datas parecem estar em um formato estranho. Pode confirmar o dia e mês?"}
+            
+            # --- SMART DATE PARSER ---
+            now = datetime.now()
+            def parse_smart_date(date_str):
+                # Formatos: "29/04", "29/04/2026", "2026-04-29"
+                date_str = date_str.strip()
+                try:
+                    if "/" in date_str:
+                        parts = date_str.split("/")
+                        day = int(parts[0])
+                        month = int(parts[1])
+                        year = int(parts[2]) if len(parts) > 2 else now.year
+                        return date(year, month, day)
+                    return datetime.strptime(date_str, "%Y-%m-%d").date()
+                except:
+                    return None
 
-            if ci < date.today():
+            ci = parse_smart_date(check_in)
+            co = parse_smart_date(check_out)
+
+            if not ci or not co:
+                return {"error": f"Não consegui entender as datas ({check_in} a {check_out}). Pode confirmar o dia e o mês pra mim? 😊"}
+
+            print(f"[TOOL_CALL] robot_check_availability: {ci} to {co}, group={group_size}")
+
+            if ci < now.date():
                 return {"error": "Ops! Essa data já passou. Que tal escolhermos uma data futura?"}
 
             # 1. Busca quartos disponíveis e calcula orçamento unificado
@@ -332,6 +351,59 @@ def confirm_payment_logic(tenant_id: int, booking_id: int, method: str = "pix") 
         return {"error": f"Erro ao confirmar pagamento: {str(e)}"}
 
 # =============================================================================
+# OPERATIONAL MEMORY: APRENDIZADO CONTÍNUO
+# =============================================================================
+
+def get_operational_memory(tenant_id: int, guest_id: int = None) -> str:
+    """Recupera fatos e aprendizados relevantes do banco de dados."""
+    with SessionLocal() as db:
+        query = db.query(models.TenantMemory).filter(models.TenantMemory.tenant_id == tenant_id, models.TenantMemory.is_active == True)
+        if guest_id:
+            # Pega memórias gerais E específicas do hóspede
+            from sqlalchemy import or_
+            query = query.filter(or_(models.TenantMemory.guest_id == guest_id, models.TenantMemory.guest_id == None))
+        
+        memories = query.order_by(models.TenantMemory.importance.desc()).limit(10).all()
+        if not memories: return ""
+        
+        text = "\n[MEMÓRIA OPERACIONAL / APRENDIZADOS]:\n"
+        for m in memories:
+            text += f"- {m.content}\n"
+        return text
+
+def store_operational_memory_logic(tenant_id: int, content: str, category: str = "geral", guest_id: int = None, importance: int = 1) -> dict:
+    """Lógica para salvar novos aprendizados no banco."""
+    with SessionLocal() as db:
+        new_mem = models.TenantMemory(
+            tenant_id=tenant_id, guest_id=guest_id, 
+            category=category, content=content, importance=importance
+        )
+        db.add(new_mem)
+        db.commit()
+        return {"success": True, "message": "Aprendizado registrado com sucesso na minha memória de longo prazo! 🧠"}
+
+def convert_history_to_langchain(history: list):
+    """Converte o histórico do DB para o formato LangChain, preservando chamadas de ferramentas."""
+    lc_messages = []
+    # Pegamos os últimos 15 turnos para manter o contexto operacional sem estourar tokens
+    for h in history[-15:]:
+        role = h.get("role")
+        content = h.get("content", "")
+        tool_calls = h.get("tool_calls") # Se vier do histórico do DB como JSON
+        
+        if role == "user":
+            lc_messages.append(HumanMessage(content=content))
+        elif role == "assistant":
+            if tool_calls:
+                lc_messages.append(AIMessage(content=content, tool_calls=tool_calls))
+            else:
+                lc_messages.append(AIMessage(content=content))
+        elif role == "tool":
+            lc_messages.append(ToolMessage(content=content, tool_call_id=h.get("tool_call_id", "")))
+            
+    return lc_messages
+
+# =============================================================================
 # ORQUESTRADOR CENTRAL (AGENTE CUSTOMER)
 # =============================================================================
 
@@ -343,75 +415,51 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
     ai_name = settings.get("ai_receptionist_name", "Ana")
 
     @tool
-    def robot_check_availability(check_in: str, check_out: str, group_size: int = 1, ages: List[int] = []) -> dict:
-        """Micro-robô para consultar vagas e preços. Datas formato YYYY-MM-DD. 'ages' deve ser uma lista de idades (ex: [30, 28, 5, 12])."""
-        return availability_check_logic(tenant_id, check_in, check_out, group_size, ages)
+    def robot_record_knowledge(content: str, category: str = "geral", importance: int = 1, guest_id: int = None) -> dict:
+        """Micro-robô de APRENDIZADO: Salva fatos importantes, preferências do hóspede ou regras aprendidas na memória de longo prazo."""
+        print(f"[TOOL_CALL] robot_record_knowledge: {content[:50]}...")
+        return store_operational_memory_logic(tenant_id, content, category, guest_id, importance)
 
-    @tool
-    def robot_find_guest(cpf: str = "", name: str = "") -> dict:
-        """Micro-robô para identificar hóspedes pelo CPF ou Nome."""
-        return find_guest_logic(tenant_id, cpf, name, base_url)
-
-    @tool
-    def robot_pre_validate_checklist(group_size: int, companions: List[dict] = []) -> dict:
-        """Micro-robô CHECKLIST: Verifica se você já tem nomes e idades de todos os acompanhantes."""
-        return pre_validation_logic(group_size, companions)
-
-    @tool
-    def robot_search_events(query: str) -> dict:
-        """Micro-robô especializado em descobrir datas de EVENTOS festivos."""
-        return search_events_logic(tenant_id, query)
-
-    @tool
-    def robot_book_with_payment(guest_id: int, room_id: str, check_in: str, check_out: str, group_size: int, companions: List[dict] = []) -> dict:
-        """Micro-robô FINALIZADOR: Cria a reserva e gera o PIX em um só passo. Requer dados completos."""
-        return unified_booking_flow(tenant_id, guest_id, room_id, check_in, check_out, group_size, companions)
-
-    @tool
-    def robot_confirm_payment(booking_id: int, method: str = "pix") -> dict:
-        """Micro-robô financeiro: Confirma pagamentos e libera a reserva."""
-        return confirm_payment_logic(tenant_id, booking_id, method)
-
-    # --- DIAGNÓSTICO DE LOGS ---
-    print(f"\n[AI_LOG] Atendimento em curso para Tenant: {tenant_id}")
-    print(f"[AI_LOG] Histórico: {len(history)} mensagens anteriores.")
+    # --- MEMÓRIA E DIAGNÓSTICO ---
+    # Tenta identificar o hóspede no histórico para carregar a memória específica
+    current_guest_id = None
+    for h in reversed(history):
+        if h.get("guest_id"): 
+            current_guest_id = h["guest_id"]
+            break
+            
+    op_memory = get_operational_memory(tenant_id, current_guest_id)
+    if op_memory: print(f"[AI_MEMORY] Carregados fatos da memória operacional.")
 
     # --- PERSONA HUMANIZADA ---
     current_date_str = date.today().strftime("%A, %d de %B de %Y")
     sys_msg = SystemMessage(content=f"""Hoje é {current_date_str}.
 Você é {ai_name}, a recepcionista virtual super dedicada e amigável da nossa Pousada! ✨
-Seu objetivo é tornar a vida do hóspede fácil, oferecendo um atendimento descontraído, acolhedor e eficiente.
+{op_memory}
 
 DIRETRIZES DE OURO:
-1. **Identificação Flexível**: 
-   - Se o hóspede estiver apenas **pesquisando preços, disponibilidade ou informações gerais**, responda de forma consultiva e amigável PRIMEIRO. NÃO peça o CPF logo de cara se ele só quer saber o valor.
-   - Só peça o CPF quando ele demonstrar que quer realmente **seguir para a reserva** ou se você precisar de dados específicos do cadastro dele.
-   - Se não houver cadastro após o CPF, envie o link de registro carinhosamente.
-2. **Coleta de Acompanhantes (MUITO IMPORTANTE)**: 
-   - O hóspede titular (quem você está conversando) já está no sistema. 
-   - TODA outra pessoa citada (esposa, marido, filhos, amigos) é um ACOMPANHANTE.
-   - Para CADA acompanhante, você DEVE obter: **Nome Completo** e **Idade**.
-   - **Atenção**: Se o hóspede disser "eu, minha esposa e 2 filhos", você precisa de dados de 3 acompanhantes (Esposa + Filho 1 + Filho 2).
-   - **Cálculos e Contexto**: 
-     - VOCÊ NUNCA FAZ CONTAS E NUNCA REUTILIZA VALORES DE TURNOS ANTERIORES. 
-     - Se o hóspede mudar o número de pessoas ou a configuração (ex: "e para 1 pessoa?"), você DEVE chamar o 'robot_check_availability' novamente para obter o novo valor real do sistema.
-     - Se o hóspede já informou a idade (ex: "meu filho de 12 anos"), NÃO PERGUNTE A IDADE NOVAMENTE. Peça apenas o nome dele.
-4. **Reserva Imortal**: Para criar a reserva, você DEVE usar o 'robot_book_with_payment'. 
-   - **ID DO QUARTO**: Use APENAS o 'room_number' retornado pelo robô. NUNCA use o valor ou o nome como ID.
-   - Você PRECISA ter o Nome e Idade de TODOS os acompanhantes.
-   - **Dica de Ouro**: Use o 'robot_pre_validate_checklist' sempre que tiver dúvida se já coletou tudo. Ele vai te dizer exatamente o que perguntar a seguir!
-   - Assim que o checklist estiver 'ready', chame o 'robot_book_with_payment' para finalizar.
-   - **Atenção ao Pagamento**: Se o robô retornar 'manual_key' ou 'pix_qr', EXIBA-OS IMEDIATAMENTE.
-   - **NUNCA INVENTE CHAVES**: Se o robô não retornar chave nenhuma (status 'pendente_configuracao'), use a 'msg_fallback' fornecida pelo robô. Jamais peça para o cliente "inserir a chave" ou invente dados.
-5. **Estilo**: Use emojis, seja leve e acolhedora.
-6. **Confirmação Manual**: Se o hóspede enviar comprovante, use 'robot_confirm_payment'.
+1. **APRENDIZADO**: Você tem uma memória de longo prazo. Se o hóspede mencionar uma preferência (ex: "gosto de silêncio"), uma reclamação ou um fato novo sobre o negócio, use 'robot_record_knowledge' para NUNCA esquecer.
+2. **Identificação Flexível**: 
+   - Se o hóspede estiver apenas **pesquisando preços**, responda amigavelmente PRIMEIRO. NÃO peça o CPF logo de cara.
+   - Só peça o CPF para **seguir para a reserva**.
+3. **Coleta de Acompanhantes**: 
+   - Você precisa de **Nome Completo** e **Idade** de cada acompanhante.
+   - O 'robot_pre_validate_checklist' é seu melhor amigo para saber o que falta perguntar.
+4. **Cálculos e Robôs**: 
+   - VOCÊ NUNCA FAZ CONTAS. Use sempre 'robot_check_availability'.
+   - Datas: O robô entende formatos brasileiros (29/04).
+5. **Reserva Imortal**: Para finalizar, use 'robot_book_with_payment' assim que o checklist estiver 'ready'.
+6. **NUNCA INVENTE CHAVES**: Se o robô não retornar chave PIX, use a 'msg_fallback'.
+7. **Estilo**: Use emojis, seja leve e acolhedora.
 
-IMPORTANTE: 
-- Sempre repasse a lista exata de idades de TODO o grupo (incluindo adultos como 18+) para o robô de disponibilidade ter o cálculo correto.
-- Nunca ignore um acompanhante adulto citado (como esposa/marido).
+IMPORTANTE: Se as datas forem no passado ou inválidas, explique gentilmente.
 """)
 
-    tools = [robot_check_availability, robot_find_guest, robot_search_events, robot_pre_validate_checklist, robot_book_with_payment, robot_confirm_payment]
+    tools = [
+        robot_check_availability, robot_find_guest, robot_search_events, 
+        robot_pre_validate_checklist, robot_book_with_payment, robot_confirm_payment,
+        robot_record_knowledge
+    ]
     llm_with_tools = llm.bind_tools(tools)
 
     def call_model(state: MessagesState):
@@ -427,11 +475,8 @@ IMPORTANTE:
     workflow.add_edge("tools", "agent")
     app = workflow.compile()
 
-    lc_messages = []
-    for h in history[-15:]:
-        role = h.get("role", "user")
-        if role == "user": lc_messages.append(HumanMessage(content=h.get("content", "")))
-        elif role == "assistant": lc_messages.append(AIMessage(content=h.get("content", "")))
+    # Conversão Inteligente de Histórico
+    lc_messages = convert_history_to_langchain(history)
     lc_messages.append(HumanMessage(content=message))
 
     try:
