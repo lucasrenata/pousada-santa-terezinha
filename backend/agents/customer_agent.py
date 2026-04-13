@@ -444,9 +444,10 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
     google_key = os.getenv("GOOGLE_API_KEY")
     gemini_model = os.getenv("GEMINI_MODEL")
     
-    if google_key and gemini_model:
-        llm = ChatGoogleGenerativeAI(model=gemini_model, google_api_key=google_key, temperature=0.1)
-        print(f"[AI_LOG] Usando Google Gemini: {gemini_model}")
+    if google_key:
+        model_name = gemini_model or "gemini-2.5-flash"
+        llm = ChatGoogleGenerativeAI(model=model_name, google_api_key=google_key, temperature=0.1)
+        print(f"[AI_LOG] Usando Google Gemini: {model_name}")
     else:
         llm = ChatOpenAI(model="gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.2)
         print(f"[AI_LOG] Usando OpenAI: gpt-4o-mini")
@@ -554,7 +555,7 @@ ESTILO: Profissional, eficiente e acolhedor, mas focado na conclusão correta da
     tools = [
         robot_check_availability, robot_find_guest, robot_search_events, 
         robot_pre_validate_checklist, robot_book_with_payment, robot_confirm_payment,
-        robot_record_knowledge
+        robot_record_knowledge, robot_get_payment_info
     ]
     llm_with_tools = llm.bind_tools(tools)
 
