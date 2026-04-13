@@ -332,6 +332,43 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
             db.rollback()
             return {"error": f"Erro interno financeiro: {str(e)}"}
 
+    @tool
+    def robot_search_events(query: str) -> dict:
+        """
+        Busca a agenda de Eventos ou Feriados conhecidos pela pousada através do nome (ex: "Moto Capital", "Festival", "Ano Novo").
+        Retorna o Nome Oficial, Data de Início e Término do evento para você utilizar nas consultas de vagas.
+        Se atente a não colocar acentos caso não encontre (ex: 'joao').
+        """
+        try:
+            set_tenant_context(db, tenant_id)
+            import unicodedata
+            
+            # Normalização leve para a query, apenas para casos extremos
+            events = db.query(models.Event).all()
+            found = []
+            q_lower = query.lower()
+            
+            for e in events:
+                if q_lower in e.name.lower():
+                    found.append(e)
+            
+            if not found:
+                return {"error": f"Nenhum evento localizado na Pousada que contenha a palavra '{query}'."}
+                
+            results = []
+            for e in found:
+                results.append({
+                    "id": e.id,
+                    "name": e.name,
+                    "start_date": e.start_date.strftime("%Y-%m-%d"),
+                    "end_date": e.end_date.strftime("%Y-%m-%d"),
+                    "description": getattr(e, "description", "")
+                })
+            return {"events": results, "instructions": "USE A DATA do 'start_date' e 'end_date' para prosseguir e verificar vagas com a ferramenta robot_availability_checker."}
+        except Exception as e:
+            db.rollback()
+            return {"error": f"Erro ao consultar eventos: {str(e)}"}
+
     # Mantemos ferramentas de busca para o fluxo de identificação
     @tool
     def find_guest(cpf: str = "", name: str = "") -> dict:
@@ -356,7 +393,7 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
             db.rollback()
             return {"error": f"Erro técnico ao buscar hópede: {str(e)}"}
 
-    tools = [robot_availability_checker, robot_family_reservation, robot_caravan_organizer, robot_generate_payment_qr, find_guest]
+    tools = [robot_availability_checker, robot_family_reservation, robot_caravan_organizer, robot_generate_payment_qr, robot_search_events, find_guest]
     llm_with_tools = llm.bind_tools(tools)
 
     sys_msg = SystemMessage(content="""Você é o Especialista de Reservas da Pousada.
@@ -365,13 +402,14 @@ Sua missão é conduzir o hóspede até a reserva de ponta a ponta.
 DIRETRIZES DE FLUXO (Siga a Ordem):
 1. **IDENTIFICAÇÃO**: Peça sempre o CPF. Use `find_guest`.
 2. **CADASTRO**: Se o `find_guest` não localizar, ele vai retornar um "link_intocavel". É ESTRITAMENTE PROIBIDO alterar o domínio ou usar example.com. Repasse EXATAMENTE o `link_intocavel` que a ferramenta lhe deu em formato markdown para o cliente preencher a ficha. Exemplo: `[Ficha de Cadastro](LINK_INTOCAVEL)`. Quando terminar, diga para clicar no botão de voltar para o chat e avisar "Pronto!".
-3. **PESQUISA**: Se o cliente quer saber preços e vagas, use o `robot_availability_checker`.
-4. **CHAMADA DE RESERVA**:
+3. **EVENTOS**: Se o hóspede pedir estadia e apenas mencionar o NOME do EVENTO (Sem dizer as datas), use a ferramenta `robot_search_events` passando o nome. O robô vai lhe informar o `start_date` e `end_date`.
+4. **PESQUISA**: De posse das Datas Exatas, use o `robot_availability_checker` para olhar as vagas e regras tarifárias.
+5. **CHAMADA DE RESERVA**:
    - Família/Amigos/Casal (2 a 6 pessoas): Use o `robot_family_reservation`. Você DEVE pedir nome e idade de TODOS OS ACOMPANHANTES antes de chamar a ferramenta! (O guest_id vem do find_guest)
    - Excursão/Grupo Grande/Caravana (+15 pessoas): Use o `robot_caravan_organizer`. Não precisa de nomes, apenas de 'Quantas pessoas ao todo?' As vagas serão organizadas nos quartos dinamicamente baseando-se na capacidade deles.
-5. **CONFIRMAÇÃO & PAGAMENTO**: Assim que qualquer ferramenta de Reserva retornar Sucesso e o ID da reserva, você NÃO DEVE dizer que a reserva está confirmada! Diga que a reserva está **PENDENTE** de pagamento. Em seguida (na mesma rodada ou assim que gerar a reserva), use a ferramenta `robot_generate_payment_qr(booking_id)` mandando o ID para gerar a fatura.
+6. **CONFIRMAÇÃO & PAGAMENTO**: Assim que qualquer ferramenta de Reserva retornar Sucesso e o ID da reserva, você NÃO DEVE dizer que a reserva está confirmada! Diga que a reserva está **PENDENTE** de pagamento. Em seguida (na mesma rodada ou assim que gerar a reserva), use a ferramenta `robot_generate_payment_qr(booking_id)` mandando o ID para gerar a fatura.
    Exiba ao hóspede o QR Code (`qr_code_image_markdown`) e o pix Copia-e-Cola (`copia_e_cola`) exatamente como instruído pela ferramenta. O webhook do sistema fará a confirmação em tempo real.
-6. **RESPOSTA FINAL**: Seja gentil, use emojis, relate o sucesso claramente e avise se alguma regra de negócio alterou o valor final. Se relatar erros, não exiba o código feio, apenas seja simpático.
+7. **RESPOSTA FINAL**: Seja gentil, use emojis, relate o sucesso claramente e avise se alguma regra de negócio alterou o valor final. Se relatar erros, não exiba o código feio, apenas seja simpático.
 """)
 
     def call_model(state: MessagesState):
