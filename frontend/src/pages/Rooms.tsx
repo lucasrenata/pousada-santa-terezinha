@@ -67,6 +67,7 @@ export default function Rooms() {
   const [editingReservation, setEditingReservation] = useState<Reservation | null>(null);
   const [currentConsumptions, setCurrentConsumptions] = useState<any[]>([]);
   const [qrCodeData, setQrCodeData] = useState<string | null>(null);
+  const [qrCodeCopyPaste, setQrCodeCopyPaste] = useState<string | null>(null);
   const [paymentLink, setPaymentLink] = useState<string | null>(null);
   const [isGeneratingPayment, setIsGeneratingPayment] = useState(false);
   const [isPolling, setIsPolling] = useState(false);
@@ -280,7 +281,8 @@ export default function Rooms() {
     setPaymentLink(null);
     try {
       const res = await api.post(`/payments/checkout/${checkoutInfo.roomId}/pix`);
-      setQrCodeData(res.data.qr_code);
+      setQrCodeData(res.data.qr_code_base64);
+      setQrCodeCopyPaste(res.data.qr_code);
     } catch (err) {
       alert('Falha ao gerar PIX do Mercado Pago');
     } finally {
@@ -747,8 +749,8 @@ export default function Rooms() {
             )}
 
             {checkoutOpen && checkoutInfo && (
-              <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4" onClick={() => { setCheckoutOpen(false); setQrCodeData(null); setPaymentLink(null); }}>
-                <div className="bg-white rounded-3xl w-full max-w-lg p-0 shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200" onClick={(e) => e.stopPropagation()}>
+              <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4" onClick={() => { setCheckoutOpen(false); setQrCodeData(null); setQrCodeCopyPaste(null); setPaymentLink(null); }}>
+                <div className="bg-white rounded-3xl w-full max-w-lg max-h-[95vh] p-0 shadow-2xl overflow-y-auto animate-in fade-in zoom-in duration-200" onClick={(e) => e.stopPropagation()}>
                   <div className="bg-slate-900 p-6 text-white text-center relative">
                     <button 
                       onClick={() => { setCheckoutOpen(false); setQrCodeData(null); setPaymentLink(null); }}
@@ -850,6 +852,19 @@ export default function Rooms() {
                               className="w-48 h-48"
                             />
                           </div>
+                          
+                          <button
+                            onClick={() => {
+                              if (qrCodeCopyPaste) {
+                                navigator.clipboard.writeText(qrCodeCopyPaste);
+                                toast({ title: "Código PIX Copiado!", description: "Cole no seu aplicativo do banco." });
+                              }
+                            }}
+                            className="flex items-center gap-2 px-4 py-2 bg-white text-blue-600 rounded-full border border-blue-200 text-xs font-bold hover:bg-blue-50 transition mb-4 shadow-sm"
+                          >
+                            <ShoppingCart size={14} /> Copiar Código 'Copia e Cola'
+                          </button>
+
                           <div className="text-center">
                             <span className="bg-blue-600 text-white px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest mb-2 inline-block animate-pulse">
                               Aguardando Pagamento
@@ -860,7 +875,7 @@ export default function Rooms() {
                           </div>
                         </div>
                         <button 
-                          onClick={() => { setQrCodeData(null); setPaymentLink(null); }}
+                          onClick={() => { setQrCodeData(null); setQrCodeCopyPaste(null); setPaymentLink(null); }}
                           className="w-full text-slate-400 text-sm font-bold hover:text-slate-600 transition"
                         >
                           Trocar Método de Pagamento
