@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Request
 from sqlalchemy.orm import Session
 from database import get_db, set_tenant_context
 from .auth import get_current_staff, get_current_admin
@@ -50,7 +50,7 @@ async def get_chat_history(session_id: str, db: Session = Depends(get_db), curre
     ]
 
 @router.post("/customer")
-async def chat_customer(request: ChatRequest, db: Session = Depends(get_db)):
+async def chat_customer(request: ChatRequest, http_req: Request, db: Session = Depends(get_db)):
     # 0. Ativa RLS context
     set_tenant_context(db, request.tenant_id)
     
@@ -63,8 +63,16 @@ async def chat_customer(request: ChatRequest, db: Session = Depends(get_db)):
     # 3. Importação tardia do agente
     from agents.customer_agent import handle_customer_query
     
-    # Chamamos o agente (ele já recebe o histórico do banco)
-    result = await handle_customer_query(request.message, history[:-1], db, request.tenant_id) 
+    # Captura a URL base limpa da origem da requisição
+    from urllib.parse import urlparse
+    origin = http_req.headers.get("origin") or http_req.headers.get("referer") or ""
+    if origin:
+        parsed = urlparse(origin)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+    base_url = os.getenv("FRONTEND_URL") or origin or "http://localhost:5173"
+    
+    # Chamamos o agente (ele já recebe o histórico do banco e a URL correta)
+    result = await handle_customer_query(request.message, history[:-1], db, request.tenant_id, base_url=base_url) 
     
     # 4. Salva resposta da IA
     save_message(request.session_id, "assistant", result["response"], request.tenant_id, db)

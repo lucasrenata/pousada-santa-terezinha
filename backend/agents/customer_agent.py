@@ -19,7 +19,7 @@ def get_llm():
         return None
     return ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0.1)
 
-async def handle_customer_query(message: str, history: list, db: Session, tenant_id: int):
+async def handle_customer_query(message: str, history: list, db: Session, tenant_id: int, base_url: str = ""):
     llm = get_llm()
     if not llm:
         return {"response": "A chave da OpenAI não foi configurada. Por favor, adicione sua API Key no arquivo .env."}
@@ -77,18 +77,7 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
             db.rollback()
             return {"error": f"Erro técnico na verificação de disponibilidade: {str(e)}"}
 
-    @tool
-    def robot_get_registration_link(cpf: str = "") -> dict:
-        """
-        Gera o link oficial de cadastro para o hóspede. 
-        Use SEMPRE que o hóspede não for encontrado pelo CPF no sistema.
-        """
-        link = f"/{tenant_id}/registrar?cpf={cpf}"
-        return {
-            "link": link,
-            "instructions": "Peça ao hóspede para clicar no link, preencher a ficha e clicar em 'Voltar para o Chat' para continuar a reserva."
-        }
-
+    # Tool robot_get_registration_link removida em prol de uma arquitetura combinada na find_guest
     @tool
     def robot_family_reservation(
         guest_id: int, room_id: str, check_in: str, check_out: str, companions: List[dict], check_in_time: str = "14:00", check_out_time: str = "14:00"
@@ -273,6 +262,76 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
             db.rollback()
             return {"error": f"Erro ao organizar caravana: {str(e)}"}
 
+    @tool
+    def robot_generate_payment_qr(booking_id: int) -> dict:
+        """
+        Gera o QR Code PIX IMEDIATAMENTE após criar uma reserva para o cliente efetivar o pagamento.
+        Recebe o ID da reserva que a sua ferramenta de criação (robot_family_reservation/robot_caravan_organizer) acabou de gerar.
+        """
+        try:
+            set_tenant_context(db, tenant_id)
+            booking = db.query(models.Booking).get(booking_id)
+            if not booking:
+                return {"error": "Reserva não encontrada."}
+            
+            # Import blocks restritos para evitar loops circulares no boot
+            from routers.payments import get_tenant_mp_token
+            from payments.mercadopago_service import MercadoPagoService
+            import os
+            
+            try:
+                token = get_tenant_mp_token(db, tenant_id)
+                mp = MercadoPagoService()
+            except Exception as e:
+                return {"error": "O sistema de pagamento está indisponível ou desconfigurado no momento."}
+                
+            metadata = {"booking_id": booking.id, "type": "public", "tenant_id": tenant_id}
+            description = f"Pagamento Confirmação - Reserva #{booking.id}"
+            
+            # Formatação do Pagador (Payer)
+            payer = None
+            guest = booking.guest
+            if guest:
+                from routers.payments import _cpf_digits, _cpf_valid
+                cpf = _cpf_digits(guest.document or "")
+                env = (os.getenv("ENVIRONMENT") or "development").lower()
+                cpf = cpf if _cpf_valid(cpf) else "19119119100"
+                full = (guest.name or "").strip()
+                parts = [p for p in full.split() if p]
+                first = parts[0] if parts else "Hóspede"
+                last = parts[-1] if len(parts) > 1 else "Visitante"
+                payer = {
+                    "email": guest.email or "guest@test.com",
+                    "first_name": first,
+                    "last_name": last,
+                    "identification": {"type": "CPF", "number": cpf}
+                }
+                
+            result = mp.create_pix_payment(token, tenant_id, booking.total_amount, description, metadata, payer=payer)
+            response = result.get("response") or {}
+            status_code = result.get("status")
+
+            if status_code and int(status_code) >= 400:
+                print(f"[MP ERROR CHAT] status={status_code} error={response.get('error')}")
+                return {"error": "O Mercado Pago recusou a emissão do PIX no momento. Avise o cliente."}
+                
+            poi = (response.get("point_of_interaction") or {}).get("transaction_data") or {}
+            qr_base64 = poi.get("qr_code_base64")
+            qr_code = poi.get("qr_code")
+            
+            if not qr_base64:
+                return {"error": "Falha na decodificação do QR Code pelo banco. Avise a recepção."}
+                
+            return {
+                "success": True,
+                "instructions": "Envie o QR Code em formato de IMAGEM Markdown e o texto Copia-e-Cola abaixo. Diga que a reserva está PENDENTE e confirmará automaticamente ao pagar.",
+                "qr_code_image_markdown": f"![QR Code PIX](data:image/png;base64,{qr_base64})",
+                "copia_e_cola": f"`{qr_code}`"
+            }
+        except Exception as e:
+            db.rollback()
+            return {"error": f"Erro interno financeiro: {str(e)}"}
+
     # Mantemos ferramentas de busca para o fluxo de identificação
     @tool
     def find_guest(cpf: str = "", name: str = "") -> dict:
@@ -286,12 +345,18 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
             if name:
                 gs = db.query(models.Guest).filter(models.Guest.name.ilike(f"%{name}%")).all()
                 return {"results": [{"id": x.id, "name": x.name} for x in gs]}
-            return {"error": "Nenhum hóspede localizado com este CPF. Por favor, use a ferramenta 'robot_get_registration_link' para enviar o link de cadastro ao cliente."}
+            prefix = base_url.rstrip("/") if base_url else ""
+            link_to_send = f"{prefix}/{tenant_id}/registrar?cpf={clean_cpf if cpf else ''}"
+            return {
+                "error": "Nenhum hóspede localizado.",
+                "registration_instructions": "O cliente não tem cadastro e a reserva NÃO PODE PROSSEGUIR. Envie EXATAMENTE o link a seguir (Copiando e colando letra por letra sem modificar NADA, NEM O DOMINIO. NUNCA USE example.com). Diga para o cliente clicar, preencher a ficha e voltar ao chat.",
+                "link_intocavel": link_to_send
+            }
         except Exception as e:
             db.rollback()
             return {"error": f"Erro técnico ao buscar hópede: {str(e)}"}
 
-    tools = [robot_availability_checker, robot_get_registration_link, robot_family_reservation, robot_caravan_organizer, find_guest]
+    tools = [robot_availability_checker, robot_family_reservation, robot_caravan_organizer, robot_generate_payment_qr, find_guest]
     llm_with_tools = llm.bind_tools(tools)
 
     sys_msg = SystemMessage(content="""Você é o Especialista de Reservas da Pousada.
@@ -299,13 +364,14 @@ Sua missão é conduzir o hóspede até a reserva de ponta a ponta.
 
 DIRETRIZES DE FLUXO (Siga a Ordem):
 1. **IDENTIFICAÇÃO**: Peça sempre o CPF. Use `find_guest`.
-2. **CADASTRO**: Se o `find_guest` retornar erro dizendo que não localizou o CPF, você DEVE usar a ferramenta `robot_get_registration_link`. **Não tente cadastrar por texto**.
-   Envie o link de forma amigável: "Não te encontrei por aqui, mas não se preocupe! Clique no link abaixo para preencher sua ficha rapidinho. Quando terminar, basta clicar no botão 'Voltar para o Chat' que eu já estarei aqui te esperando para finalizar sua reserva!"
+2. **CADASTRO**: Se o `find_guest` não localizar, ele vai retornar um "link_intocavel". É ESTRITAMENTE PROIBIDO alterar o domínio ou usar example.com. Repasse EXATAMENTE o `link_intocavel` que a ferramenta lhe deu em formato markdown para o cliente preencher a ficha. Exemplo: `[Ficha de Cadastro](LINK_INTOCAVEL)`. Quando terminar, diga para clicar no botão de voltar para o chat e avisar "Pronto!".
 3. **PESQUISA**: Se o cliente quer saber preços e vagas, use o `robot_availability_checker`.
 4. **CHAMADA DE RESERVA**:
-   - Família/Amigos/Casal (2 a 6 pessoas): Use o `robot_family_reservation`. Você DEVE pedir nome e idade de TODOS OS ACOMPANHANTES antes de chamar a ferramenta! (O guest_id vem do find_guest ou registrar)
+   - Família/Amigos/Casal (2 a 6 pessoas): Use o `robot_family_reservation`. Você DEVE pedir nome e idade de TODOS OS ACOMPANHANTES antes de chamar a ferramenta! (O guest_id vem do find_guest)
    - Excursão/Grupo Grande/Caravana (+15 pessoas): Use o `robot_caravan_organizer`. Não precisa de nomes, apenas de 'Quantas pessoas ao todo?' As vagas serão organizadas nos quartos dinamicamente baseando-se na capacidade deles.
-5. **RESPOSTA**: Seja gentil, use emojis, relate o sucesso claramente e avise se alguma regra de negócio (desconto longa estadia, fim de semana) alterou o valor que você disse inicialmente.
+5. **CONFIRMAÇÃO & PAGAMENTO**: Assim que qualquer ferramenta de Reserva retornar Sucesso e o ID da reserva, você NÃO DEVE dizer que a reserva está confirmada! Diga que a reserva está **PENDENTE** de pagamento. Em seguida (na mesma rodada ou assim que gerar a reserva), use a ferramenta `robot_generate_payment_qr(booking_id)` mandando o ID para gerar a fatura.
+   Exiba ao hóspede o QR Code (`qr_code_image_markdown`) e o pix Copia-e-Cola (`copia_e_cola`) exatamente como instruído pela ferramenta. O webhook do sistema fará a confirmação em tempo real.
+6. **RESPOSTA FINAL**: Seja gentil, use emojis, relate o sucesso claramente e avise se alguma regra de negócio alterou o valor final. Se relatar erros, não exiba o código feio, apenas seja simpático.
 """)
 
     def call_model(state: MessagesState):

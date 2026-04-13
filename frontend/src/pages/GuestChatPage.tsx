@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Send, User, Bot, Check, ShieldCheck, Phone } from 'lucide-react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import api from '../services/api';
 
@@ -13,6 +13,7 @@ interface Message {
 
 export default function GuestChatPage() {
   const { tenant_id } = useParams();
+  const navigate = useNavigate();
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
@@ -153,15 +154,34 @@ export default function GuestChatPage() {
                 }`}>
                   <ReactMarkdown 
                     components={{
-                      a: ({ node, ...props }: any) => (
-                        <a 
-                          {...props} 
-                          className="inline-flex items-center gap-2 mt-3 bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-bold border-none hover:bg-indigo-700 transition-all no-underline shadow-lg shadow-indigo-100 mb-1 group"
-                        >
-                          <Check size={16} /> {props.children}
-                        </a>
-                      ),
-                      p: ({ children }: any) => <p className="mb-0 whitespace-pre-wrap">{children}</p>
+                      a: ({ node, ...props }: any) => {
+                        const isInternal = props.href?.startsWith('/');
+                        if (isInternal) {
+                          return (
+                            <button 
+                              onClick={() => navigate(props.href)}
+                              className="inline-flex items-center gap-2 mt-3 bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-bold border-none hover:bg-indigo-700 transition-all no-underline shadow-lg shadow-indigo-100 mb-1 group"
+                            >
+                              <Check size={16} /> {props.children}
+                            </button>
+                          );
+                        }
+                        return (
+                          <a 
+                            {...props} 
+                            target="_blank" rel="noopener noreferrer"
+                            className="inline-flex items-center gap-2 mt-3 bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-bold border-none hover:bg-indigo-700 transition-all no-underline shadow-lg shadow-indigo-100 mb-1 group"
+                          >
+                            <Check size={16} /> {props.children}
+                          </a>
+                        );
+                      },
+                      p: ({ children }: any) => <p className="mb-0 whitespace-pre-wrap">{children}</p>,
+                      img: ({ node, ...props }: any) => (
+                        <span className="block mt-4 mb-2 bg-white p-3 rounded-2xl shadow-sm border border-slate-100 w-fit">
+                          <img {...props} className="w-48 h-48 object-contain rounded-xl opacity-90 mix-blend-multiply" alt="QR Code PIX" />
+                        </span>
+                      )
                     }}
                   >
                     {m.content}

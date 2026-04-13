@@ -115,7 +115,12 @@ export default function GuestRegistrationPage() {
       }, 2000);
     } catch (err: any) {
       console.error("Erro ao salvar cadastro:", err);
-      setError(err.response?.data?.detail || "Ocorreu um erro ao salvar seus dados. Verifique os campos ou tente novamente.");
+      // Verificar se é erro de documento duplicado (já tem cadastro)
+      if (err?.code === '23505' || err?.message?.includes('customers_document_key') || err?.response?.data?.detail?.includes('já cadastrado') || err?.response?.data?.detail?.includes('cadastrado')) {
+        setError('Este documento já possui cadastro. Você pode voltar ao chat e eu darei andamento à sua reserva!');
+      } else {
+        setError(err?.response?.data?.detail || "Ocorreu um erro ao salvar seus dados. Verifique os campos ou tente novamente.");
+      }
     } finally {
       setLoading(false);
     }
