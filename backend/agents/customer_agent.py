@@ -33,12 +33,18 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
         """
         Verifica quartos disponíveis, calcula a capacidade e reporta eventos e restrições.
         Use SEMPRE que o cliente perguntar "tem vaga?", "qual o preço?", "quais os quartos?".
-        Datas devem ser no formato YYYY-MM-DD.
+        Datas devem ser EXATAMENTE no formato YYYY-MM-DD. Se você não sabe a data, NÃO INVENTE! Pergunte ao cliente!
         """
         try:
+            if not check_in or not check_out or check_in.strip() == "" or check_out.strip() == "":
+                return {"error": "INSTRUÇÃO PARA VOCÊ: O cliente não forneceu ou você formulou errado as datas. Pergunte a ele gentilmente qual data de chegada e saída ele deseja."}
+                
             set_tenant_context(db, tenant_id)
-            ci = datetime.strptime(check_in, "%Y-%m-%d").date()
-            co = datetime.strptime(check_out, "%Y-%m-%d").date()
+            try:
+                ci = datetime.strptime(check_in, "%Y-%m-%d").date()
+                co = datetime.strptime(check_out, "%Y-%m-%d").date()
+            except ValueError:
+                return {"error": "INSTRUÇÃO PARA VOCÊ: Pergunte ao cliente gentilmente quais as datas ele deseja se hospedar. Não force formatos incorretos na pesquisa."}
             
             event = db.query(models.Event).filter(models.Event.start_date <= co, models.Event.end_date >= ci).first()
             days = calculate_daily_rates_count(ci, co, "14:00", "14:00")
@@ -403,8 +409,9 @@ DIRETRIZES DE FLUXO (Siga a Ordem):
 1. **IDENTIFICAÇÃO**: Peça sempre o CPF. Use `find_guest`.
 2. **CADASTRO**: Se o `find_guest` não localizar, ele vai retornar um "link_intocavel". É ESTRITAMENTE PROIBIDO alterar o domínio ou usar example.com. Repasse EXATAMENTE o `link_intocavel` que a ferramenta lhe deu em formato markdown para o cliente preencher a ficha. Exemplo: `[Ficha de Cadastro](LINK_INTOCAVEL)`. Quando terminar, diga para clicar no botão de voltar para o chat e avisar "Pronto!".
 3. **EVENTOS**: Se o hóspede pedir estadia e apenas mencionar o NOME do EVENTO (Sem dizer as datas), use a ferramenta `robot_search_events` passando o nome. O robô vai lhe informar o `start_date` e `end_date`.
-4. **PESQUISA**: De posse das Datas Exatas, use o `robot_availability_checker` para olhar as vagas e regras tarifárias.
-5. **CHAMADA DE RESERVA**:
+4. **PEDIDO DE DATAS**: Se o cliente NÃO FALOU nenhum Evento e NÃO FALOU as datas, FAÇA A PERGUNTA de forma simpática antes de usar a ferramenta: "Para qual data você está planejando sua chegada e saída?"
+5. **PESQUISA**: De posse das Datas Exatas, use o `robot_availability_checker` para olhar as vagas e regras tarifárias.
+6. **CHAMADA DE RESERVA**:
    - Família/Amigos/Casal (2 a 6 pessoas): Use o `robot_family_reservation`. Você DEVE pedir nome e idade de TODOS OS ACOMPANHANTES antes de chamar a ferramenta! (O guest_id vem do find_guest)
    - Excursão/Grupo Grande/Caravana (+15 pessoas): Use o `robot_caravan_organizer`. Não precisa de nomes, apenas de 'Quantas pessoas ao todo?' As vagas serão organizadas nos quartos dinamicamente baseando-se na capacidade deles.
 6. **CONFIRMAÇÃO & PAGAMENTO**: Assim que qualquer ferramenta de Reserva retornar Sucesso e o ID da reserva, você NÃO DEVE dizer que a reserva está confirmada! Diga que a reserva está **PENDENTE** de pagamento. Em seguida (na mesma rodada ou assim que gerar a reserva), use a ferramenta `robot_generate_payment_qr(booking_id)` mandando o ID para gerar a fatura.
