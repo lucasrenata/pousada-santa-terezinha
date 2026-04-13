@@ -80,9 +80,21 @@ def calculate_booking_quote(db, tenant_id, room_id, check_in_date, check_out_dat
 # MICRO-LÓGICAS: ATIVIDADES DA RECEPÇÃO VIRTUAL
 # =============================================================================
 
+def find_guest_logic(tenant_id: int, cpf: str = "", name: str = "", base_url: str = "") -> dict:
+    """Lógica atômica para buscar ou linkar registro de hóspede."""
+    with SessionLocal() as db:
+        set_tenant_context(db, tenant_id)
+        if cpf:
+            clean_cpf = "".join(filter(str.isdigit, cpf))
+            g = db.query(models.Guest).filter(models.Guest.document == clean_cpf).first()
+            if g: return {"id": g.id, "name": g.name, "cpf": g.document}
+        
+        prefix = base_url.rstrip("/") if base_url else ""
+        link = f"{prefix}/{tenant_id}/registrar?cpf={''.join(filter(str.isdigit, cpf)) if cpf else ''}"
+        return {"error": "Hóspede não encontrado.", "registration_link": link}
+
 def availability_check_logic(tenant_id: int, check_in: str, check_out: str, group_size: int = 1, ages: List[int] = [], check_in_time: str = "14:00", check_out_time: str = "14:00") -> dict:
-    """Lógica para consultar vagas e preços. Se idades forem enviadas, já calcula o total exato."""
-    """Lógica para consultar vagas e preços sem efetivar reserva."""
+    """Lógica atômica para consultar vagas e preços. Se idades forem enviadas, já calcula o total exato."""
     try:
         if not check_in or not check_out:
             return {"error": "Por favor, me informe as datas de chegada e saída para eu verificar aqui! 😊"}
@@ -98,17 +110,11 @@ def availability_check_logic(tenant_id: int, check_in: str, check_out: str, grou
             if ci < date.today():
                 return {"error": "Ops! Essa data já passou. Que tal escolhermos uma data futura?"}
 
-            # 1. Busca Eventos para ver se há tarifas especiais
-            event = db.query(models.Event).filter(
-                models.Event.start_date <= co,
-                models.Event.end_date >= ci
-            ).first()
-
+            # 1. Busca quartos disponíveis e calcula orçamento unificado
             days = calculate_daily_rates_count(ci, co, check_in_time, check_out_time)
             settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
             active_rules = db.query(models.BusinessRule).filter(models.BusinessRule.is_active == True).all()
             
-            # 2. Busca Quartos Disponíveis
             occupied = [r[0] for r in db.query(models.Booking.room_id).filter(
                 models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
                 models.Booking.check_out_date > ci,
@@ -119,7 +125,6 @@ def availability_check_logic(tenant_id: int, check_in: str, check_out: str, grou
             final_rooms = []
             for r in rooms:
                 allowed = True
-                # Aplica regras de restrição (Ex: Restrição de Casal em FDS)
                 couple_rule = next((rule for rule in active_rules if rule.name == "Restrição de Casal"), None)
                 if couple_rule and group_size == 2:
                     restricted_rooms = [rid.strip() for rid in couple_rule.config.get("room_ids", "").split(",") if rid.strip()]
@@ -137,14 +142,20 @@ def availability_check_logic(tenant_id: int, check_in: str, check_out: str, grou
                         "notes": quote["notes"]
                     })
 
-            # Agrupa para a IA não se perder
             return {
                 "available_options": final_rooms,
-                "summary": f"Encontrei {len(final_rooms)} quartos disponíveis para {days} diária(s).",
+                "summary": f"Encontrei {len(final_rooms)} quartos disponíveis.",
                 "pricing_model": settings.get("pousada_pricing_model", "per_person")
             }
     except Exception as e:
-        return {"error": f"Tive um probleminha técnico ao olhar as vagas: {str(e)}"}
+        return {"error": f"Erro na consulta de disponibilidade: {str(e)}"}
+
+def search_events_logic(tenant_id: int, query: str) -> dict:
+    """Lógica atômica para busca de eventos festivos."""
+    with SessionLocal() as db:
+        set_tenant_context(db, tenant_id)
+        events = db.query(models.Event).filter(models.Event.name.ilike(f"%{query}%")).all()
+        return {"results": [{"name": e.name, "start": str(e.start_date), "end": str(e.end_date)} for e in events]}
 
 def pre_validation_logic(group_size: int, companions: List[dict] = []) -> dict:
     """Analisa se os dados coletados pela IA estão completos para uma reserva."""
@@ -333,46 +344,32 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
 
     @tool
     def robot_check_availability(check_in: str, check_out: str, group_size: int = 1, ages: List[int] = []) -> dict:
-        """Consulta quartos vagos e preços. Datas formato YYYY-MM-DD. 'ages' deve ser uma lista de idades (ex: [30, 28, 5, 12])."""
-        print(f"[TOOL_CALL] robot_check_availability: {check_in} a {check_out}, group={group_size}, ages={ages}")
+        """Micro-robô para consultar vagas e preços. Datas formato YYYY-MM-DD. 'ages' deve ser uma lista de idades (ex: [30, 28, 5, 12])."""
         return availability_check_logic(tenant_id, check_in, check_out, group_size, ages)
 
     @tool
     def robot_find_guest(cpf: str = "", name: str = "") -> dict:
-        """Busca hóspede pelo CPF ou Nome. Se não achar, emite o link de registro."""
-        set_tenant_context(db, tenant_id)
-        if cpf:
-            clean_cpf = "".join(filter(str.isdigit, cpf))
-            g = db.query(models.Guest).filter(models.Guest.document == clean_cpf).first()
-            if g: return {"id": g.id, "name": g.name, "cpf": g.document}
-        
-        prefix = base_url.rstrip("/") if base_url else ""
-        link = f"{prefix}/{tenant_id}/registrar?cpf={''.join(filter(str.isdigit, cpf)) if cpf else ''}"
-        return {"error": "Hóspede não encontrado.", "registration_link": link}
+        """Micro-robô para identificar hóspedes pelo CPF ou Nome."""
+        return find_guest_logic(tenant_id, cpf, name, base_url)
 
     @tool
     def robot_pre_validate_checklist(group_size: int, companions: List[dict] = []) -> dict:
-        """CHECKLIST: Verifica se você já tem nomes e idades de todos os acompanhantes. Use isso como guia!"""
-        print(f"[TOOL_CALL] robot_pre_validate_checklist: group={group_size}, comps={len(companions)}")
+        """Micro-robô CHECKLIST: Verifica se você já tem nomes e idades de todos os acompanhantes."""
         return pre_validation_logic(group_size, companions)
 
     @tool
     def robot_search_events(query: str) -> dict:
-        """Busca eventos (ex: 'Moto Capital', 'PHN') para descobrir datas festivas."""
-        set_tenant_context(db, tenant_id)
-        events = db.query(models.Event).filter(models.Event.name.ilike(f"%{query}%")).all()
-        return {"results": [{"name": e.name, "start": str(e.start_date), "end": str(e.end_date)} for e in events]}
+        """Micro-robô especializado em descobrir datas de EVENTOS festivos."""
+        return search_events_logic(tenant_id, query)
 
     @tool
     def robot_book_with_payment(guest_id: int, room_id: str, check_in: str, check_out: str, group_size: int, companions: List[dict] = []) -> dict:
-        """CRIA A RESERVA E GERA O PIX. Requer guest_id, room_id, grupo total e lista de acompanhantes (nome, idade)."""
-        print(f"[TOOL_CALL] robot_book_with_payment: guest={guest_id}, room={room_id}, group={group_size}, comps={len(companions)}")
+        """Micro-robô FINALIZADOR: Cria a reserva e gera o PIX em um só passo. Requer dados completos."""
         return unified_booking_flow(tenant_id, guest_id, room_id, check_in, check_out, group_size, companions)
 
     @tool
     def robot_confirm_payment(booking_id: int, method: str = "pix") -> dict:
-        """Confirma que o pagamento foi realizado (ex: após o cliente enviar comprovante) e atualiza para PAGO."""
-        print(f"[TOOL_CALL] robot_confirm_payment: booking={booking_id}")
+        """Micro-robô financeiro: Confirma pagamentos e libera a reserva."""
         return confirm_payment_logic(tenant_id, booking_id, method)
 
     # --- DIAGNÓSTICO DE LOGS ---
