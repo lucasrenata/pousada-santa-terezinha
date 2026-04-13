@@ -78,5 +78,6 @@ def process_mp_response(result: dict):
         "amount": response.get("transaction_amount"),
         "qr_code": poi.get("qr_code"),
         "qr_code_base64": poi.get("qr_code_base64"),
+        "payment_url": poi.get("ticket_url"),
         "metadata": response.get("metadata", {})
     }

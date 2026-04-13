@@ -323,8 +323,8 @@ def payment_info_logic(tenant_id: int, booking_id: int) -> dict:
                     payment_result = process_mp_response(res)
                     
                     if payment_result.get("qr_code"):
-                        qr_data = {"image": payment_result.get("qr_code_base64"), "code": payment_result.get("qr_code")}
-                        print(f"[PAYMENT_LOG] PIX Gerado via Mercado Pago para Reserva #{booking_id}")
+                        qr_data = {"image": payment_result.get("qr_code_base64"), "code": payment_result.get("qr_code"), "link": payment_result.get("payment_url")}
+                        print(f"[PAYMENT_LOG] PIX Gerado via Mercado Pago para Reserva #{booking_id} - URL: {qr_data['link']}")
                     else:
                         print(f"[PAYMENT_LOG] Erro Mercado Pago: {payment_result.get('error')}")
             except Exception as e:
@@ -543,6 +543,8 @@ REGRAS OBRIGATÓRIAS DE ORQUESTRAÇÃO:
    - Sempre valide com o hóspede se os dados de contato estão corretos antes de chamar a ferramenta de pagamento.
    - Se o hóspede pedir para pagar uma reserva que já existe, use obrigatoriamente o 'robot_get_payment_info'.
    - VOCÊ NUNCA DEVE DIZER QUE NÃO CONSEGUE GERAR PAGAMENTO. Se tiver o booking_id, use a ferramenta de cobrança.
+   - SEMPRE forneça o link clicável de pagamento ('payment_url') se disponível. Instrua o hóspede a clicar no link caso tenha dificuldade com o QR Code.
+   - APRESENTE O CÓDIGO PIX (Copia e Cola) de forma clara e isolada para facilitar a cópia no celular.
 
 7. PROTOCOLO DE ID DA RESERVA:
    - IMEDIATAMENTE após criar uma reserva com 'robot_book_with_payment', você DEVE informar o número do ID da reserva para o hóspede (ex: "🎉 Sucesso! Sua reserva foi gerada com o ID #123").
