@@ -7,6 +7,7 @@ from utils.pricing import calculate_daily_rates_count, calculate_reservation_tot
 from datetime import datetime, date, timedelta
 from typing import Optional, List
 import traceback
+from utils.payment_helpers import prepare_payer_data, process_mp_response
 
 # --- UTILS DE DATA (UNIVERSAL) ---
 def universal_date_parser(date_str):
@@ -312,27 +313,20 @@ def payment_info_logic(tenant_id: int, booking_id: int) -> dict:
                 if token:
                     mp = MercadoPagoService()
                     description = f"Reserva #{booking.id} - {booking.guest.name}"
-                    # Prioriza e-mail de teste se estiver em dev
-                    env = (os.getenv("ENVIRONMENT") or "development").lower()
-                    test_email = os.getenv("TEST_PAYER_EMAIL")
-                    email_to_use = booking.guest.email or (test_email if env != "production" else "guest@pousada.com")
+                    payer = prepare_payer_data(booking.guest)
+                    if not payer and (os.getenv("ENVIRONMENT") or "development").lower() == "production":
+                        return {"error": "Para sua segurança e emissão do PIX oficial, preciso que você informe seu CPF primeiro. 😊"}
 
-                    payer = {
-                        "email": email_to_use,
-                        "first_name": booking.guest.name.split()[0],
-                        "last_name": booking.guest.name.split()[-1] if " " in booking.guest.name else "Hóspede",
-                        "identification": {"type": "CPF", "number": "".join(filter(str.isdigit, booking.guest.document or "19119119100"))}
-                    }
-                    res = mp.create_pix_payment(token, tenant_id, booking.total_amount, description, {"booking_id": booking.id}, payer=payer)
+                    res = mp.create_pix_payment(token, tenant_id, booking.total_amount, description, {"booking_id": booking.id, "type": "reservation"}, payer=payer)
                     
-                    status_code = res.get("status")
-                    if status_code and int(status_code) >= 400:
-                        print(f"[PAYMENT_LOG] Erro Mercado Pago (Status {status_code}): {res.get('response')}")
+                    # Unifica o processamento da resposta usando o helper compartilhado
+                    payment_result = process_mp_response(res)
                     
-                    poi = (res.get("response") or {}).get("point_of_interaction", {}).get("transaction_data", {})
-                    qr_data = {"image": poi.get("qr_code_base64"), "code": poi.get("qr_code")}
-                    if qr_data.get("code"):
+                    if payment_result.get("qr_code"):
+                        qr_data = {"image": payment_result.get("qr_code_base64"), "code": payment_result.get("qr_code")}
                         print(f"[PAYMENT_LOG] PIX Gerado via Mercado Pago para Reserva #{booking_id}")
+                    else:
+                        print(f"[PAYMENT_LOG] Erro Mercado Pago: {payment_result.get('error')}")
             except Exception as e:
                 print(f"[PAYMENT_LOG] Falha no Mercado Pago: {str(e)}")
 
@@ -537,9 +531,9 @@ REGRAS OBRIGATÓRIAS DE ORQUESTRAÇÃO:
    - Nunca invente guest_id, room_id ou valores. Use APENAS o que os robôs retornarem.
    - Trate erros de robôs de forma transparente: se um robô falhar (ex: 'Idade inválida'), explique ao hóspede o que falhou e peça a correção.
 
-5. INTELIGÊNCIA DE DATAS:
-   - O robô entende QUALQUER formato de data (DD/MM, DD/MM/YYYY).
-   - VOCÊ É PROIBIDO de pedir para o hóspede formatar a data ou confirmar se o formato está certo. Basta passar o que ele disse para o robô e ele resolverá.
+6. REGRAS DE PRODUÇÃO (MERCADO PAGO):
+   - Nunca gere um QR Code se o hóspede não forneceu o CPF. O sistema de produção do Mercado Pago recusa CPFs em branco ou falsos.
+   - Sempre valide com o hóspede se os dados de contato estão corretos antes de chamar a ferramenta de pagamento.
 
 ESTILO: Profissional, eficiente e acolhedor, mas focado na conclusão correta da transação.
 """)

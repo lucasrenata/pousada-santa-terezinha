@@ -5,6 +5,7 @@ import hmac, hashlib, os
 import models
 from database import get_db, SessionLocal, set_tenant_context
 from payments.mercadopago_service import MercadoPagoService, MercadoPagoUnavailable
+from utils.payment_helpers import _cpf_digits, _cpf_valid, prepare_payer_data, process_mp_response
 from .auth import get_current_staff
 from core.crypto import CryptoService
 from pydantic import BaseModel
@@ -132,23 +133,12 @@ def save_manual_pix_config(req: ManualPixSaveRequest, db: Session = Depends(get_
     db.commit()
     return {"message": "Chave PIX Manual salva com sucesso!"}
 
-def _cpf_digits(doc: str) -> str:
-    return "".join([c for c in (doc or "") if c.isdigit()])
 
-def _cpf_valid(doc: str) -> bool:
-    s = _cpf_digits(doc)
-    if len(s) != 11 or s == s[0] * 11:
-        return False
-    nums = [int(x) for x in s]
-    sm = sum(nums[i] * (10 - i) for i in range(9))
-    d1 = (sm * 10) % 11
-    d1 = 0 if d1 == 10 else d1
-    if d1 != nums[9]:
-        return False
-    sm = sum(nums[i] * (11 - i) for i in range(10))
-    d2 = (sm * 10) % 11
-    d2 = 0 if d2 == 10 else d2
-    return d2 == nums[10]
+def _process_mp_response(result: dict):
+    return process_mp_response(result)
+
+def _prepare_payer_data(guest: models.Guest):
+    return prepare_payer_data(guest)
 
 def compute_checkout_summary(db: Session, room_id: str):
     booking = db.query(models.Booking).filter(
@@ -223,63 +213,43 @@ def start_pix_checkout(room_id: str, db: Session = Depends(get_db), current_user
         mp = MercadoPagoService()
     except MercadoPagoUnavailable as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
     booking, daily_total, consumption_total, grand_total = compute_checkout_summary(db, room_id)
     metadata = {"room_id": room_id, "booking_id": booking.id, "type": "checkout", "tenant_id": current_user.tenant_id}
     description = f"Check-out Reserva #{booking.id} Quarto {booking.room.id if booking.room else ''}"
-    env = (os.getenv("ENVIRONMENT") or "development").lower()
-    guest = booking.guest
-    payer = None
-    try:
-        if guest:
-            full = (guest.name or "").strip()
-            parts = [p for p in full.split() if p]
-            first = parts[0] if parts else "Test"
-            last = parts[-1] if len(parts) > 1 else "User"
-            cpf = _cpf_digits(guest.document or "")
-            if env == "production":
-                if not _cpf_valid(cpf):
-                    raise HTTPException(status_code=400, detail="CPF inválido para pagamento PIX")
-            else:
-                cpf = cpf if _cpf_valid(cpf) else "19119119100"
-            email = guest.email if env == "production" else (guest.email or os.getenv("TEST_PAYER_EMAIL") or None)
-            payer = {
-                "email": email,
-                "first_name": first,
-                "last_name": last,
-                "identification": {"type": "CPF", "number": cpf}
-            }
-    except Exception:
-        payer = None
     
+    payer = _prepare_payer_data(booking.guest)
+    if not payer and (os.getenv("ENVIRONMENT") or "development").lower() == "production":
+         raise HTTPException(status_code=400, detail="Hóspede com CPF inválido para pagamento em Produção.")
+
     token = get_tenant_mp_token(db, current_user.tenant_id)
     result = mp.create_pix_payment(token, current_user.tenant_id, grand_total, description, metadata, payer=payer) or {}
-    status_code = result.get("status")
-    response = result.get("response") or {}
-    if status_code and int(status_code) >= 400:
-        error = {
-            "error": response.get("error"),
-            "message": response.get("message"),
-            "cause": response.get("cause"),
-        }
-        print(f"[MP ERROR] create_pix_payment status={status_code} error={error}")
-        return {
-            "payment_id": None,
-            "status": status_code,
-            "amount": None,
-            "qr_code": None,
-            "qr_code_base64": None,
-            "metadata": {},
-            "error": error,
-        }
-    poi = (response.get("point_of_interaction") or {}).get("transaction_data") or {}
-    return {
-        "payment_id": response.get("id"),
-        "status": response.get("status"),
-        "amount": response.get("transaction_amount"),
-        "qr_code": poi.get("qr_code"),
-        "qr_code_base64": poi.get("qr_code_base64"),
-        "metadata": response.get("metadata", {})
-    }
+    
+    return _process_mp_response(result)
+
+@router.post("/booking/{booking_id}/pay")
+def pay_booking(booking_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+    """Ativa o motor de pagamento para uma reserva específica (IA ou Manual)."""
+    try:
+        mp = MercadoPagoService()
+    except MercadoPagoUnavailable as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    booking = db.query(models.Booking).get(booking_id)
+    if not booking:
+        raise HTTPException(status_code=404, detail="Reserva não encontrada.")
+        
+    metadata = {"booking_id": booking.id, "type": "reservation", "tenant_id": current_user.tenant_id}
+    description = f"Pagamento Reserva #{booking.id} - Pousada"
+    
+    payer = _prepare_payer_data(booking.guest)
+    if not payer and (os.getenv("ENVIRONMENT") or "development").lower() == "production":
+         raise HTTPException(status_code=400, detail="CPF inválido ou ausente. Em produção, dados reais são obrigatórios.")
+
+    token = get_tenant_mp_token(db, current_user.tenant_id)
+    result = mp.create_pix_payment(token, current_user.tenant_id, booking.total_amount, description, metadata, payer=payer) or {}
+    
+    return _process_mp_response(result)
 
 @router.post("/checkout/{room_id}/card")
 def start_card_checkout(room_id: str, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
