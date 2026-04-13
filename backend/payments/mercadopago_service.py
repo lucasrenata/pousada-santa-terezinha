@@ -107,7 +107,7 @@ class MercadoPagoService:
         try:
             client = self._get_client(access_token)
             # Uma chamada leve para verificar se o token é aceito
-            result = client.payment_methods().list()
+            result = client.payment_methods().list_all()
             status = result.get("status")
             if int(status) >= 400:
                 print(f"[MP ERROR] test_connection: status={status} response={result.get('response')}")

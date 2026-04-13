@@ -89,16 +89,20 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
         exists = db.query(models.Guest).filter(models.Guest.document == clean_doc).first()
         if exists: return {"error": "CPF já cadastrado. Use find_guest.", "id": exists.id}
         
-        bd = None
-        if birth_date:
-            try: bd = datetime.strptime(birth_date, "%Y-%m-%d").date()
-            except: pass
-            
-        g = models.Guest(name=name, document=clean_doc, phone=phone, email=email, birth_date=bd)
-        db.add(g)
-        db.commit()
-        db.refresh(g)
-        return {"success": True, "guest_id": g.id, "message": "Hóspede cadastrado com sucesso."}
+        try:
+            bd = None
+            if birth_date:
+                try: bd = datetime.strptime(birth_date, "%Y-%m-%d").date()
+                except: pass
+                
+            g = models.Guest(name=name, document=clean_doc, phone=phone, email=email, birth_date=bd)
+            db.add(g)
+            db.commit()
+            db.refresh(g)
+            return {"success": True, "guest_id": g.id, "message": "Hóspede cadastrado com sucesso."}
+        except Exception as e:
+            db.rollback()
+            return {"error": f"Erro técnico ao cadastrar: {str(e)}"}
 
     @tool
     def robot_family_reservation(
@@ -186,20 +190,25 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
                 final_total *= (1 - disc)
                 multiplier_label += f" | Desc. Longa Estadia (-{disc*100}%)"
 
-        booking = models.Booking(
-            guest_id=guest_id, room_id=room_id, check_in_date=ci, check_out_date=co,
-            check_in_time=check_in_time, check_out_time=check_out_time,
-            total_guests=group_size, daily_rate=0.0, total_amount=final_total, 
-            mode=models.BookingMode.NORMAL, status=models.BookingStatus.PENDENTE,
-            notes=f"{daily_rate_label}{multiplier_label}"
-        )
-        db.add(booking)
-        db.commit()
-        db.refresh(booking)
-        for c in companions:
-            db.add(models.Companion(booking_id=booking.id, name=c['name'], age=int(c.get('age', 18))))
-        db.commit()
-        return {"success": True, "booking_id": booking.id, "total": final_total, "type": "FAMILIA", "label": f"{daily_rate_label}{multiplier_label}"}
+        try:
+            booking = models.Booking(
+                guest_id=guest_id, room_id=room_id, check_in_date=ci, check_out_date=co,
+                check_in_time=check_in_time, check_out_time=check_out_time,
+                total_guests=group_size, daily_rate=0.0, total_amount=final_total, 
+                mode=models.BookingMode.NORMAL, status=models.BookingStatus.PENDENTE,
+                notes=f"{daily_rate_label}{multiplier_label}"
+            )
+            db.add(booking)
+            db.commit()
+            db.refresh(booking)
+            for c in companions:
+                age_val = int(c.get('age', 18)) if str(c.get('age', '')).isdigit() else 18
+                db.add(models.Companion(booking_id=booking.id, name=c['name'], age=age_val))
+            db.commit()
+            return {"success": True, "booking_id": booking.id, "total": final_total, "type": "FAMILIA", "label": f"{daily_rate_label}{multiplier_label}"}
+        except Exception as e:
+            db.rollback()
+            return {"error": f"Erro técnico ao gerar reserva: {str(e)}"}
 
     @tool
     def robot_caravan_organizer(
@@ -249,31 +258,35 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
         if current_cap < group_size:
             return {"error": f"Capacidade insuficiente. Apenas {current_cap} vagas disponíveis, mas a caravana é de {group_size} pessoas."}
 
-        total_amount_global = daily_rate * group_size * days
-        amount_per_room = total_amount_global / len(target_rooms) if target_rooms else 0
-        
-        main_booking_id = None
-        for r in target_rooms:
-            b = models.Booking(
-                guest_id=guest_id, room_id=r.id, check_in_date=ci, check_out_date=co,
-                check_in_time=check_in_time, check_out_time=check_out_time,
-                total_guests=group_size, daily_rate=daily_rate, total_amount=amount_per_room,
-                mode=models.BookingMode.CARAVANA, status=models.BookingStatus.PENDENTE,
-                notes=f"Líder da Caravana: {guest.name}. Distribuição Alocada dinamicamente pelo Robô. (Vaga total selecionada: {current_cap})"
-            )
-            db.add(b)
-            db.commit()
-            db.refresh(b)
-            if not main_booking_id: main_booking_id = b.id
-        
-        return {
-            "success": True, 
-            "leader_booking_id": main_booking_id, 
-            "total": total_amount_global, 
-            "rooms_blocked": len(target_rooms), 
-            "total_capacity_reserved": current_cap,
-            "type": "CARAVANA"
-        }
+        try:
+            total_amount_global = daily_rate * group_size * days
+            amount_per_room = total_amount_global / len(target_rooms) if target_rooms else 0
+            
+            main_booking_id = None
+            for r in target_rooms:
+                b = models.Booking(
+                    guest_id=guest_id, room_id=r.id, check_in_date=ci, check_out_date=co,
+                    check_in_time=check_in_time, check_out_time=check_out_time,
+                    total_guests=group_size, daily_rate=daily_rate, total_amount=amount_per_room,
+                    mode=models.BookingMode.CARAVANA, status=models.BookingStatus.PENDENTE,
+                    notes=f"Líder da Caravana: {guest.name}. Distribuição Alocada dinamicamente pelo Robô. (Vaga total selecionada: {current_cap})"
+                )
+                db.add(b)
+                db.commit()
+                db.refresh(b)
+                if not main_booking_id: main_booking_id = b.id
+            
+            return {
+                "success": True, 
+                "leader_booking_id": main_booking_id, 
+                "total": total_amount_global, 
+                "rooms_blocked": len(target_rooms), 
+                "total_capacity_reserved": current_cap,
+                "type": "CARAVANA"
+            }
+        except Exception as e:
+            db.rollback()
+            return {"error": f"Erro ao organizar caravana: {str(e)}"}
 
     # Mantemos ferramentas de busca para o fluxo de identificação
     @tool
@@ -331,6 +344,7 @@ DIRETRIZES DE FLUXO (Siga a Ordem):
         final_state = await app.ainvoke({"messages": lc_messages})
         return {"response": final_state["messages"][-1].content}
     except Exception as e:
+        db.rollback() # Garantia de que a transação não ficará "abortada" no banco
         import traceback
         traceback.print_exc()
-        return {"response": "Erro ao processar reserva inteligente."}
+        return {"response": "Desculpe, tive um erro técnico ao processar sua solicitação. Vamos tentar de novo?"}

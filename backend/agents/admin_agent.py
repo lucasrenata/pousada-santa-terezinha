@@ -141,6 +141,20 @@ def consumption_logic(tenant_id: int, room_id: str, product_name: str, quantity:
         db.commit()
         return {"success": True, "message": f"Lançado {quantity}x {prod.name} no quarto {room_id}."}
 
+def room_viewer_logic(tenant_id: int, status: str = None) -> dict:
+    """Lógica para listar e contar quartos e seus status atuais."""
+    with SessionLocal() as db:
+        set_tenant_context(db, tenant_id)
+        query = db.query(models.Room)
+        if status:
+            query = query.filter(models.Room.status == status.lower())
+        
+        rooms = query.all()
+        return {
+            "total_count": len(rooms),
+            "rooms": [{"id": r.id, "status": r.status, "price": r.price_per_night, "cap": r.max_capacity} for r in rooms]
+        }
+
 def checkout_logic(tenant_id: int, room_id: str, action: str = "preview", payment_method: str = "pix") -> dict:
     """Lógica atômica para prévia e confirmação de encerramento de estadias."""
     from utils.pricing import calculate_daily_rates_count, calculate_reservation_total
@@ -291,6 +305,11 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
         """Micro-robô para consultar EVENTOS regionais."""
         return event_manager_logic(tenant_id, action)
 
+    @tool
+    def robot_room_viewer(status: str = None) -> dict:
+        """Micro-robô para LISTAR QUARTOS e ver seus estados (disponivel, limpeza, ocupado, etc)."""
+        return room_viewer_logic(tenant_id, status)
+
     # -------------------------------------------------------------------------
     # ORQUESTRAÇÃO
     # -------------------------------------------------------------------------
@@ -298,7 +317,8 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
     tools = [
         robot_inventory_sync, robot_inventory_viewer, robot_room_status_manager,
         robot_room_setup_manager, robot_consumption_launcher, robot_checkout_manager, 
-        robot_finance_summary, robot_pdf_reporter, robot_event_intelligence
+        robot_finance_summary, robot_pdf_reporter, robot_event_intelligence,
+        robot_room_viewer
     ]
     llm_with_tools = llm.bind_tools(tools)
     
@@ -337,6 +357,7 @@ DIRETRIZES:
         final_state = await app.ainvoke({"messages": lc_messages})
         return {"response": final_state["messages"][-1].content}
     except Exception as e:
+        db.rollback()
         import traceback
         traceback.print_exc()
-        return {"response": "Erro na orquestração dos robôs."}
+        return {"response": "Erro na orquestração dos robôs. Certifique-se de que a OpenAI API Key está correta."}
