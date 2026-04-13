@@ -134,17 +134,21 @@ export default function Settings() {
         return;
       }
 
-      // Se o usuário digitou algo novo, salvamos. Se estava vazio e deu válido, avisamos que a conexão atual está OK.
+      // 2. Salvar configurações (Sempre salvamos para garantir que Public Key e PIX Manual persistam)
+      // O backend agora é inteligente: se mp_access_token for vazio, ele mantém o anterior.
+      await api.post('/payments/config', {
+        mp_access_token: mpConfig.accessToken,
+        mp_public_key: mpConfig.publicKey,
+        manual_pix_key: mpConfig.manualPixKey
+      });
+
       if (mpConfig.accessToken) {
-        await api.post('/payments/config', {
-          mp_access_token: mpConfig.accessToken,
-          mp_public_key: mpConfig.publicKey,
-          manual_pix_key: mpConfig.manualPixKey
-        });
         toast({ 
           title: "Configuração Atualizada!", 
           description: "Suas novas credenciais foram salvas e validadas.",
         });
+        // Limpa o campo de token da UI após salvar
+        setMpConfig(prev => ({ ...prev, accessToken: '' }));
       } else {
         toast({ 
           title: "Conexão Ativa!", 
@@ -152,10 +156,6 @@ export default function Settings() {
         });
       }
       
-      toast({ 
-        title: "Configuração Salva!", 
-        description: "Sua integração com o Mercado Pago está ativa e funcional.",
-      });
       setIsValidated(true);
       setTimeout(() => setIsValidated(false), 5000);
       loadMpConfig();

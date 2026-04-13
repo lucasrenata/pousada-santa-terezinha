@@ -58,7 +58,7 @@ def test_mp_config(req: TokenTestRequest, db: Session = Depends(get_db), current
     return {"valid": is_valid}
 
 class ConfigSaveRequest(BaseModel):
-    mp_access_token: str
+    mp_access_token: str | None = None
     mp_public_key: str
     manual_pix_key: str | None = None
 
@@ -85,18 +85,26 @@ def save_mp_config(req: ConfigSaveRequest, db: Session = Depends(get_db), curren
     encrypted_token = crypto.encrypt_token(clean_token)
     
     config = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_id == current_user.tenant_id).first()
+    
+    # Prepara o token (só criptografa se foi enviado um novo)
+    encrypted_token = None
+    if clean_token:
+        encrypted_token = crypto.encrypt_token(clean_token)
+
     if not config:
         config = models.TenantConfig(
             tenant_id=current_user.tenant_id,
             mp_access_token=encrypted_token,
             mp_public_key=clean_public_key,
-            manual_pix_key=clean_manual_pix
+            manual_pix_key=clean_manual_pix,
+            is_active=True
         )
         db.add(config)
     else:
-        config.mp_access_token = encrypted_token
-        config.mp_public_key = req.mp_public_key
-        config.manual_pix_key = req.manual_pix_key
+        if encrypted_token:
+            config.mp_access_token = encrypted_token
+        config.mp_public_key = clean_public_key
+        config.manual_pix_key = clean_manual_pix
         config.is_active = True
         
     db.commit()
@@ -220,6 +228,8 @@ def start_pix_checkout(room_id: str, db: Session = Depends(get_db), current_user
             }
     except Exception:
         payer = None
+    
+    token = get_tenant_mp_token(db, current_user.tenant_id)
     result = mp.create_pix_payment(token, current_user.tenant_id, grand_total, description, metadata, payer=payer) or {}
     status_code = result.get("status")
     response = result.get("response") or {}
