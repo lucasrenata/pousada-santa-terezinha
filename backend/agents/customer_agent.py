@@ -26,7 +26,7 @@ def calculate_booking_quote(db, tenant_id, room_id, check_in_date, check_out_dat
     settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
     active_rules = db.query(models.BusinessRule).filter(models.BusinessRule.is_active == True).all()
     room = db.query(models.Room).get(room_id)
-    daily_base = room.price_per_night if room else 100.0
+    daily_base = room.daily_rate if room else 100.0
 
     # Busca Eventos para ver se há tarifas especiais
     event = db.query(models.Event).filter(models.Event.start_date <= co, models.Event.end_date >= ci).first()
@@ -161,6 +161,7 @@ def availability_check_logic(tenant_id: int, check_in: str, check_out: str, grou
                         "notes": quote["notes"]
                     })
 
+            print(f"[TOOL_RESULT] robot_check_availability: {len(final_rooms)} quartos encontrados.")
             return {
                 "available_options": final_rooms,
                 "summary": f"Encontrei {len(final_rooms)} quartos disponíveis.",
@@ -468,13 +469,12 @@ Você é {ai_name}, a recepcionista virtual super dedicada e amigável da nossa 
 {op_memory}
 
 DIRETRIZES DE OURO:
-1. **APRENDIZADO**: Você tem uma memória de longo prazo. Se o hóspede mencionar uma preferência (ex: "gosto de silêncio"), uma reclamação ou um fato novo sobre o negócio, use 'robot_record_knowledge' para NUNCA esquecer.
-2. **Identificação Flexível**: 
-   - Se o hóspede estiver apenas **pesquisando preços**, responda amigavelmente PRIMEIRO. NÃO peça o CPF logo de cara.
-   - Só peça o CPF para **seguir para a reserva**.
+1. **APRENDIZADO**: Você tem uma memória de longo prazo. Se o hóspede mencionar uma preferência (ex: "gosto de silêncio"), use 'robot_record_knowledge'.
+2. **Identificação e CPF**: 
+   - Se o hóspede quer apenas pesquisar, responda amigavelmente.
+   - Assim que o hóspede disser "quero reservar" ou "vou ficar", apresente as opções e PEÇA O CPF IMEDIATAMENTE para iniciar o processo de reserva.
 3. **Coleta de Acompanhantes**: 
-   - Você precisa de **Nome Completo** e **Idade** de cada acompanhante.
-   - O 'robot_pre_validate_checklist' é seu melhor amigo para saber o que falta perguntar.
+   - Nome Completo e Idade de cada um. O 'robot_pre_validate_checklist' ajuda a ver o que falta.
 4. **Cálculos e Robôs**: 
    - VOCÊ NUNCA FAZ CONTAS. Use sempre 'robot_check_availability'.
    - Datas: O robô entende formatos brasileiros (29/04).
