@@ -37,15 +37,24 @@ def get_tenant_mp_token(db: Session, tenant_id: int):
 def test_mp_config(req: TokenTestRequest, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
     token = req.token.strip() if req.token else ""
     
-    # Se o token enviado for vazio, tenta testar o token já salvo para este tenant
+    # Diagnóstico Seguro
+    token_source = "INPUT" if req.token else "DATABASE"
+    
     if not token:
         try:
             token = get_tenant_mp_token(db, current_user.tenant_id)
         except Exception:
-            return {"valid": False, "message": "Nenhum token salvo para testar."}
-            
+            return {"valid": False, "message": "Falha na descriptografia ou token não encontrado."}
+
+    print(f"[MP DIAGNOSTIC] Iniciando teste de conexão. Fonte: {token_source}")
+    if token:
+        print(f"[MP DIAGNOSTIC] Token para teste: {token[:6]}... (Tamanho: {len(token)})")
+    else:
+        print("[MP DIAGNOSTIC] ERRO: Token está vazio após processamento.")
+        
     mp = MercadoPagoService()
     is_valid = mp.test_connection(token)
+    print(f"[MP DIAGNOSTIC] Resultado do Mercado Pago: {'VÁLIDO' if is_valid else 'INVÁLIDO'}")
     return {"valid": is_valid}
 
 class ConfigSaveRequest(BaseModel):
