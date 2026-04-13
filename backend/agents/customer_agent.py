@@ -305,7 +305,7 @@ DIRETRIZES DE FLUXO (Siga a Ordem):
 5. **RESPOSTA**: Seja gentil, use emojis, relate o sucesso claramente e avise se alguma regra de negócio (desconto longa estadia, fim de semana) alterou o valor que você disse inicialmente.
 """)
 
-    def call_model    def call_model(state: MessagesState):
+    def call_model(state: MessagesState):
         messages = [sys_msg] + state["messages"]
         response = llm_with_tools.invoke(messages)
         return {"messages": [response]}
