@@ -9,6 +9,7 @@ from typing import Optional, List
 
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
@@ -26,7 +27,7 @@ def calculate_booking_quote(db, tenant_id, room_id, check_in_date, check_out_dat
     settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
     active_rules = db.query(models.BusinessRule).filter(models.BusinessRule.is_active == True).all()
     room = db.query(models.Room).get(room_id)
-    daily_base = room.daily_rate if room else 100.0
+    daily_base = room.price_per_night if room else 100.0
 
     # Busca Eventos para ver se há tarifas especiais
     event = db.query(models.Event).filter(models.Event.start_date <= co, models.Event.end_date >= ci).first()
@@ -102,19 +103,25 @@ def availability_check_logic(tenant_id: int, check_in: str, check_out: str, grou
         with SessionLocal() as db:
             set_tenant_context(db, tenant_id)
             
-            # --- SMART DATE PARSER ---
+            # --- SMART DATE PARSER (SENIOR VERSION) ---
             now = datetime.now()
             def parse_smart_date(date_str):
-                # Formatos: "29/04", "29/04/2026", "2026-04-29"
                 date_str = date_str.strip()
                 try:
+                    target_date = None
                     if "/" in date_str:
                         parts = date_str.split("/")
                         day = int(parts[0])
                         month = int(parts[1])
                         year = int(parts[2]) if len(parts) > 2 else now.year
-                        return date(year, month, day)
-                    return datetime.strptime(date_str, "%Y-%m-%d").date()
+                        target_date = date(year, month, day)
+                        
+                        # Se a data for no passado e o ano não foi especificado, assume o próximo ano
+                        if len(parts) <= 2 and target_date < now.date():
+                            target_date = date(year + 1, month, day)
+                    else:
+                        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                    return target_date
                 except:
                     return None
 
@@ -122,7 +129,7 @@ def availability_check_logic(tenant_id: int, check_in: str, check_out: str, grou
             co = parse_smart_date(check_out)
 
             if not ci or not co:
-                return {"error": f"Não consegui entender as datas ({check_in} a {check_out}). Pode confirmar o dia e o mês pra mim? 😊"}
+                return {"error": f"Formato de data inválido ({check_in} a {check_out}). Use DD/MM ou AAAA-MM-DD."}
 
             print(f"[TOOL_CALL] robot_check_availability: {ci} to {co}, group={group_size}")
 
@@ -204,16 +211,26 @@ def pre_validation_logic(group_size: int, companions: List[dict] = []) -> dict:
             "instruction": "Você ainda precisa coletar esses dados com o hóspede antes de finalizar."
         }
 
-def unified_booking_flow(tenant_id: int, guest_id: int, room_id: str, check_in: str, check_out: str, group_size: int, companions: List[dict] = [], mode: str = "NORMAL") -> dict:
+def unified_booking_flow(tenant_id: int, guest_id: int, room_id: str, check_in: str, check_out: str, group_size: int, companions: List = [], mode: str = "NORMAL") -> dict:
     """Ferramenta Única: Cria a reserva e gera o PIX em um só passo."""
+    
+    # --- NORMALIZAÇÃO DE ACOMPANHANTES (SENIOR FIX) ---
+    # Se a IA enviar uma lista de nomes (strings), converte para objetos com idade padrão 18
+    normalized_companions = []
+    for c in companions:
+        if isinstance(c, str):
+            normalized_companions.append({"name": c, "age": 18})
+        elif isinstance(c, dict):
+            normalized_companions.append(c)
+    
     total_expected_companions = group_size - 1
-    if len(companions) < total_expected_companions:
+    if len(normalized_companions) < total_expected_companions:
         return {
-            "error": f"Inconsistência de dados: Você informou que são {group_size} pessoas no total, mas só forneceu os dados de {len(companions)} acompanhantes (o titular já está cadastrado). Por favor, peça o Nome e Idade de todos os acompanhantes antes de tentar reservar! 😊"
+            "error": f"Faltam dados: São {group_size} pessoas, mas só identifiquei {len(normalized_companions)} acompanhante(s). Preciso do Nome e Idade de cada um."
         }
 
     # 1. Tenta criar a reserva
-    res_booking = booking_creation_logic(tenant_id, guest_id, room_id, check_in, check_out, group_size, companions, mode)
+    res_booking = booking_creation_logic(tenant_id, guest_id, room_id, check_in, check_out, group_size, normalized_companions, mode)
     if "error" in res_booking:
         return res_booking
 
@@ -409,7 +426,16 @@ def convert_history_to_langchain(history: list):
 # =============================================================================
 
 async def handle_customer_query(message: str, history: list, db: Session, tenant_id: int, base_url: str = ""):
-    llm = ChatOpenAI(model="gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.2)
+    # --- SELEÇÃO DE MODELO (OPENAI VS GEMINI) ---
+    google_key = os.getenv("GOOGLE_API_KEY")
+    gemini_model = os.getenv("GEMINI_MODEL")
+    
+    if google_key and gemini_model:
+        llm = ChatGoogleGenerativeAI(model=gemini_model, google_api_key=google_key, temperature=0.1)
+        print(f"[AI_LOG] Usando Google Gemini: {gemini_model}")
+    else:
+        llm = ChatOpenAI(model="gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.2)
+        print(f"[AI_LOG] Usando OpenAI: gpt-4o-mini")
 
     # --- BUSCA NOME DA IA E CONFIGURAÇÕES ---
     settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
@@ -462,27 +488,38 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
     op_memory = get_operational_memory(tenant_id, current_guest_id)
     if op_memory: print(f"[AI_MEMORY] Carregados fatos da memória operacional.")
 
-    # --- PERSONA HUMANIZADA ---
+    # --- PERSONA TRANSAIONAL (PROMPT SÊNIOR) ---
     current_date_str = date.today().strftime("%A, %d de %B de %Y")
     sys_msg = SystemMessage(content=f"""Hoje é {current_date_str}.
-Você é {ai_name}, a recepcionista virtual super dedicada e amigável da nossa Pousada! ✨
+Você é {ai_name}, o Orquestrador de Recepção Virtual. Sua prioridade é PRECISÃO TRANSAIONAL.
 {op_memory}
 
-DIRETRIZES DE OURO:
-1. **APRENDIZADO**: Você tem uma memória de longo prazo. Se o hóspede mencionar uma preferência (ex: "gosto de silêncio"), use 'robot_record_knowledge'.
-2. **Identificação e CPF**: 
-   - Se o hóspede quer apenas pesquisar, responda amigavelmente.
-   - Assim que o hóspede disser "quero reservar" ou "vou ficar", apresente as opções e PEÇA O CPF IMEDIATAMENTE para iniciar o processo de reserva.
-3. **Coleta de Acompanhantes**: 
-   - Nome Completo e Idade de cada um. O 'robot_pre_validate_checklist' ajuda a ver o que falta.
-4. **Cálculos e Robôs**: 
-   - VOCÊ NUNCA FAZ CONTAS. Use sempre 'robot_check_availability'.
-   - Datas: O robô entende formatos brasileiros (29/04).
-5. **Reserva Imortal**: Para finalizar, use 'robot_book_with_payment' assim que o checklist estiver 'ready'.
-6. **NUNCA INVENTE CHAVES**: Se o robô não retornar chave PIX, use a 'msg_fallback'.
-7. **Estilo**: Use emojis, seja leve e acolhedora.
+REGRAS OBRIGATÓRIAS DE ORQUESTRAÇÃO:
 
-IMPORTANTE: Se as datas forem no passado ou inválidas, explique gentilmente.
+1. VALIDAÇÃO ANTES DA RESERVA:
+   - Você é PROIBIDO de chamar 'robot_book_with_payment' se o 'robot_pre_validate_checklist' retornar 'incomplete'.
+   - Se faltar dados, peça-os de forma clara e objetiva.
+
+2. PROTOCOLO DE CONFIRMAÇÃO:
+   - Antes de efetivar a reserva, você DEVE apresentar um resumo detalhado:
+     * Check-in e Check-out
+     * Quarto selecionado (Número/Tipo)
+     * Pessoas (Titular + Acompanhantes)
+     * Valor Total
+   - Pergunte explicitamente: "As informações acima estão corretas? Podemos seguir para o pagamento?"
+   - SÓ execute a reserva após o hóspede dizer "Sim", "Pode", "Está correto" ou similar.
+
+3. TRATAMENTO DE IDADES:
+   - Se o hóspede não informar a idade de um acompanhante, assuma 18 anos APENAS se ele confirmar (ex: "São todos adultos?"). Caso contrário, pergunte a idade.
+
+4. PRECISÃO DE DADOS (ZERO ALUCINAÇÃO):
+   - Nunca invente guest_id, room_id ou valores. Use APENAS o que os robôs retornarem.
+   - Trate erros de robôs de forma transparente: se um robô falhar (ex: 'Idade inválida'), explique ao hóspede o que falhou e peça a correção.
+
+5. INTELIGÊNCIA DE DATAS:
+   - O robô entende formatos brasileiros (DD/MM). Se hoje é Dezembro e o hóspede diz "Janeiro", o robô saberá que é o ano seguinte.
+
+ESTILO: Profissional, eficiente e acolhedor, mas focado na conclusão correta da transação.
 """)
 
     tools = [
