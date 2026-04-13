@@ -154,7 +154,7 @@ def summary(room_id: str, db: Session = Depends(get_db), current_user = Depends(
     guest = booking.guest
     return {
         "room_id": room_id,
-        "room_number": room.number if room else "",
+        "room_number": room.id if room else "",
         "booking_id": booking.id,
         "guest_name": guest.name if guest else None,
         "guest_email": guest.email if guest else None,
@@ -203,7 +203,7 @@ def start_pix_checkout(room_id: str, db: Session = Depends(get_db), current_user
         raise HTTPException(status_code=500, detail=str(e))
     booking, daily_total, consumption_total, grand_total = compute_checkout_summary(db, room_id)
     metadata = {"room_id": room_id, "booking_id": booking.id, "type": "checkout", "tenant_id": current_user.tenant_id}
-    description = f"Check-out Reserva #{booking.id} Quarto {booking.room.number if booking.room else ''}"
+    description = f"Check-out Reserva #{booking.id} Quarto {booking.room.id if booking.room else ''}"
     env = (os.getenv("ENVIRONMENT") or "development").lower()
     guest = booking.guest
     payer = None
@@ -269,7 +269,7 @@ def start_card_checkout(room_id: str, db: Session = Depends(get_db), current_use
     token = get_tenant_mp_token(db, current_user.tenant_id)
     booking, daily_total, consumption_total, grand_total = compute_checkout_summary(db, room_id)
     metadata = {"room_id": room_id, "booking_id": booking.id, "type": "checkout", "tenant_id": current_user.tenant_id}
-    title = f"Check-out Reserva #{booking.id} Quarto {booking.room.number if booking.room else ''}"
+    title = f"Check-out Reserva #{booking.id} Quarto {booking.room.id if booking.room else ''}"
     fe = os.getenv("FRONTEND_URL", "http://127.0.0.1:5173").rstrip("/")
     back_urls = {
         "success": fe + "/payments",
@@ -312,7 +312,7 @@ def start_public_card(booking_id: int, tenant_id: int, db: Session = Depends(get
     if not booking:
         raise HTTPException(status_code=404, detail="Reserva não encontrada")
     amount = booking.total_amount or 0.0
-    title = f"Reserva #{booking.id} Quarto {booking.room.number if booking.room else ''}"
+    title = f"Reserva #{booking.id} Quarto {booking.room.id if booking.room else ''}"
     metadata = {"booking_id": booking.id, "type": "public", "tenant_id": tenant_id}
     fe = os.getenv("FRONTEND_URL", "http://127.0.0.1:5173").rstrip("/")
     back_urls = {
