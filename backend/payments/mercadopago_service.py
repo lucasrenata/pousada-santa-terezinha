@@ -85,12 +85,13 @@ class MercadoPagoService:
                 }
             ],
             "metadata": full_metadata,
-            "auto_return": "approved",
             "external_reference": f"{tenant_id}:{full_metadata.get('booking_id', '0')}"
         }
         
-        if back_urls:
+        if back_urls and back_urls.get("success"):
             pref["back_urls"] = back_urls
+            pref["auto_return"] = "approved"
+
         if notification.startswith("https://"):
             pref["notification_url"] = notification
             
