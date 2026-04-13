@@ -487,6 +487,12 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
         return confirm_payment_logic(tenant_id, booking_id, method)
 
     @tool
+    def robot_get_payment_info(booking_id: int) -> dict:
+        """Micro-robô de COBRANÇA: Gera ou recupera o QR Code PIX e dados de pagamento para uma reserva existente. 
+        Use sempre que o hóspede pedir o QR Code, dados para pagar ou link de pagamento de uma reserva já criada."""
+        return payment_info_logic(tenant_id, booking_id)
+
+    @tool
     def robot_record_knowledge(content: str, category: str = "geral", importance: int = 1, guest_id: int = None) -> dict:
         """Micro-robô de Memória: Salva fatos, preferências (ex: 'prefere andar alto') ou regras aprendidas na memória de longo prazo."""
         print(f"[TOOL_CALL] robot_record_knowledge: {content[:50]}...")
@@ -534,6 +540,8 @@ REGRAS OBRIGATÓRIAS DE ORQUESTRAÇÃO:
 6. REGRAS DE PRODUÇÃO (MERCADO PAGO):
    - Nunca gere um QR Code se o hóspede não forneceu o CPF. O sistema de produção do Mercado Pago recusa CPFs em branco ou falsos.
    - Sempre valide com o hóspede se os dados de contato estão corretos antes de chamar a ferramenta de pagamento.
+   - Se o hóspede pedir para pagar uma reserva que já existe, use obrigatoriamente o 'robot_get_payment_info'.
+   - VOCÊ NUNCA DEVE DIZER QUE NÃO CONSEGUE GERAR PAGAMENTO. Se tiver o booking_id, use a ferramenta de cobrança.
 
 ESTILO: Profissional, eficiente e acolhedor, mas focado na conclusão correta da transação.
 """)
