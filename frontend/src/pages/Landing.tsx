@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { 
   BedDouble, BarChart3, ShieldCheck, Zap, ArrowRight, CheckCircle2,
-  Bot, Calendar, CreditCard, Star, Users, TrendingUp, Lock, MessageCircle
+  Bot, Calendar, CreditCard, Star, Users, TrendingUp, Lock
 } from 'lucide-react';
 
 export default function Landing() {
@@ -83,7 +83,12 @@ export default function Landing() {
 
             <h1 className="text-5xl md:text-7xl font-black tracking-tight leading-[0.95] mb-6" style={{ color: '#1A1A2E' }}>
               Gerencie sua pousada{' '}
-              <span className="italic" style={{ WebkitTextFillColor: 'transparent', WebkitBackgroundClip: 'text', backgroundImage: 'linear-gradient(135deg, #6C63FF 0%, #A78BFA 100%)', backgroundClip: 'text' }}>
+              <span className="italic" style={{ 
+                color: '#6C63FF',
+                background: 'linear-gradient(135deg, #6C63FF 0%, #A78BFA 100%)',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+              } as React.CSSProperties}>
                 com IA.
               </span>
             </h1>
@@ -154,7 +159,12 @@ export default function Landing() {
             <p className="text-xs font-black uppercase tracking-widest mb-3" style={{ color: '#6C63FF' }}>Funcionalidades</p>
             <h2 className="text-4xl md:text-5xl font-black tracking-tight" style={{ color: '#1A1A2E' }}>
               Tudo para sua pousada{' '}
-              <span className="italic" style={{ WebkitTextFillColor: 'transparent', WebkitBackgroundClip: 'text', backgroundImage: 'linear-gradient(135deg, #6C63FF, #A78BFA)', backgroundClip: 'text' }}>
+              <span className="italic" style={{ 
+                color: '#6C63FF',
+                background: 'linear-gradient(135deg, #6C63FF, #A78BFA)',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+              } as React.CSSProperties}>
                 decolar.
               </span>
             </h2>
@@ -306,7 +316,12 @@ export default function Landing() {
           </div>
           <h2 className="text-4xl md:text-5xl font-black tracking-tight mb-6" style={{ color: '#1A1A2E' }}>
             Pronto para transformar<br />
-            <span className="italic" style={{ WebkitTextFillColor: 'transparent', WebkitBackgroundClip: 'text', backgroundImage: 'linear-gradient(135deg, #6C63FF, #A78BFA)', backgroundClip: 'text' }}>
+            <span className="italic" style={{ 
+              color: '#6C63FF',
+              background: 'linear-gradient(135deg, #6C63FF, #A78BFA)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+            } as React.CSSProperties}>
               sua pousada?
             </span>
           </h2>
