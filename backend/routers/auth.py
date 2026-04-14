@@ -49,13 +49,15 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     return user
 
 async def get_current_admin(current_user: models.User = Depends(get_current_user)):
-    if current_user.role != "admin":
+    # Permite acesso para admin e superadmin
+    if current_user.role not in ["admin", "superadmin"]:
         raise HTTPException(status_code=403, detail="Acesso restrito ao administrador")
     return current_user
 
 async def get_current_staff(current_user: models.User = Depends(get_current_user)):
-    # Permite admin e recepcionista para quase tudo
-    if current_user.role not in ["admin", "recepcionista", "manutencao", "faxina", "camareira"]:
+    # Permite superadmin, admin e recepcionista para quase tudo
+    allowed_roles = ["superadmin", "admin", "recepcionista", "manutencao", "faxina", "camareira"]
+    if current_user.role not in allowed_roles:
         raise HTTPException(status_code=403, detail="Acesso negado")
     return current_user
 
