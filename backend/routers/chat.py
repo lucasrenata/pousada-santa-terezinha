@@ -58,6 +58,7 @@ async def chat_customer(request: ChatRequest, http_req: Request, db: Session = D
     save_message(request.session_id, "user", request.message, request.tenant_id, db)
     
     # 2. Busca histórico completo do banco (Fonte da Verdade)
+    set_tenant_context(db, request.tenant_id)
     history = await get_db_history(request.session_id, db, request.tenant_id)
     
     # 3. Importação tardia do agente

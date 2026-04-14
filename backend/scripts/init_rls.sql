@@ -38,8 +38,16 @@ BEGIN
         -- Ou se o tenant_id for nulo (para dados globais ou migração, se necessário - use com cautela)
         EXECUTE format('
             CREATE POLICY tenant_isolation_policy ON %I 
-            USING (tenant_id = current_setting(''app.current_tenant'')::integer)
-            WITH CHECK (tenant_id = current_setting(''app.current_tenant'')::integer)
+            USING (
+                tenant_id = NULLIF(current_setting(''app.current_tenant'', true), '''') ::integer 
+                OR 
+                current_setting(''app.current_tenant'', true) = ''-1''
+            )
+            WITH CHECK (
+                tenant_id = NULLIF(current_setting(''app.current_tenant'', true), '''') ::integer 
+                OR 
+                current_setting(''app.current_tenant'', true) = ''-1''
+            )
         ', t);
     END LOOP;
 END $$;
