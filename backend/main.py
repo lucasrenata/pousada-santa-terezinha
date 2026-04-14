@@ -46,8 +46,8 @@ app.include_router(guests.router)
 app.include_router(rooms.router)
 app.include_router(bookings.router)
 app.include_router(products.router)
-app.include_router(finance.router)   # <--- NOVO
-app.include_router(settings.router)  # <--- NOVO
+app.include_router(finance.router)
+app.include_router(settings.router)
 app.include_router(business_rules.router)
 app.include_router(payments.router)
 app.include_router(admin.router)
@@ -55,6 +55,10 @@ app.include_router(chat.router)
 app.include_router(events.router)
 app.include_router(webhook_whatsapp.router)
 app.include_router(superadmin.router)
+
+# Serve arquivos estáticos (Uploads de comprovantes, etc)
+os.makedirs("static/uploads/receipts", exist_ok=True)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Serve PDF reports with auto-delete after download
 os.makedirs("reports", exist_ok=True)

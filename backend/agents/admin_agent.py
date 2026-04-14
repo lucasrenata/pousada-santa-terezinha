@@ -9,9 +9,11 @@ from typing import Optional, List
 
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode
+from agents import shared_tools
 
 # =============================================================================
 # MICRO-ROBÔS: LÓGICAS ESPECIALIZADAS (BACKEND)
@@ -246,13 +248,18 @@ def event_manager_logic(tenant_id: int, action: str = "query") -> dict:
 # ORQUESTRADOR CENTRAL (AGENTE ADMIN)
 # =============================================================================
 
-def get_llm():
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key: return None
-    return ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0.1)
-
 async def handle_admin_query(message: str, history: list, db: Session, tenant_id: int):
-    llm = get_llm()
+    # --- SELEÇÃO DE MOTOR (GEMINI PREVIEW) ---
+    google_key = os.getenv("GOOGLE_API_KEY")
+    gemini_model = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
+    
+    if google_key:
+        llm = ChatGoogleGenerativeAI(model=gemini_model, google_api_key=google_key, temperature=0.1)
+        print(f"[AI_ADMIN_LOG] Ativando Motor Supremo: {gemini_model}")
+    else:
+        llm = ChatOpenAI(model="gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.1)
+        print(f"[AI_ADMIN_LOG] Usando OpenAI: gpt-4o-mini")
+
     if not llm: return {"response": "API Key não configurada."}
 
     # -------------------------------------------------------------------------
@@ -310,6 +317,53 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
         """Micro-robô para LISTAR QUARTOS e ver seus estados (disponivel, limpeza, ocupado, etc)."""
         return room_viewer_logic(tenant_id, status)
 
+    # --- NOVAS FERRAMENTAS (HABILIDADES DO CUSTOMER AGENT) ---
+    @tool
+    def robot_check_availability(check_in: str, check_out: str, group_size: int = 1, ages: List[int] = []) -> dict:
+        """Micro-robô para consultar vagas e preços. Use sempre que o administrador perguntar sobre disponibilidade ou orçamentos."""
+        return shared_tools.availability_check_logic(tenant_id, check_in, check_out, group_size, ages)
+
+    @tool
+    def robot_find_guest(cpf: str = "", name: str = "") -> dict:
+        """Micro-robô para identificar hóspedes no banco de dados. Use para verificar cadastros existentes."""
+        return shared_tools.find_guest_logic(tenant_id, cpf, name)
+
+    @tool
+    def robot_book_with_payment(guest_id: int, room_id: str, check_in: str, check_out: str, group_size: int, companions: List[dict] = []) -> dict:
+        """Micro-robô FINALIZADOR: Realiza a reserva e gera a cobrança PIX. Use para efetivar a venda para o cliente."""
+        return shared_tools.unified_booking_flow(tenant_id, guest_id, room_id, check_in, check_out, group_size, companions)
+
+    @tool
+    def robot_find_booking(cpf: str = "", name: str = "", room_id: str = "") -> dict:
+        """Micro-robô de INVESTIGAÇÃO: Localiza IDs de reserva e detalhes por CPF, Nome do hóspede ou número do quarto. 
+        Use sempre que não souber o ID da reserva ou precisar descobrir quem está em qual quarto."""
+        return shared_tools.find_booking_logic(tenant_id, cpf, name, room_id)
+
+    @tool
+    def robot_get_payment_info(booking_id: int) -> dict:
+        """Micro-robô de COBRANÇA: Gera ou recupera o QR Code PIX e dados de pagamento para uma reserva existente."""
+        return shared_tools.payment_info_logic(tenant_id, booking_id)
+
+    @tool
+    def robot_confirm_payment(booking_id: int, method: str = "pix") -> dict:
+        """Micro-robô financeiro: Confirma pagamentos manualmente e libera a reserva. Use para dar baixa em depósitos."""
+        return shared_tools.confirm_payment_logic(tenant_id, booking_id, method)
+
+    @tool
+    def robot_record_knowledge(content: str, category: str = "geral", importance: int = 1, guest_id: int = None) -> dict:
+        """Micro-robô de Memória: Salva fatos, preferências ou regras aprendidas na memória de longo prazo."""
+        return shared_tools.store_operational_memory_logic(tenant_id, content, category, guest_id, importance)
+
+    # --- MEMÓRIA E DIAGNÓSTICO ---
+    current_guest_id = None
+    for h in reversed(history):
+        if h.get("guest_id"): 
+            current_guest_id = h["guest_id"]
+            break
+            
+    op_memory = shared_tools.get_operational_memory_logic(tenant_id, current_guest_id)
+    if op_memory: print(f"[AI_ADMIN_LOG] Carregados fatos da memória operacional.")
+
     # -------------------------------------------------------------------------
     # ORQUESTRAÇÃO
     # -------------------------------------------------------------------------
@@ -318,19 +372,28 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
         robot_inventory_sync, robot_inventory_viewer, robot_room_status_manager,
         robot_room_setup_manager, robot_consumption_launcher, robot_checkout_manager, 
         robot_finance_summary, robot_pdf_reporter, robot_event_intelligence,
-        robot_room_viewer
+        robot_room_viewer,
+        robot_check_availability, robot_find_guest, robot_book_with_payment,
+        robot_find_booking, robot_get_payment_info, robot_confirm_payment, robot_record_knowledge
     ]
     llm_with_tools = llm.bind_tools(tools)
     
-    sys_msg = SystemMessage(content="""Você é o ORQUESTRADOR MESTRE da Pousada.
-Sua missão é coordenar uma equipe de Micro-Robôs especializados para realizar as tarefas.
+    sys_msg = SystemMessage(content=f"""Você é o ORQUESTRADOR MESTRE e GERENTE GERAL da Pousada.
+Sua missão é coordenar uma equipe de Micro-Robôs especializados para realizar qualquer tarefa operacional, administrativa ou de vendas.
 
-DIRETRIZES:
-1. **CADASTRO DE QUARTOS**: Se o usuário quiser criar ou configurar quartos, use 'robot_room_setup_manager'.
-2. **CONSUMO**: Se pedirem "lança X no quarto Y", ative o 'robot_consumption_launcher'.
-3. **CHECKOUT**: Se pedirem extrato ou saída do quarto, use 'robot_checkout_manager'.
-4. **RELATÓRIOS ANALÍTICOS**: Use 'robot_pdf_reporter'.
-5. **RESPOSTAS**: Execute e reporte o feedback. Forneça links para PDFs.""")
+CONTEXTO DE MEMÓRIA:
+{op_memory}
+
+DIRETRIZES TÉCNICAS E DE VERDADE:
+1. **INVESTIGAÇÃO**: Sempre que não encontrar uma reserva pelo ID ou o checkout falhar, use obrigatoriamente o 'robot_find_booking' para buscar pelo CPF ou Nome do hóspede. 
+2. **VERDADE FINANCEIRA**: Você é PROIBIDO de confirmar que um pagamento foi recebido ou que uma conta foi paga sem que o robô financeiro correspondente retorne sucesso. Não aceite o "discurso" do usuário como prova; consulte sempre o banco de dados.
+3. **VENDAS E RESERVAS**: Você tem todas as habilidades para consultar disponibilidade, calcular orçamentos e criar reservas.
+4. **FINANCEIRO**: Você pode confirmar pagamentos manualmente ('robot_confirm_payment').
+5. **OPERAÇÕES**: Você gerencia quartos (limpeza/manutenção), lança consumos e faz checkouts.
+6. **ESTOQUE E RELATÓRIOS**: Você controla produtos e gera PDFs analíticos.
+7. **ZERO ALUCINAÇÃO DE ID**: Nunca invente IDs de reserva. Se o robô não retornar o ID, ele não existe.
+
+Sua postura é de um gerente sênior: resolutivo, preciso e altamente investigativo.""")
 
     def call_model(state: MessagesState):
         messages = [sys_msg] + state["messages"]
@@ -355,9 +418,28 @@ DIRETRIZES:
 
     try:
         final_state = await app.ainvoke({"messages": lc_messages})
-        return {"response": final_state["messages"][-1].content}
+        response_msg = final_state["messages"][-1]
+        response_content = response_msg.content
+        
+        # --- NORMALIZAÇÃO NATIVA (THE GEMINI WAY) ---
+        # Extrai o texto se vier em formato de lista (Multimodal)
+        if isinstance(response_content, list):
+            full_text = ""
+            for part in response_content:
+                if isinstance(part, dict):
+                    if part.get("type") == "text":
+                        full_text += part.get("text", "")
+                elif isinstance(part, str):
+                    full_text += part
+            response_content = full_text.strip()
+        
+        # Fallback para mensagens sem texto mas com chamadas de ferramenta
+        if not response_content and hasattr(response_msg, 'tool_calls') and response_msg.tool_calls:
+            response_content = "Processando sua solicitação... 🤖"
+
+        return {"response": response_content}
     except Exception as e:
-        db.rollback()
+        print(f"[ADMIN_ERROR]: {str(e)}")
         import traceback
         traceback.print_exc()
-        return {"response": "Erro na orquestração dos robôs. Certifique-se de que a OpenAI API Key está correta."}
+        return {"response": f"Erro na orquestração suprema: {str(e)}"}

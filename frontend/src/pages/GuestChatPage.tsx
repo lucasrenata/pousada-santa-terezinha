@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { Send, User, Bot, Check, ShieldCheck, Phone } from 'lucide-react';
+import { Send, User, Bot, Check, ShieldCheck, Phone, Paperclip, Loader2 } from 'lucide-react';
 import { useParams, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import api from '../services/api';
+import { toast } from 'sonner';
 
 interface Message {
   id: string;
@@ -17,11 +18,85 @@ export default function GuestChatPage() {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [sessionId, setSessionId] = useState<string>('');
   const [pousadaName, setPousadaName] = useState('Pousada System');
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Recupera o ID da reserva das mensagens (para saber onde anexar o comprovante)
+  const getLatestBookingId = () => {
+    // Percorre as mensagens da mais recente para a mais antiga
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const content = messages[i].content;
+      const match = content.match(/ID #(\d+)/);
+      if (match) return match[1];
+    }
+    return null;
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const bookingId = getLatestBookingId();
+    if (!bookingId) {
+      const errorMsg: Message = {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: '⚠️ Não consegui localizar o número da sua reserva nesta conversa. Por favor, me informe o ID ou CPF para que eu possa vincular o seu comprovante.',
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, errorMsg]);
+      return;
+    }
+
+    // Mensagem de "Enviando"
+    const processingMsg: Message = {
+      id: "proc-" + Date.now(),
+      role: 'assistant',
+      content: `⏳ Enviando comprovante para a reserva #${bookingId}...`,
+      timestamp: new Date()
+    };
+    setMessages(prev => [...prev, processingMsg]);
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      await api.post(`/bookings/${bookingId}/receipt?tenant_id=${tenant_id}`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      
+      // Remove a mensagem de processamento e adiciona a de sucesso
+      setMessages(prev => prev.filter(m => m.id !== processingMsg.id));
+      const successMsg: Message = {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: `✅ Comprovante da reserva #${bookingId} recebido com sucesso! Nossa equipe de recepção vai validar as informações agora.`,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, successMsg]);
+      
+    } catch (err: any) {
+      console.error('Erro no upload:', err);
+      setMessages(prev => prev.filter(m => m.id !== processingMsg.id));
+      
+      const errorMsg: Message = {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: `❌ Ops! Tivemos um problema ao enviar o comprovante da reserva #${bookingId}. Verifique se o arquivo é uma imagem válida ou tente novamente em instantes.`,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, errorMsg]);
+    } finally {
+      // Limpa o input para permitir novo upload
+      event.target.value = '';
+    }
+  };
 
   // Inicializa sessão e busca configurações
+// ... (rest of useEffects)
   useEffect(() => {
     let sid = localStorage.getItem(`guest_session`);
     if (!sid) {
@@ -35,7 +110,7 @@ export default function GuestChatPage() {
 
   const loadSettings = async () => {
     try {
-      const response = await api.get('/settings/');
+      const response = await api.get(`/settings/?tenant_id=${tenant_id}`);
       const nameSetting = response.data.find((s: any) => s.key === 'pousada_name');
       if (nameSetting) setPousadaName(nameSetting.value);
     } catch (err) {
@@ -207,20 +282,40 @@ export default function GuestChatPage() {
 
         {/* Action Input Area */}
         <div className="p-4 sm:p-6 bg-white/50 border-t border-white/60 backdrop-blur-md">
-          <form onSubmit={handleSend} className="relative group">
-            <input
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              placeholder="Digite sua mensagem aqui..."
-              className="w-full bg-white border-2 border-slate-100 rounded-2xl pl-5 pr-14 py-4 text-sm focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all placeholder:text-slate-300 font-medium shadow-inner"
-            />
+          <form onSubmit={handleSend} className="relative group flex gap-2">
+            <div className="relative flex-1">
+              <input
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Digite sua mensagem aqui..."
+                className="w-full bg-white border-2 border-slate-100 rounded-2xl pl-5 pr-14 py-4 text-sm focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all placeholder:text-slate-300 font-medium shadow-inner"
+              />
+              <button
+                type="submit"
+                disabled={loading || !message.trim()}
+                className="absolute right-2 top-2 bottom-2 aspect-square bg-indigo-600 hover:bg-slate-900 text-white flex items-center justify-center rounded-xl shadow-lg shadow-indigo-100 transition-all disabled:opacity-30 active:scale-90"
+              >
+                <Send size={18} />
+              </button>
+            </div>
+            
+            {/* Botão de Anexo */}
             <button
-              type="submit"
-              disabled={loading || !message.trim()}
-              className="absolute right-2 top-2 bottom-2 aspect-square bg-indigo-600 hover:bg-slate-900 text-white flex items-center justify-center rounded-xl shadow-lg shadow-indigo-100 transition-all disabled:opacity-30 active:scale-90"
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className="w-14 h-14 flex-shrink-0 bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center rounded-2xl transition-all active:scale-90 border-2 border-slate-200/50"
+              title="Anexar Comprovante PIX"
             >
-              <Send size={18} />
+              {uploading ? <Loader2 size={20} className="animate-spin" /> : <Paperclip size={20} />}
             </button>
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              className="hidden" 
+              accept="image/*,application/pdf"
+              onChange={handleFileUpload}
+            />
           </form>
           <div className="flex justify-between items-center mt-4 px-2">
             <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-bold uppercase">

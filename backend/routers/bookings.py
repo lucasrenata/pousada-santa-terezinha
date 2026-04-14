@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
 from fastapi.responses import StreamingResponse
+import shutil, uuid, os
 from sqlalchemy.orm import Session
 from datetime import datetime, date, timedelta
 from typing import List, Optional
@@ -626,3 +627,41 @@ def delete_booking(booking_id: int, db: Session = Depends(get_db), current_user 
     db.delete(booking)
     db.commit()
     return {"message": "Reserva deletada com sucesso"}
+
+# 10. UPLOAD DE COMPROVANTE
+@router.post("/{booking_id}/receipt")
+async def upload_receipt(booking_id: int, tenant_id: Optional[int] = None, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    print(f"📥 [UPLOAD_DEBUG] Recebendo comprovante para reserva #{booking_id} (Tenant: {tenant_id})")
+    
+    if tenant_id:
+        set_tenant_context(db, tenant_id)
+        
+    booking = db.query(models.Booking).filter(
+        models.Booking.id == booking_id,
+        models.Booking.tenant_id == tenant_id
+    ).first()
+    
+    if not booking:
+        print(f"❌ [UPLOAD_DEBUG] Reserva #{booking_id} não encontrada para o Tenant {tenant_id}!")
+        raise HTTPException(status_code=404, detail="Reserva não encontrada")
+
+    # Garante o diretório
+    upload_dir = "static/uploads/receipts"
+    os.makedirs(upload_dir, exist_ok=True)
+
+    # Nome único para o arquivo
+    ext = os.path.splitext(file.filename)[1]
+    filename = f"receipt_{booking_id}_{uuid.uuid4().hex}{ext}"
+    file_path = os.path.join(upload_dir, filename)
+
+    # Salva o arquivo fisicamente
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # Atualiza o banco de dados (URL pública)
+    # No localhost, usamos a base_url do .env ou /static/...
+    receipt_url = f"/static/uploads/receipts/{filename}"
+    booking.payment_receipt_url = receipt_url
+    db.commit()
+
+    return {"success": True, "receipt_url": receipt_url}

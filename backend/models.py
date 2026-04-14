@@ -173,6 +173,7 @@ class Booking(Base, TenantMixin):
     deposit_amount = Column(Float, default=0.0)
     payment_status = Column(Enum(PaymentStatus), default=PaymentStatus.PENDENTE)
     status = Column(Enum(BookingStatus), default=BookingStatus.PENDENTE)
+    payment_receipt_url = Column(String, nullable=True) # Novo: URL para o arquivo do comprovante
     room = relationship("Room", back_populates="bookings")
     guest = relationship("Guest", back_populates="bookings")
     consumptions = relationship("Consumption", back_populates="booking")
