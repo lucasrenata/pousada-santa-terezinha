@@ -11,8 +11,9 @@ import {
   Unlock,
   Package,
   Calendar,
-  UserCog,
-  X
+  X,
+  CreditCard,
+  Target
 } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
 
@@ -38,6 +39,8 @@ export default function SuperDashboard() {
   const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
   const [loading, setLoading] = useState(false);
   const [calculating, setCalculating] = useState(false);
+  const [showConfig, setShowConfig] = useState(false);
+  const [configData, setConfigData] = useState({ mp_access_token: '', mp_public_key: '', manual_pix_key: '' });
   const [showProfile, setShowProfile] = useState(false);
   const [profileData, setProfileData] = useState({ username: '', full_name: '', email: '', password: '' });
   const [passwordError, setPasswordError] = useState('');
@@ -143,6 +146,30 @@ export default function SuperDashboard() {
     }
   }
 
+  async function openConfig() {
+    try {
+      const res = await api.get('/super/config');
+      setConfigData(res.data);
+      setShowConfig(true);
+    } catch {
+      toast({ title: "Falha ao carregar configurações da plataforma", variant: "destructive" });
+    }
+  }
+
+  async function handleConfigSave(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await api.put('/super/config', configData);
+      toast({ title: "Configurações da Plataforma salvas com sucesso!" });
+      setShowConfig(false);
+    } catch (err: any) {
+      toast({ title: "Erro ao salvar configurações", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
   if (loading && tenants.length === 0) {
     return <div className="flex items-center justify-center p-20">Carregando painel de controle...</div>;
   }
@@ -173,6 +200,14 @@ export default function SuperDashboard() {
            >
              <Database size={20} />
              {calculating ? "Calculando..." : "Calcular MB por Hotel"}
+           </button>
+           <button 
+             onClick={openConfig}
+             className="bg-blue-50 text-blue-600 border-2 border-blue-100 p-2.5 rounded-xl hover:bg-blue-100 transition-all shadow-sm flex items-center gap-2 font-bold"
+             title="Configurações de Faturamento SaaS"
+           >
+             <CreditCard size={20} />
+             <span className="hidden lg:inline">Configurações SaaS</span>
            </button>
            <button 
              onClick={openProfile}
@@ -261,6 +296,78 @@ export default function SuperDashboard() {
                   className="w-full bg-slate-900 text-white py-3.5 rounded-xl font-black text-lg hover:bg-slate-800 hover:scale-[1.02] active:scale-[0.98] transition-all shadow-xl shadow-slate-300 disabled:opacity-50"
                 >
                   {loading ? 'Salvando...' : 'Atualizar Credenciais'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Config SaaS */}
+      {showConfig && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] backdrop-blur-sm">
+          <div className="bg-white p-6 rounded-[32px] shadow-2xl w-full max-w-lg mx-4 transform transition-all border outline-none border-blue-100">
+            <div className="flex justify-between items-center mb-6">
+               <div className="flex items-center gap-3">
+                 <div className="bg-blue-600 text-white p-2.5 rounded-xl shadow-lg shadow-blue-200">
+                    <CreditCard size={24} />
+                 </div>
+                 <div>
+                   <h2 className="text-xl font-black text-slate-800 italic uppercase">Configurações Platform</h2>
+                   <p className="text-xs text-slate-500 font-medium italic text-blue-600">Gestão de Recebimento de Assinaturas</p>
+                 </div>
+               </div>
+               <button onClick={() => setShowConfig(false)} className="text-slate-400 hover:text-slate-700 bg-slate-50 p-2 rounded-full transition-colors">
+                 <X size={20} />
+               </button>
+            </div>
+            
+            <div className="mb-6 p-4 bg-blue-50 border border-blue-100 rounded-2xl">
+                <p className="text-[11px] text-blue-700 font-bold flex items-center gap-2 leading-tight">
+                    <ShieldCheck size={14} className="shrink-0" />
+                    As credenciais abaixo serão usadas pela plataforma ParcerIA para processar cobranças automáticas dos seus clientes.
+                </p>
+            </div>
+
+            <form onSubmit={handleConfigSave} className="space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">Mercado Pago Access Token</label>
+                <input 
+                  type="password"
+                  className="w-full border-2 rounded-xl px-4 py-2.5 focus:border-blue-600 outline-none border-slate-200 bg-slate-50 text-xs font-mono"
+                  placeholder="APP_USR-..."
+                  value={configData.mp_access_token}
+                  onChange={(e) => setConfigData({...configData, mp_access_token: e.target.value})}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">Mercado Pago Public Key</label>
+                <input 
+                  className="w-full border-2 rounded-xl px-4 py-2.5 focus:border-blue-600 outline-none border-slate-200 bg-slate-50 text-xs font-mono"
+                  placeholder="APP_USR-..."
+                  value={configData.mp_public_key}
+                  onChange={(e) => setConfigData({...configData, mp_public_key: e.target.value})}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">Chave PIX (Backup de Recebimento)</label>
+                <input 
+                  className="w-full border-2 rounded-xl px-4 py-2.5 focus:border-blue-600 outline-none border-slate-200 bg-slate-50"
+                  placeholder="E-mail, CPF ou Chave Aleatória"
+                  value={configData.manual_pix_key}
+                  onChange={(e) => setConfigData({...configData, manual_pix_key: e.target.value})}
+                />
+              </div>
+
+              <div className="pt-4">
+                <button 
+                  type="submit" 
+                  disabled={loading}
+                  className="w-full bg-blue-600 text-white py-3.5 rounded-xl font-black text-lg hover:bg-blue-700 hover:scale-[1.02] active:scale-[0.98] transition-all shadow-xl shadow-blue-200 disabled:opacity-50"
+                >
+                  {loading ? 'Salvando...' : 'Salvar Configurações SaaS'}
                 </button>
               </div>
             </form>

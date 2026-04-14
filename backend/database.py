@@ -12,11 +12,13 @@ Base = declarative_base()
 
 # Gerenciador de contexto de Tenant na sessão SQL
 def set_tenant_context(db: Session, tenant_id: int):
-    """Define o ID do tenant para a sessão atual do PostgreSQL (RLS)"""
-    if tenant_id is not None:
+    """Define o ID do tenant para a sessão atual. -1 = Visão Global (SuperAdmin)"""
+    if tenant_id == -1:
+        # Define um valor que o banco/RLS entende como 'ver tudo'
+        db.execute(text("SET app.current_tenant = '-1'"))
+    elif tenant_id is not None:
         db.execute(text("SET app.current_tenant = :tid"), {"tid": str(tenant_id)})
     else:
-        # Reset para evitar vazamento se o tenant_id for nulo
         db.execute(text("SET app.current_tenant = '0'"))
 
 # Dependência para pegar a sessão do banco em cada requisição

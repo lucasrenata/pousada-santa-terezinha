@@ -134,3 +134,37 @@ def toggle_tenant(tenant_id: int, db: Session = Depends(get_db)):
     tenant.is_active = not tenant.is_active
     db.commit()
     return {"id": tenant.id, "new_active_status": tenant.is_active}
+
+@router.get("/config", dependencies=[Depends(get_current_superadmin)])
+def get_platform_config(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_superadmin)):
+    """Busca as chaves de faturamento da plataforma (Master Tenant)"""
+    if not current_user.tenant_id:
+         raise HTTPException(status_code=400, detail="Usuário SuperAdmin não vinculado a um Tenant de plataforma.")
+    
+    config = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_id == current_user.tenant_id).first()
+    if not config:
+        return {"mp_access_token": "", "mp_public_key": "", "manual_pix_key": ""}
+    
+    return {
+        "mp_access_token": config.mp_access_token or "",
+        "mp_public_key": config.mp_public_key or "",
+        "manual_pix_key": config.manual_pix_key or ""
+    }
+
+@router.put("/config", dependencies=[Depends(get_current_superadmin)])
+def update_platform_config(config_data: Dict[str, str], db: Session = Depends(get_db), current_user: models.User = Depends(get_current_superadmin)):
+    """Atualiza as chaves de faturamento da plataforma"""
+    if not current_user.tenant_id:
+         raise HTTPException(status_code=400, detail="Usuário SuperAdmin não vinculado a um Tenant de plataforma.")
+    
+    config = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_id == current_user.tenant_id).first()
+    if not config:
+        config = models.TenantConfig(tenant_id=current_user.tenant_id)
+        db.add(config)
+    
+    if "mp_access_token" in config_data: config.mp_access_token = config_data["mp_access_token"]
+    if "mp_public_key" in config_data: config.mp_public_key = config_data["mp_public_key"]
+    if "manual_pix_key" in config_data: config.manual_pix_key = config_data["manual_pix_key"]
+    
+    db.commit()
+    return {"success": True}

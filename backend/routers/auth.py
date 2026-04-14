@@ -44,7 +44,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
             raise HTTPException(status_code=403, detail="Ambiente suspenso administrativamente.")
     
     # --- ATIVAÇÃO DO RLS ---
-    set_tenant_context(db, user.tenant_id)
+    # SuperAdmin sempre ativa Visão Global (-1) para não ficar preso em um tenant só
+    if user.role == "superadmin":
+        set_tenant_context(db, -1)
+    else:
+        set_tenant_context(db, user.tenant_id)
     
     return user
 
