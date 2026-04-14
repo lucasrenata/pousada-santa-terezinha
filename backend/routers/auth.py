@@ -7,6 +7,9 @@ import os
 import bcrypt
 import models, schemas
 from database import get_db, set_tenant_context
+from payments.mercadopago_service import MercadoPagoService
+
+mp_service = MercadoPagoService()
 
 router = APIRouter(tags=["Auth"])
 
@@ -97,14 +100,14 @@ async def get_current_staff(current_user: models.User = Depends(get_current_user
 
 import re
 
-@router.post("/signup", response_model=schemas.UserResponse)
+@router.post("/signup", response_model=schemas.SignupResponse)
 def signup(request: schemas.SignupRequest, db: Session = Depends(get_db)):
-    """Fluxo de Auto-Cadastro: Cria Tenant e Admin (Atômico)"""
+    """Fluxo de Auto-Cadastro: Cria Tenant, Admin e Gera Cobrança Setup (Atômico)"""
     # 0. Ativa o bypass (-1) para validação global e criação do ambiente
     from database import set_tenant_context
     set_tenant_context(db, -1)
 
-    # 1. Valida se usuário já existe (Agora com visão global)
+    # 1. Valida se usuário já existe
     if db.query(models.User).filter(models.User.username == request.admin_username).first():
         raise HTTPException(status_code=400, detail="Nome de usuário já está em uso")
     
@@ -116,10 +119,10 @@ def signup(request: schemas.SignupRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="A senha deve conter no mínimo 8 caracteres, uma letra maiúscula, uma minúscula, um número e um caractere especial.")
     
     try:
-        # 2. Cria o Tenant (Pousada)
-        new_tenant = models.Tenant(name=request.pousada_name)
+        # 2. Cria o Tenant (Pousada) - INATIVO até o pagamento
+        new_tenant = models.Tenant(name=request.pousada_name, is_active=False)
         db.add(new_tenant)
-        db.flush() # Gera o ID, mas não salva permanentemente ainda
+        db.flush() 
         
         # 3. Cria o Usuário Admin vinculado ao Tenant
         new_user = models.User(
@@ -131,15 +134,52 @@ def signup(request: schemas.SignupRequest, db: Session = Depends(get_db)):
             tenant_id=new_tenant.id
         )
         db.add(new_user)
+        db.flush()
+
+        # 4. Busca Configurações da Plataforma (Pelo nome definido no setup) para gerar a cobrança
+        platform_tenant = db.query(models.Tenant).filter(models.Tenant.name == "ParcerIA (Plataforma)").first()
+        platform_tenant_id = platform_tenant.id if platform_tenant else 1 
         
-        # Consolida tudo de uma vez
+        platform_config = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_id == platform_tenant_id).first()
+        mp_token = platform_config.mp_access_token if platform_config else os.getenv("MERCADOPAGO_ACCESS_TOKEN")
+        
+        # Busca taxa de setup dinâmica
+        fee_setting = db.query(models.SystemSetting).filter(
+            models.SystemSetting.tenant_id == platform_tenant_id,
+            models.SystemSetting.key == "platform_setup_fee"
+        ).first()
+        fee_amount = float(fee_setting.value) if fee_setting else 49.90
+
+        payment_url = None
+        if mp_token:
+            try:
+                # Cria preferência para o Setup Tax
+                pref = mp_service.create_card_preference(
+                    access_token=mp_token,
+                    tenant_id=new_tenant.id, 
+                    amount=fee_amount,
+                    title=f"Taxa de Setup: {request.pousada_name}",
+                    metadata={"type": "tenant_setup", "tenant_id": new_tenant.id},
+                    back_urls={
+                        "success": f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}/login?signup=success&id={new_tenant.id}",
+                        "failure": f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}/signup?error=payment_failed",
+                    }
+                )
+                payment_url = pref.get("response", {}).get("init_point")
+            except Exception as mp_err:
+                print(f"[MP SIGNUP ERROR] {mp_err}")
+
         db.commit()
         db.refresh(new_user)
-        return new_user
+        
+        return {
+            "user": new_user,
+            "payment_url": payment_url,
+            "tenant_id": new_tenant.id
+        }
 
     except Exception as e:
         db.rollback()
-        # Trata duplicidade que passou pela validação (race condition)
         error_msg = str(e).lower()
         if "ix_users_username" in error_msg or "username" in error_msg:
             raise HTTPException(status_code=400, detail="Nome de usuário já está em uso")

@@ -48,17 +48,29 @@ export default function Signup() {
 
     setLoading(true);
     try {
-      await api.post('/auth/signup', data);
-      
-      toast({
-        title: "Pousada Cadastrada! 🎉",
-        description: "Agora você já pode fazer login no seu novo ambiente.",
-      });
-      
-      // Pequeno delay para o usuário ler o toast
-      setTimeout(() => {
-        navigate('/login');
-      }, 1500);
+      const response = await api.post('/auth/signup', data);
+      const { payment_url } = response.data;
+
+      if (payment_url) {
+        toast({
+          title: "Ambiente Pré-Configurado! 🚀",
+          description: "Redirecionando para o pagamento da taxa de ativação...",
+        });
+        
+        // Pequeno delay para ler o Toast e redirecionar
+        setTimeout(() => {
+          window.location.href = payment_url;
+        }, 2000);
+      } else {
+        toast({
+          title: "Pousada Cadastrada! 🎉",
+          description: "Agora você já pode fazer login no seu novo ambiente.",
+        });
+        
+        setTimeout(() => {
+          navigate('/login');
+        }, 1500);
+      }
       
     } catch (err: any) {
       console.error("Erro no cadastro:", err);
@@ -83,6 +95,19 @@ export default function Signup() {
       setLoading(false);
     }
   };
+
+  // Efeito para capturar erros de pagamento vindos do redirecionamento
+  useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const errorParam = params.get('error');
+    if (errorParam === 'payment_failed') {
+       toast({
+         title: "Falha no Pagamento",
+         description: "Não conseguimos confirmar sua taxa de ativação. Tente cadastrar novamente.",
+         variant: "destructive"
+       });
+    }
+  });
 
   return (
     <div className="min-h-screen grid grid-cols-1 lg:grid-cols-2 bg-white">

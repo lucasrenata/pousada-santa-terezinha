@@ -1,10 +1,10 @@
-from utils.pdf_engine import PousadaProfessionalReport
+from utils.pdf_engine import ProfessionalReport
 from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, Spacer
 from reportlab.lib import colors
 
 def generate_financial_report(data, filename="relatorio_financeiro.pdf"):
-    report = PousadaProfessionalReport(filename, "Demonstrativo Financeiro Executivo")
+    report = ProfessionalReport(filename, "Demonstrativo Financeiro Executivo")
     report.add_header()
     
     # 1. KPI Cards
@@ -64,7 +64,7 @@ def generate_financial_report(data, filename="relatorio_financeiro.pdf"):
     return report.build()
 
 def generate_inventory_report(data, filename="relatorio_estoque.pdf"):
-    report = PousadaProfessionalReport(filename, "Inventário e Avaliação de Ativos")
+    report = ProfessionalReport(filename, "Inventário e Avaliação de Ativos")
     report.add_header()
     
     # 1. KPIs de Estoque
@@ -102,7 +102,7 @@ def generate_inventory_report(data, filename="relatorio_estoque.pdf"):
     return report.build()
 
 def generate_shopping_list_report(data, filename="lista_de_compras.pdf"):
-    report = PousadaProfessionalReport(filename, "Lista de Compras e Reposição Sugerida")
+    report = ProfessionalReport(filename, "Lista de Compras e Reposição Sugerida")
     report.add_header()
     
     # KPIs

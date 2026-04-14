@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Send, User, Bot, Check, ShieldCheck, Phone, Paperclip, Loader2 } from 'lucide-react';
+import { Send, User, Check, ShieldCheck, Phone, Paperclip, Loader2 } from 'lucide-react';
 import { useParams, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import api from '../services/api';
@@ -20,7 +20,7 @@ export default function GuestChatPage() {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [sessionId, setSessionId] = useState<string>('');
-  const [pousadaName, setPousadaName] = useState('Pousada System');
+  const [pousadaName, setPousadaName] = useState('Estabelecimento');
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -114,7 +114,7 @@ export default function GuestChatPage() {
       const nameSetting = response.data.find((s: any) => s.key === 'pousada_name');
       if (nameSetting) setPousadaName(nameSetting.value);
     } catch (err) {
-      console.error("Erro ao carregar nome da pousada", err);
+      console.error("Erro ao carregar nome do estabelecimento", err);
     }
   };
 
@@ -182,8 +182,8 @@ export default function GuestChatPage() {
     <div className="max-w-6xl mx-auto h-screen flex flex-col p-2 sm:p-4 lg:p-6 animate-in fade-in duration-700">
       {/* Header Compacto - Top Left */}
       <header className="flex items-center gap-4 mb-4 mt-2 px-4 self-start">
-        <div className="w-12 h-12 bg-gradient-to-br from-indigo-600 to-blue-500 rounded-2xl shadow-lg shadow-indigo-100 flex items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-default">
-           <Bot size={28} className="text-white" />
+        <div className="w-12 h-12 bg-white rounded-2xl shadow-lg shadow-indigo-100 flex items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-default overflow-hidden border border-slate-100">
+           <img src="/ai-avatar.jpg" alt="AI Assistant" className="w-full h-full object-cover" />
         </div>
         <div className="text-left">
           <h1 className="text-xl font-black text-slate-800 tracking-tight leading-none">{pousadaName}</h1>
@@ -217,10 +217,10 @@ export default function GuestChatPage() {
               className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-4 duration-500`}
             >
               <div className={`flex gap-3 max-w-[90%] ${m.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm ${
-                  m.role === 'user' ? 'bg-slate-800 text-white' : 'bg-indigo-600 text-white'
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm overflow-hidden ${
+                  m.role === 'user' ? 'bg-slate-800 text-white' : 'bg-white border border-slate-100'
                 }`}>
-                  {m.role === 'user' ? <User size={14} /> : <Bot size={14} />}
+                  {m.role === 'user' ? <User size={14} /> : <img src="/ai-avatar.jpg" alt="Bot" className="w-full h-full object-cover" />}
                 </div>
                 <div className={`p-4 rounded-2xl text-sm leading-relaxed shadow-lg ${
                   m.role === 'user' 

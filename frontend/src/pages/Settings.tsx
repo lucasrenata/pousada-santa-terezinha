@@ -300,11 +300,11 @@ export default function Settings() {
                 <CardTitle className="flex items-center gap-2">
                   <SettingsIcon className="w-5 h-5 text-indigo-600" /> Informações Gerais
                 </CardTitle>
-                <CardDescription>Dados públicos da pousada.</CardDescription>
+                <CardDescription>Dados públicos do estabelecimento.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Nome da Pousada</label>
+                  <label className="text-sm font-medium">Nome do Estabelecimento</label>
                   <div className="flex gap-2">
                     <Input 
                       value={getSettingValue('pousada_name') || 'Pousada System'} 

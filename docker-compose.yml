@@ -5,8 +5,8 @@ services:
     container_name: pousada_db
     restart: always
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin_password_123
+      POSTGRES_USER: pousada_app
+      POSTGRES_PASSWORD: ParcerIA19141919@
       POSTGRES_DB: pousada_db
     ports:
       - "5434:5432"
@@ -35,7 +35,7 @@ services:
       - ./backend/.env
     environment:
       # O backend usa esta URL para conectar no Postgres do compose
-      DATABASE_URL: postgresql://pousada_app:ParcerIA19141919@db:5432/pousada_db
+      DATABASE_URL: postgresql://pousada_app:ParcerIA19141919%40@db:5432/pousada_db
       # URLs Públicas para Webhooks e Autenticações
       BASE_URL: /api
       NOTIFICATION_URL: http://localhost:8003/payments/webhook

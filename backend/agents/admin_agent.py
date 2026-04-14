@@ -416,7 +416,7 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
     ]
     llm_with_tools = llm.bind_tools(tools)
     
-    sys_msg = SystemMessage(content=f"""Você é o ORQUESTRADOR MESTRE e GERENTE GERAL da Pousada.
+    sys_msg = SystemMessage(content=f"""Você é o ORQUESTRADOR MESTRE e GERENTE GERAL do estabelecimento.
 Sua missão é coordenar uma equipe de Micro-Robôs especializados para realizar qualquer tarefa operacional, administrativa ou de vendas.
 
 CONTEXTO DE MEMÓRIA:

@@ -3,11 +3,13 @@ import { useForm } from 'react-hook-form';
 import api from '../services/api';
 import { useNavigate, Link } from 'react-router-dom';
 import { Lock, User, Zap, ArrowRight } from 'lucide-react';
+import { useToast } from '../hooks/use-toast';
 
 export default function Login() {
   type FormData = { username: string; password: string };
   const { register, handleSubmit } = useForm<FormData>();
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [error, setError] = useState('');
   const [pousadaName, setPousadaName] = useState('ParcerIA');
 
@@ -23,6 +25,15 @@ export default function Login() {
       }
     }
     // loadSettings(); // Desativado no login global para manter o branding ParcerIA
+    
+    // Captura sucesso de ativação pós-pagamento
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('signup') === 'success') {
+      toast({
+        title: "Pagamento Confirmado! 💎",
+        description: "Seu ambiente foi ativado com sucesso. Seja bem-vindo!",
+      });
+    }
   }, []);
 
   const onSubmit = async (data: FormData) => {

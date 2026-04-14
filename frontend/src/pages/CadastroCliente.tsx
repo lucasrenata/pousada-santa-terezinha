@@ -270,7 +270,7 @@ export default function CadastroCliente() {
               Formulário enviado com sucesso!
             </h1>
             <p className="text-lg text-muted-foreground mb-2">
-              Pousada Santa Terezinha do Menino Jesus agradece.
+              Agradecemos a sua preferência.
             </p>
             <p className="text-sm text-muted-foreground">
               Sua reserva foi criada com status "Pendente" e aparecerá no sistema de reservas.

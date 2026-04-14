@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from database import SessionLocal
 import models
 
-class PousadaProfessionalReport:
+class ProfessionalReport:
     """
     Engine de PDF estilo Qualitec: ReportLab para estrutura e design premium.
     """
@@ -24,7 +24,7 @@ class PousadaProfessionalReport:
         
         # Estilos Customizados
         self.styles.add(ParagraphStyle(
-            name='PousadaTitle',
+            name='PropertyTitle',
             parent=self.styles['Heading1'],
             fontSize=18,
             textColor=colors.HexColor("#0f172a"), # Navy Dark
@@ -33,14 +33,14 @@ class PousadaProfessionalReport:
         ))
         
         self.styles.add(ParagraphStyle(
-            name='PousadaHeader',
+            name='PropertyHeader',
             fontSize=9,
             textColor=colors.HexColor("#64748b"), # Slate 500
             alignment=2 # Right
         ))
 
         self.styles.add(ParagraphStyle(
-            name='PousadaKPI',
+            name='PropertyKPI',
             fontSize=11,
             textColor=colors.HexColor("#334155"), # Slate 700
             alignment=1, # Center
@@ -51,7 +51,7 @@ class PousadaProfessionalReport:
         db = SessionLocal()
         try:
             setting = db.query(models.SystemSetting).filter(models.SystemSetting.key == 'pousada_name').first()
-            return setting.value if setting else "Pousada System"
+            return setting.value if setting else "Estabelecimento"
         finally:
             db.close()
 
@@ -59,16 +59,16 @@ class PousadaProfessionalReport:
         p_name = self._get_pousada_name()
         now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         header_text = f"<b>{p_name}</b><br/>Gerado em: {now}"
-        self.story.append(Paragraph(header_text, self.styles['PousadaHeader']))
+        self.story.append(Paragraph(header_text, self.styles['PropertyHeader']))
         self.story.append(Spacer(1, 0.3*cm))
-        self.story.append(Paragraph(self.title, self.styles['PousadaTitle']))
+        self.story.append(Paragraph(self.title, self.styles['PropertyTitle']))
         self.story.append(Spacer(1, 0.4*cm))
 
     def add_kpi_cards(self, cards: list):
         """
         Renderiza como cards elegantes com bordas suaves.
         """
-        data = [[Paragraph(f"<font color='#64748b' size=9>{c['label']}</font><br/><br/><font size=15><b>{c['value']}</b></font>", self.styles['PousadaKPI']) for c in cards]]
+        data = [[Paragraph(f"<font color='#64748b' size=9>{c['label']}</font><br/><br/><font size=15><b>{c['value']}</b></font>", self.styles['PropertyKPI']) for c in cards]]
         
         cw = (A4[0] - 4*cm) / len(cards)
         t = Table(data, colWidths=[cw]*len(cards))

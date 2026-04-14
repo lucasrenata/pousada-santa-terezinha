@@ -390,7 +390,19 @@ def handle_mercadopago_payment(pid: int, db: Session):
         metadata = response.get("metadata") or {}
         
         if status == "approved":
-            # Automação de Reserva
+            # 1. Ativação de Nova Pousada (Provisionamento)
+            if (metadata.get("type") or "") == "tenant_setup":
+                target_tenant_id = metadata.get("tenant_id")
+                if target_tenant_id:
+                    # Ativa visão global para mexer no tenant
+                    set_tenant_context(db, -1)
+                    tenant = db.query(models.Tenant).get(int(target_tenant_id))
+                    if tenant and not tenant.is_active:
+                        tenant.is_active = True
+                        db.commit()
+                        print(f"[WEBHOOK PROVISIONING] Tenant {target_tenant_id} ativado com sucesso após pagamento de setup.")
+            
+            # 2. Automação de Reserva
             if booking_id:
                 booking = db.query(models.Booking).filter(models.Booking.id == int(booking_id)).first()
                 if booking and booking.status != models.BookingStatus.CONFIRMADO:

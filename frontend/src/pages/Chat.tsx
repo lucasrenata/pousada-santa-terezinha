@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Send, User, Bot, Check, AlertCircle, Mic, Square } from 'lucide-react';
+import { Send, User, Check, AlertCircle, Mic, Square } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import api from '../services/api';
 import { Card, CardContent } from '../components/ui/card';
@@ -162,8 +162,8 @@ export default function Chat() {
         >
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center space-y-4 animate-in fade-in zoom-in duration-500">
-              <div className="p-4 bg-white rounded-3xl shadow-sm border border-slate-100">
-                <Bot size={48} className="text-indigo-500" />
+              <div className="p-4 bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden w-24 h-24 flex items-center justify-center">
+                <img src="/ai-avatar.jpg" alt="AI Robot" className="w-full h-full object-cover" />
               </div>
               <div>
                 <h3 className="font-bold text-slate-800 text-lg">Olá Admin! Como posso ajudar?</h3>
@@ -180,10 +180,10 @@ export default function Chat() {
               className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-2 duration-300`}
             >
               <div className={`flex gap-3 max-w-[80%] ${m.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden ${
                   m.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-white border text-slate-600 shadow-sm'
                 }`}>
-                  {m.role === 'user' ? <User size={16} /> : <Bot size={16} />}
+                  {m.role === 'user' ? <User size={16} /> : <img src="/ai-avatar.jpg" alt="Bot" className="w-full h-full object-cover" />}
                 </div>
                 <div className={`p-4 rounded-2xl text-sm leading-relaxed shadow-sm ${
                   m.role === 'user' 

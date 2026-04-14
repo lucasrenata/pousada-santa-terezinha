@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate, useParams } from 'react-router-dom';
-import { Bot, User, MapPin, Phone, Mail, CheckCircle, Loader2, ArrowRight, Calendar } from 'lucide-react';
+import { User, MapPin, Phone, Mail, CheckCircle, Loader2, ArrowRight, Calendar } from 'lucide-react';
 import api from '../services/api';
 
 export default function GuestRegistrationPage() {
@@ -10,7 +10,7 @@ export default function GuestRegistrationPage() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pousadaName, setPousadaName] = useState('Pousada System');
+  const [pousadaName, setPousadaName] = useState('Estabelecimento');
 
   const [formData, setFormData] = useState({
     name: '',
@@ -37,7 +37,7 @@ export default function GuestRegistrationPage() {
       const nameSetting = response.data.find((s: any) => s.key === 'pousada_name');
       if (nameSetting) setPousadaName(nameSetting.value);
     } catch (err) {
-      console.error("Erro ao carregar nome da pousada", err);
+      console.error("Erro ao carregar nome do estabelecimento", err);
     }
   };
 
@@ -151,8 +151,8 @@ export default function GuestRegistrationPage() {
     <div className="max-w-2xl mx-auto p-6 py-12 animate-in slide-in-from-bottom-8 duration-700">
       <div className="text-center mb-10">
         <h1 className="text-3xl font-black text-slate-800 tracking-tight mb-2">Ficha de Hóspede</h1>
-        <p className="text-slate-400 font-bold uppercase tracking-widest text-xs flex items-center justify-center gap-2">
-           <Bot size={14} className="text-indigo-600" /> {pousadaName}
+        <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px] flex items-center justify-center gap-2">
+           <img src="/ai-avatar.jpg" alt="AI Robot" className="w-5 h-5 rounded-md object-cover overflow-hidden" /> {pousadaName}
         </p>
       </div>
 

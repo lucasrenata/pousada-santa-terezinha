@@ -106,9 +106,9 @@ def get_storage_metrics(db: Session = Depends(get_db)):
 
 @router.get("/tenants", dependencies=[Depends(get_current_superadmin)])
 def list_tenants(db: Session = Depends(get_db)):
-    """Lista detalhada de pousadas para gestão"""
+    """Lista detalhada de pousadas para gestão (Exclui a Matriz)"""
     set_tenant_context(db, -1)
-    tenants = db.query(models.Tenant).order_by(models.Tenant.created_at.desc()).all()
+    tenants = db.query(models.Tenant).filter(models.Tenant.name != "ParcerIA (Plataforma)").order_by(models.Tenant.created_at.desc()).all()
     
     # Adicionamos contagem rápida de usuários por tenant
     report = []
@@ -137,26 +137,35 @@ def toggle_tenant(tenant_id: int, db: Session = Depends(get_db)):
 
 @router.get("/config", dependencies=[Depends(get_current_superadmin)])
 def get_platform_config(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_superadmin)):
-    """Busca as chaves de faturamento da plataforma (Master Tenant)"""
+    """Busca as chaves de faturamento e taxas da plataforma (Master Tenant)"""
     if not current_user.tenant_id:
          raise HTTPException(status_code=400, detail="Usuário SuperAdmin não vinculado a um Tenant de plataforma.")
     
+    # Busca a taxa de setup nos SystemSettings do Master
+    fee_setting = db.query(models.SystemSetting).filter(
+        models.SystemSetting.tenant_id == current_user.tenant_id,
+        models.SystemSetting.key == "platform_setup_fee"
+    ).first()
+    fee = float(fee_setting.value) if fee_setting else 49.90
+
     config = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_id == current_user.tenant_id).first()
     if not config:
-        return {"mp_access_token": "", "mp_public_key": "", "manual_pix_key": ""}
+        return {"mp_access_token": "", "mp_public_key": "", "manual_pix_key": "", "platform_setup_fee": fee}
     
     return {
         "mp_access_token": config.mp_access_token or "",
         "mp_public_key": config.mp_public_key or "",
-        "manual_pix_key": config.manual_pix_key or ""
+        "manual_pix_key": config.manual_pix_key or "",
+        "platform_setup_fee": fee
     }
 
 @router.put("/config", dependencies=[Depends(get_current_superadmin)])
-def update_platform_config(config_data: Dict[str, str], db: Session = Depends(get_db), current_user: models.User = Depends(get_current_superadmin)):
-    """Atualiza as chaves de faturamento da plataforma"""
+def update_platform_config(config_data: Dict[str, any], db: Session = Depends(get_db), current_user: models.User = Depends(get_current_superadmin)):
+    """Atualiza as chaves de faturamento e taxas da plataforma"""
     if not current_user.tenant_id:
          raise HTTPException(status_code=400, detail="Usuário SuperAdmin não vinculado a um Tenant de plataforma.")
     
+    # 1. Atualiza TenantConfig (MP Keys e PIX)
     config = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_id == current_user.tenant_id).first()
     if not config:
         config = models.TenantConfig(tenant_id=current_user.tenant_id)
@@ -166,5 +175,26 @@ def update_platform_config(config_data: Dict[str, str], db: Session = Depends(ge
     if "mp_public_key" in config_data: config.mp_public_key = config_data["mp_public_key"]
     if "manual_pix_key" in config_data: config.manual_pix_key = config_data["manual_pix_key"]
     
+    # 2. Atualiza Taxa de Setup nos SystemSettings do Master
+    if "platform_setup_fee" in config_data:
+        fee_key = "platform_setup_fee"
+        fee_value = str(config_data["platform_setup_fee"])
+        
+        setting = db.query(models.SystemSetting).filter(
+            models.SystemSetting.tenant_id == current_user.tenant_id,
+            models.SystemSetting.key == fee_key
+        ).first()
+        
+        if setting:
+            setting.value = fee_value
+        else:
+            new_setting = models.SystemSetting(
+                tenant_id=current_user.tenant_id,
+                key=fee_key,
+                value=fee_value,
+                description="Taxa de configuração cobrada de novas pousadas no Signup"
+            )
+            db.add(new_setting)
+
     db.commit()
     return {"success": True}

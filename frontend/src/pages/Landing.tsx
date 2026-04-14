@@ -43,7 +43,7 @@ export default function Landing() {
             <span className="mr-2">✨</span> IA Generativa aplicada à hotelaria
           </div>
           <h1 className="text-5xl md:text-7xl font-black text-slate-900 tracking-tight leading-[0.9] mb-6">
-            Sua pousada no <br /> 
+            Seu negócio no <br /> 
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-600">piloto automático.</span>
           </h1>
           <p className="text-lg md:text-xl text-slate-500 max-w-2xl mx-auto mb-10 leading-relaxed font-medium">
@@ -115,7 +115,7 @@ export default function Landing() {
         <div className="max-w-7xl mx-auto px-4">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
             <div className="space-y-6">
-               <h2 className="text-4xl font-black text-slate-900 leading-tight">Um preço justo, <br/> para pousadas de <br/> todos os tamanhos.</h2>
+               <h2 className="text-4xl font-black text-slate-900 leading-tight">Um preço justo, <br/> para negócios de <br/> todos os tamanhos.</h2>
                <div className="space-y-4">
                   <CheckItem text="Sem taxa de instalação" />
                   <CheckItem text="Atendimento via WhatsApp incluso" />

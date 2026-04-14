@@ -30,6 +30,8 @@ target_metadata = models.Base.metadata
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"))
 alembic_db_url = os.getenv("DATABASE_URL")
 if alembic_db_url:
+    # Escape % for configparser interpolation
+    alembic_db_url = alembic_db_url.replace("%", "%%")
     config.set_main_option("sqlalchemy.url", alembic_db_url)
 
 # other values from the config, defined by the needs of env.py,

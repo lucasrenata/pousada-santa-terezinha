@@ -26,8 +26,8 @@ def seed_data():
         default_settings = [
             {"key": "pousada_rate_child_percentage", "value": "50", "description": "Porcentagem da diária para crianças de 7-12 anos"},
             {"key": "pousada_rate_infant_fixed", "value": "25", "description": "Valor fixo diário para crianças de 0-6 anos"},
-            {"key": "pousada_name", "value": "Pousada System", "description": "Nome oficial da pousada"},
-            {"key": "pousada_phone", "value": "(11) 99999-9999", "description": "Telefone de contato"}
+            {"key": "pousada_name", "value": "Estabelecimento", "description": "Nome oficial do estabelecimento (ex: Hotel, Pousada, Hostel)"},
+            {"key": "pousada_phone", "value": "(11) 99999-9999", "description": "Telefone de contato público"}
         ]
         
         for s in default_settings:

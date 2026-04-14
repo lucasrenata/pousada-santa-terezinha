@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, Enum, ForeignKey, DateTime, Text, Date, JSON
+from sqlalchemy import Column, Integer, String, Float, Boolean, Enum, ForeignKey, DateTime, Text, Date, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
 from database import Base
 import enum
@@ -264,9 +264,12 @@ class SystemSetting(Base, TenantMixin):
     Ex: {"key": "child_price_percentage", "value": "0.5"}
     """
     __tablename__ = "settings"
+    __table_args__ = (
+        UniqueConstraint('key', 'tenant_id', name='uq_settings_key_tenant'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    key = Column(String, unique=True, index=True)   # A chave única da config
+    key = Column(String, index=True)   # A chave única da config POR TENANT
     value = Column(String)                          # O valor (sempre string, converte no uso)
     description = Column(String, nullable=True)     # Para o Admin saber o que é
 

@@ -52,6 +52,11 @@ class SignupRequest(BaseModel):
     admin_email: str
     admin_password: str
 
+class SignupResponse(BaseModel):
+    user: UserResponse
+    payment_url: Optional[str] = None
+    tenant_id: int
+
 class FieldValidationRequest(BaseModel):
     field: str # 'username' or 'email'
     value: str
