@@ -43,9 +43,22 @@ export default function Signup() {
       }, 1500);
       
     } catch (err: any) {
+      console.error("Erro no cadastro:", err);
+      
+      let errorMessage = "Verifique os dados e tente novamente.";
+      
+      if (err.response?.status === 404) {
+        errorMessage = "O servidor de cadastro não foi encontrado (404). Contate o suporte.";
+      } else if (err.response?.data?.detail) {
+        const detail = err.response.data.detail;
+        errorMessage = typeof detail === 'string' ? detail : JSON.stringify(detail);
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+
       toast({
         title: "Erro no cadastro",
-        description: err.response?.data?.detail || "Verifique os dados e tente novamente.",
+        description: errorMessage,
         variant: "destructive"
       });
     } finally {

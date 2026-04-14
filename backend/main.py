@@ -41,7 +41,7 @@ app.add_middleware(
 )
 
 # --- CONEXÃO DOS MÓDULOS (ROUTERS) ---
-app.include_router(auth.router)
+app.include_router(auth.router, prefix="/auth")
 app.include_router(guests.router)
 app.include_router(rooms.router)
 app.include_router(bookings.router)
