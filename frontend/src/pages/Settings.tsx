@@ -335,6 +335,23 @@ export default function Settings() {
                   </div>
                 </div>
 
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Nome da IA de Atendimento (Persona)</label>
+                  <div className="flex gap-2">
+                    <Input 
+                      placeholder="Ex: Ana, Maria, Recepcionista Virtual"
+                      value={getSettingValue('ai_receptionist_name') || 'Ana'} 
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setLocalValue('ai_receptionist_name', e.target.value)}
+                    />
+                    <Button 
+                      onClick={() => handleUpdateSetting('ai_receptionist_name', getSettingValue('ai_receptionist_name'), 'Nome que a IA usará para se apresentar aos hóspedes')}
+                      disabled={saving}
+                    >
+                      <Save className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+
                 <div className="pt-4 border-t border-slate-100">
                   <div className="space-y-2">
                     <label className="text-sm font-medium">Link de Atendimento (Hóspedes)</label>
