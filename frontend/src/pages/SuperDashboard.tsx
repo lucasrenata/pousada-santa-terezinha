@@ -13,7 +13,8 @@ import {
   Calendar,
   X,
   CreditCard,
-  Target
+  Target,
+  UserCog
 } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
 
