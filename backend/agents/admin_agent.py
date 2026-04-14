@@ -208,7 +208,8 @@ def pdf_generator_logic(tenant_id: int, report_type: str) -> dict:
     """Lógica atômica e motor de geração de arquivos PDF analíticos."""
     with SessionLocal() as db:
         set_tenant_context(db, tenant_id)
-        base_url = os.getenv("BASE_URL", "http://localhost:8000")
+        # Usa /api como padrão para que o link funcione no proxy da VPS.
+        base_url = os.getenv("BASE_URL", "/api")
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
         
         if report_type == "finance":

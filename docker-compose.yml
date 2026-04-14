@@ -37,7 +37,7 @@ services:
       # O backend usa esta URL para conectar no Postgres do compose
       DATABASE_URL: postgresql://admin:admin_password_123@db:5432/pousada_db
       # URLs Públicas para Webhooks e Autenticações
-      BASE_URL: http://localhost:8003
+      BASE_URL: /api
       NOTIFICATION_URL: http://localhost:8003/payments/webhook
     ports:
       - "8003:8000"
