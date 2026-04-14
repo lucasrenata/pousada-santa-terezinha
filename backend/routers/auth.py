@@ -14,7 +14,7 @@ SECRET_KEY = os.getenv("SECRET_KEY", "dev_change_this_secret")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
 
 # Funções Auxiliares (Usando bcrypt diretamente para evitar bugs de versão)
 def verify_password(plain, hashed):
