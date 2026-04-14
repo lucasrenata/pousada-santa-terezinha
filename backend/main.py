@@ -15,8 +15,8 @@ import models
 from routers import auth, guests, rooms, bookings, products, finance, settings, payments, admin, chat, events, webhook_whatsapp, business_rules, superadmin
 import sys
 
-# Tabelas no banco agora são gerenciadas automaticamente ao iniciar.
-models.Base.metadata.create_all(bind=engine)
+# Tabelas no banco agora são gerenciadas via Alembic Migrations.
+# models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Pousada System Modular", version="1.0.0")
 

@@ -1,10 +1,17 @@
 import { format } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
-import { Calendar, Users, CreditCard, Clock, UserPlus, Phone, Mail, Edit, Trash2 } from 'lucide-react';
+import { ptBR } from 'date-fns'; // Locale para datas (opcional se não usar format)
+import { Calendar, Users, CreditCard, Clock, UserPlus, Phone, Mail, Edit, Trash2, Eye, FileText, CheckCircle2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Reservation } from '@/hooks/useReservations';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 // Utilitários de formatação locais para evitar erros de importação
 const formatCurrency = (val: number) => 
@@ -64,10 +71,17 @@ const paymentVariants: Record<string, any> = {
 };
 
 export function ReservationCard({ reservation, onEdit, onDelete, onCheckIn, onCheckOut }: ReservationCardProps) {
+  const hasReceipt = !!reservation.payment_receipt_url;
+  const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8003';
+  const receiptFullUrl = reservation.payment_receipt_url ? `${apiBaseUrl}${reservation.payment_receipt_url}` : null;
+
   return (
-    <Card className="w-full hover:shadow-lg transition-all duration-300 relative overflow-hidden bg-white border-slate-200">
+    <Card className={`w-full hover:shadow-lg transition-all duration-300 relative overflow-hidden bg-white ${
+      hasReceipt ? 'border-green-200 shadow-green-50/50 border-2' : 'border-slate-200'
+    }`}>
       {/* Marcador Lateral de Status */}
-      <div className={`absolute left-0 top-0 bottom-0 w-1 ${
+      <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${
+        hasReceipt ? 'bg-green-500 shadow-[2px_0_10px_rgba(34,197,94,0.3)]' :
         reservation.status === 'ativo' ? 'bg-green-500' : 
         reservation.status === 'confirmado' ? 'bg-blue-500' : 
         reservation.status === 'pendente' ? 'bg-yellow-500' : 'bg-slate-300'
@@ -77,10 +91,11 @@ export function ReservationCard({ reservation, onEdit, onDelete, onCheckIn, onCh
         {/* Header: Cliente e Status */}
         <div className="flex justify-between items-start">
           <div className="space-y-0.5">
-            <h3 className="font-bold text-slate-800 text-lg leading-tight">
+            <h3 className="font-bold text-slate-800 text-lg leading-tight flex items-center gap-2">
               {reservation.guest_name}
+              {hasReceipt && <CheckCircle2 size={16} className="text-green-500" title="Comprovante Enviado" />}
               {reservation.guest_age !== undefined && reservation.guest_age !== null && (
-                <span className="ml-2 text-sm font-normal text-slate-500">
+                <span className="ml-1 text-sm font-normal text-slate-500">
                   ({reservation.guest_age} anos)
                 </span>
               )}
@@ -95,6 +110,39 @@ export function ReservationCard({ reservation, onEdit, onDelete, onCheckIn, onCh
             </div>
           </div>
           <div className="flex gap-1">
+            {hasReceipt && (
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50">
+                    <Eye size={18} />
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[500px] border-none shadow-2xl overflow-hidden p-0 bg-slate-950">
+                  <DialogHeader className="p-4 bg-white/10 backdrop-blur-md absolute top-0 left-0 right-0 z-10 border-b border-white/10">
+                    <DialogTitle className="text-white flex items-center gap-2">
+                      <FileText size={18} /> Comprovante de Pagamento - #{reservation.id}
+                    </DialogTitle>
+                  </DialogHeader>
+                  <div className="flex items-center justify-center p-2 pt-16 min-h-[300px]">
+                    {reservation.payment_receipt_url?.toLowerCase().endsWith('.pdf') ? (
+                      <div className="text-center p-10 space-y-4">
+                        <FileText size={64} className="text-blue-400 mx-auto" />
+                        <p className="text-white text-sm">Este comprovante é um PDF.</p>
+                        <Button asChild>
+                           <a href={receiptFullUrl!} target="_blank" rel="noreferrer">Abrir PDF em nova aba</a>
+                        </Button>
+                      </div>
+                    ) : (
+                      <img 
+                        src={receiptFullUrl!} 
+                        alt="Comprovante" 
+                        className="max-h-[70vh] w-auto object-contain rounded-lg shadow-2xl"
+                      />
+                    )}
+                  </div>
+                </DialogContent>
+              </Dialog>
+            )}
             <Button variant="ghost" size="icon" onClick={() => onEdit?.(reservation)} className="h-8 w-8 text-slate-400 hover:text-blue-600">
               <Edit size={16} />
             </Button>

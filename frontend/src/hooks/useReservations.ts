@@ -22,6 +22,7 @@ export interface Reservation {
   check_in_time?: string;
   check_out_time?: string;
   notes?: string;
+  payment_receipt_url?: string;
   companions: Companion[];
 }
 
