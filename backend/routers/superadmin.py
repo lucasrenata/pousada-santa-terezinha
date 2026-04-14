@@ -5,7 +5,7 @@ from database import get_db, set_tenant_context
 from .auth import get_current_user
 import models
 import psutil
-from typing import List, Dict
+from typing import List, Dict, Any
 
 router = APIRouter(prefix="/super", tags=["SuperAdmin Console"])
 
@@ -160,7 +160,7 @@ def get_platform_config(db: Session = Depends(get_db), current_user: models.User
     }
 
 @router.put("/config", dependencies=[Depends(get_current_superadmin)])
-def update_platform_config(config_data: Dict[str, any], db: Session = Depends(get_db), current_user: models.User = Depends(get_current_superadmin)):
+def update_platform_config(config_data: Dict[str, Any], db: Session = Depends(get_db), current_user: models.User = Depends(get_current_superadmin)):
     """Atualiza as chaves de faturamento e taxas da plataforma"""
     if not current_user.tenant_id:
          raise HTTPException(status_code=400, detail="Usuário SuperAdmin não vinculado a um Tenant de plataforma.")
