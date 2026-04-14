@@ -14,7 +14,9 @@ import {
   X,
   CreditCard,
   Target,
-  UserCog
+  UserCog,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
 
@@ -50,6 +52,7 @@ export default function SuperDashboard() {
   const [showProfile, setShowProfile] = useState(false);
   const [profileData, setProfileData] = useState({ username: '', full_name: '', email: '', password: '' });
   const [passwordError, setPasswordError] = useState('');
+  const [deletingTenant, setDeletingTenant] = useState<Tenant | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -102,6 +105,19 @@ export default function SuperDashboard() {
       toast({ title: "Status do tenant alterado" });
     } catch (err) {
       toast({ title: "Erro ao alterar status", variant: "destructive" });
+    }
+  }
+
+  async function deleteTenant(id: number) {
+    try {
+      await api.delete(`/super/tenants/${id}`);
+      setTenants(prev => prev.filter(t => t.id !== id));
+      setDeletingTenant(null);
+      toast({ title: "Pousada removida permanentemente.", variant: "destructive" });
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || "Erro ao remover pousada";
+      toast({ title: msg, variant: "destructive" });
+      setDeletingTenant(null);
     }
   }
 
@@ -491,6 +507,13 @@ export default function SuperDashboard() {
                        >
                          {t.is_active ? <Lock size={18} /> : <Unlock size={18} />}
                        </button>
+                       <button 
+                         onClick={() => setDeletingTenant(t)}
+                         className="p-2 rounded-lg border-2 border-slate-100 text-slate-300 hover:border-red-200 hover:text-red-500 hover:bg-red-50 transition-all"
+                         title="Remover pousada permanentemente"
+                       >
+                         <Trash2 size={18} />
+                       </button>
                     </div>
                   </td>
                 </tr>
@@ -500,6 +523,44 @@ export default function SuperDashboard() {
         </div>
       </div>
     </div>
+
+    {/* Modal de Confirmação de Exclusão */}
+    {deletingTenant && (
+      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] backdrop-blur-sm">
+        <div className="bg-white p-8 rounded-3xl shadow-2xl w-full max-w-sm mx-4 border-2 border-red-100">
+          <div className="flex flex-col items-center text-center gap-4">
+            <div className="bg-red-100 p-4 rounded-2xl">
+              <AlertTriangle size={32} className="text-red-600" />
+            </div>
+            <div>
+              <h2 className="text-xl font-black text-slate-800">Remover Pousada?</h2>
+              <p className="text-slate-500 text-sm mt-2">
+                Você está prestes a deletar permanentemente
+                <span className="font-black text-slate-800 block mt-1">&ldquo;{deletingTenant.name}&rdquo;</span>
+              </p>
+              <p className="text-xs text-red-500 font-bold mt-3 bg-red-50 p-3 rounded-xl">
+                ⚠️ Todos os usuários e dados serão removidos. Esta ação é irreversível.
+              </p>
+            </div>
+            <div className="flex gap-3 w-full">
+              <button
+                onClick={() => setDeletingTenant(null)}
+                className="flex-1 py-3 rounded-2xl border-2 border-slate-200 font-bold text-slate-600 hover:bg-slate-50 transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => deleteTenant(deletingTenant.id)}
+                className="flex-1 py-3 rounded-2xl bg-red-600 text-white font-black hover:bg-red-700 transition-all active:scale-95"
+              >
+                Sim, Remover
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+  </div>
   );
 }
 

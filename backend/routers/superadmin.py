@@ -135,6 +135,36 @@ def toggle_tenant(tenant_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"id": tenant.id, "new_active_status": tenant.is_active}
 
+@router.delete("/tenants/{tenant_id}", dependencies=[Depends(get_current_superadmin)])
+def delete_tenant(tenant_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_superadmin)):
+    """Remove permanentemente uma pousada e todos os seus dados"""
+    set_tenant_context(db, -1)
+    
+    # Proteção: não pode deletar a Matriz/Plataforma
+    tenant = db.query(models.Tenant).get(tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant não encontrado")
+    
+    if tenant.name == "ParcerIA (Plataforma)":
+        raise HTTPException(status_code=403, detail="Não é permitido remover o Tenant da Plataforma.")
+    
+    # Proteção: não pode deletar o tenant do próprio superadmin logado
+    if current_user.tenant_id == tenant_id:
+        raise HTTPException(status_code=403, detail="Você não pode remover o seu próprio tenant.")
+
+    # Exclusão em cascata (dados do tenant) usando context global
+    set_tenant_context(db, -1)
+    
+    # Remove registros de dados em ordem (respeitando FKs)
+    db.query(models.SystemSetting).filter(models.SystemSetting.tenant_id == tenant_id).delete()
+    db.query(models.TenantConfig).filter(models.TenantConfig.tenant_id == tenant_id).delete()
+    db.query(models.Revenue).filter(models.Revenue.tenant_id == tenant_id).delete(synchronize_session=False)
+    db.query(models.User).filter(models.User.tenant_id == tenant_id).delete(synchronize_session=False)
+    db.delete(tenant)
+    db.commit()
+    
+    return {"success": True, "deleted_tenant_id": tenant_id}
+
 @router.get("/config", dependencies=[Depends(get_current_superadmin)])
 def get_platform_config(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_superadmin)):
     """Busca as chaves de faturamento e taxas da plataforma (Master Tenant)"""
