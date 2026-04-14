@@ -1,12 +1,14 @@
 import os
 import bcrypt
-from database import SessionLocal
+from database import SessionLocal, set_tenant_context
 import models
 from datetime import datetime
 
 def create_superadmin():
     db = SessionLocal()
     try:
+        # Ativa visão global para o script
+        set_tenant_context(db, -1)
         # 1. Garante a existência do Tenant Mestre (Plataforma)
         platform_tenant = db.query(models.Tenant).filter(models.Tenant.name == "ParcerIA (Plataforma)").first()
         if not platform_tenant:
