@@ -9,6 +9,21 @@ from typing import List, Dict, Any
 
 router = APIRouter(prefix="/super", tags=["SuperAdmin Console"])
 
+@router.get("/public/pricing")
+def get_public_pricing(db: Session = Depends(get_db)):
+    """Endpoint público para expor a taxa de setup configurada pelo SuperAdmin"""
+    set_tenant_context(db, -1)
+    platform_tenant = db.query(models.Tenant).filter(models.Tenant.name == "ParcerIA (Plataforma)").first()
+    platform_tenant_id = platform_tenant.id if platform_tenant else 1
+    
+    fee_setting = db.query(models.SystemSetting).filter(
+        models.SystemSetting.tenant_id == platform_tenant_id,
+        models.SystemSetting.key == "platform_setup_fee"
+    ).first()
+    setup_fee = float(fee_setting.value) if fee_setting else 49.90
+    
+    return {"setup_fee": setup_fee}
+
 # Dependência para validar se é SuperAdmin
 async def get_current_superadmin(current_user: models.User = Depends(get_current_user)):
     if current_user.role != "superadmin":
