@@ -21,6 +21,7 @@ import SuperDashboard from './pages/SuperDashboard';
 import GuestLayout from './components/GuestLayout';
 import GuestChatPage from './pages/GuestChatPage';
 import GuestRegistrationPage from './pages/GuestRegistrationPage';
+import ProtectedRoute from './components/ProtectedRoute'; // <-- NOVO
 
 import { Toaster } from './components/ui/toaster';
 
@@ -42,22 +43,24 @@ function App() {
           <Route path="/:tenant_id/registrar" element={<GuestRegistrationPage />} />
         </Route>
 
-        {/* Rotas Privadas (Com Layout "ParcerIA") */}
-        <Route element={<MainLayout />}>
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/chat" element={<Chat />} />
-          <Route path="/rooms" element={<Rooms />} />
-          <Route path="/bookings" element={<Reservations />} />
-          <Route path="/bookings/new" element={<NewBooking />} />
-          <Route path="/bookings/summary" element={<BookingSummary />} />
-          <Route path="/inventory" element={<Inventory />} />
-          <Route path="/finance" element={<Finance />} />
-          <Route path="/payments" element={<Payments />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/events" element={<Events />} />
-          <Route path="/admin/users" element={<AdminUsers />} />
-          <Route path="/service" element={<ServicePanel />} />
-          <Route path="/super/dashboard" element={<SuperDashboard />} />
+        {/* Rotas PRIVADAS Protegidas */}
+        <Route element={<ProtectedRoute />}>
+          <Route element={<MainLayout />}>
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/chat" element={<Chat />} />
+            <Route path="/rooms" element={<Rooms />} />
+            <Route path="/bookings" element={<Reservations />} />
+            <Route path="/bookings/new" element={<NewBooking />} />
+            <Route path="/bookings/summary" element={<BookingSummary />} />
+            <Route path="/inventory" element={<Inventory />} />
+            <Route path="/finance" element={<Finance />} />
+            <Route path="/payments" element={<Payments />} />
+            <Route path="/settings" element={<Settings />} />
+            <Route path="/events" element={<Events />} />
+            <Route path="/admin/users" element={<AdminUsers />} />
+            <Route path="/service" element={<ServicePanel />} />
+            <Route path="/super/dashboard" element={<SuperDashboard />} />
+          </Route>
         </Route>
 
         {/* Redireciona qualquer rota doida para a Landing */}

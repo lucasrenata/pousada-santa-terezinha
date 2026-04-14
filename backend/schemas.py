@@ -52,6 +52,14 @@ class SignupRequest(BaseModel):
     admin_email: str
     admin_password: str
 
+class FieldValidationRequest(BaseModel):
+    field: str # 'username' or 'email'
+    value: str
+
+class FieldValidationResponse(BaseModel):
+    available: bool
+    message: Optional[str] = None
+
 # --- ROOMS ---
 class RoomBase(BaseModel):
     id: str # O ID agora é o número do quarto (ex: "101")

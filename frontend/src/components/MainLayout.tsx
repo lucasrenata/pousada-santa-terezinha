@@ -8,16 +8,16 @@ export default function MainLayout() {
   const location = useLocation();
   const role = localStorage.getItem('role');
   const menuItems = [
-    { label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard', roles: ['admin', 'recepcionista'] },
+    { label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard', roles: ['admin', 'recepcionista', 'servico'] },
     { label: 'Chat IA', icon: MessageSquare, path: '/chat', roles: ['admin'] },
-    { label: 'Quartos', icon: BedDouble, path: '/rooms', roles: ['admin', 'recepcionista'] },
+    { label: 'Quartos', icon: BedDouble, path: '/rooms', roles: ['admin', 'recepcionista', 'servico'] },
     { label: 'Reservas', icon: CalendarDays, path: '/bookings', roles: ['admin', 'recepcionista'] },
     { label: 'Estoque', icon: Package, path: '/inventory', roles: ['admin', 'recepcionista'] },
     { label: 'Receitas', icon: DollarSign, path: '/finance', roles: ['admin'] },
     { label: 'Eventos', icon: CalendarHeart, path: '/events', roles: ['admin', 'recepcionista'] },
     { label: 'Usuários', icon: Users, path: '/admin/users', roles: ['admin'] },
     { label: 'Configurações', icon: Settings, path: '/settings', roles: ['admin'] },
-    { label: 'Serviços', icon: Wrench, path: '/service', roles: ['admin', 'recepcionista', 'manutencao', 'faxina', 'camareira'] },
+    { label: 'Serviços', icon: Wrench, path: '/service', roles: ['admin', 'recepcionista', 'servico'] },
     { label: 'Console SaaS', icon: ShieldCheck, path: '/super/dashboard', roles: ['superadmin'] },
   ];
 
@@ -25,17 +25,16 @@ export default function MainLayout() {
 
   // Bloqueio de rota no layout (se o cara tentar entrar em rota proibida via URL)
   useEffect(() => {
-    const isProtectedPath = location.pathname !== '/service';
-    const isServiceStaff = role === 'manutencao' || role === 'faxina' || role === 'camareira';
+    const isServiceStaff = role === 'servico' || role === 'manutencao' || role === 'faxina' || role === 'camareira';
     const isRecepcionista = role === 'recepcionista';
     
-    // Rotas bloqueadas para recepcionista
+    // Rotas bloqueadas para recepcionista e serviço
     const forbiddenForRecepcionista = ['/finance', '/chat', '/admin', '/settings'];
-    const isForbidden = forbiddenForRecepcionista.some(path => location.pathname.startsWith(path));
+    const permittedForService = ['/service', '/rooms', '/dashboard'];
 
-    if (role && isServiceStaff && isProtectedPath) {
+    if (role && isServiceStaff && !permittedForService.includes(location.pathname)) {
       navigate('/service', { replace: true });
-    } else if (role && isRecepcionista && isForbidden) {
+    } else if (role && isRecepcionista && forbiddenForRecepcionista.some(path => location.pathname.startsWith(path))) {
       navigate('/dashboard', { replace: true });
     }
   }, [role, location.pathname, navigate]);

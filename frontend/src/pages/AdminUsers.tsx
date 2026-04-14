@@ -17,6 +17,24 @@ export default function AdminUsers() {
   const [editingUserId, setEditingUserId] = useState<number | null>(null);
   const [newUser, setNewUser] = useState({ username: '', full_name: '', email: '', password: '', role: 'recepcionista' });
   const [passwordError, setPasswordError] = useState('');
+  const [usernameError, setUsernameError] = useState('');
+  const [emailError, setEmailError] = useState('');
+
+  const checkAvailability = async (field: 'username' | 'email', value: string) => {
+    if (!value || editingUserId) return; // Don't check if empty or editing
+    try {
+      const response = await api.post('/auth/validate-field', { field, value });
+      if (!response.data.available) {
+        if (field === 'username') setUsernameError(response.data.message);
+        else setEmailError(response.data.message);
+      } else {
+        if (field === 'username') setUsernameError('');
+        else setEmailError('');
+      }
+    } catch (err) {
+      console.error("Erro na validação:", err);
+    }
+  };
 
   useEffect(() => {
     fetchUsers();
@@ -78,6 +96,8 @@ export default function AdminUsers() {
       setNewUser({ username: '', full_name: '', email: '', password: '', role: 'recepcionista' });
     }
     setPasswordError('');
+    setUsernameError('');
+    setEmailError('');
     setShowModal(true);
   };
 
@@ -139,8 +159,11 @@ export default function AdminUsers() {
                 <td className="px-6 py-4">
                   <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium capitalize 
                     ${user.role === 'admin' ? 'bg-purple-100 text-purple-700' : 
-                      user.role === 'recepcionista' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
-                    {user.role}
+                      user.role === 'recepcionista' ? 'bg-blue-100 text-blue-700' : 
+                      user.role === 'servico' ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-700'}`}>
+                    {user.role === 'admin' ? 'Gerente' : 
+                     user.role === 'recepcionista' ? 'Recepcionista' : 
+                     user.role === 'servico' ? 'Serviços' : user.role}
                   </span>
                 </td>
                 <td className="px-6 py-4 text-right flex justify-end gap-3">
@@ -202,8 +225,13 @@ export default function AdminUsers() {
                   className="w-full border rounded-xl px-4 py-2 focus:ring-2 ring-blue-500 outline-none border-slate-200"
                   placeholder="ex: joao@pousada.com"
                   value={newUser.email}
-                  onChange={(e) => setNewUser({...newUser, email: e.target.value})}
+                  onChange={(e) => {
+                    setNewUser({...newUser, email: e.target.value});
+                    setEmailError('');
+                  }}
+                  onBlur={(e) => checkAvailability('email', e.target.value)}
                 />
+                {emailError && <p className="mt-1 text-[10px] text-red-500 font-bold uppercase">{emailError}</p>}
               </div>
 
               <div>
@@ -215,8 +243,13 @@ export default function AdminUsers() {
                   className="w-full border rounded-xl px-4 py-2 focus:ring-2 ring-blue-500 outline-none border-slate-200 disabled:bg-slate-100 disabled:text-slate-500"
                   placeholder="ex: joao.silva"
                   value={newUser.username}
-                  onChange={(e) => setNewUser({...newUser, username: e.target.value})}
+                  onChange={(e) => {
+                    setNewUser({...newUser, username: e.target.value});
+                    setUsernameError('');
+                  }}
+                  onBlur={(e) => checkAvailability('username', e.target.value)}
                 />
+                {usernameError && <p className="mt-1 text-[10px] text-red-500 font-bold uppercase">{usernameError}</p>}
               </div>
 
               <div>
@@ -246,10 +279,9 @@ export default function AdminUsers() {
                   value={newUser.role}
                   onChange={(e) => setNewUser({...newUser, role: e.target.value})}
                 >
-                  <option value="recepcionista">Recepcionista</option>
-                  <option value="manutencao">Manutenção (Apenas Quarto Status)</option>
-                  <option value="faxina">Faxina / Limpeza (Apenas Quarto Status)</option>
-                  <option value="admin">Administrador (Total)</option>
+                  <option value="admin">Gerente (Acesso Total)</option>
+                  <option value="recepcionista">Recepcionista (Operacional)</option>
+                  <option value="servico">Serviços (Limpeza/Manutenção)</option>
                 </select>
               </div>
 

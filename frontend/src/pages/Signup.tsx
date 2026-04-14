@@ -18,6 +18,24 @@ export default function Signup() {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [passwordError, setPasswordError] = useState('');
+  const [usernameError, setUsernameError] = useState('');
+  const [emailError, setEmailError] = useState('');
+
+  const checkAvailability = async (field: 'username' | 'email', value: string) => {
+    if (!value) return;
+    try {
+      const response = await api.post('/auth/validate-field', { field, value });
+      if (!response.data.available) {
+        if (field === 'username') setUsernameError(response.data.message);
+        else setEmailError(response.data.message);
+      } else {
+        if (field === 'username') setUsernameError('');
+        else setEmailError('');
+      }
+    } catch (err) {
+      console.error("Erro na validação:", err);
+    }
+  };
 
   const onSubmit = async (data: FormData) => {
     // Validação de senha forte
@@ -132,12 +150,17 @@ export default function Signup() {
                 <div className="flex items-center border-2 border-slate-100 bg-slate-50 rounded-2xl px-4 py-3.5 focus-within:border-blue-500 transition-colors">
                   <Mail size={20} className="text-slate-400 mr-3" />
                   <input 
-                    {...register("admin_email", { required: true, pattern: /^\S+@\S+$/i })} 
+                    {...register("admin_email", { 
+                      required: true, 
+                      pattern: /^\S+@\S+$/i,
+                      onBlur: (e) => checkAvailability('email', e.target.value)
+                    })} 
                     type="email"
                     className="bg-transparent outline-none w-full font-semibold text-slate-800" 
                     placeholder="Ex: carlos@pousada.com" 
                   />
                 </div>
+                {emailError && <span className="text-[10px] text-red-500 font-bold ml-1 uppercase">{emailError}</span>}
               </div>
 
               {/* Username Admin */}
@@ -146,11 +169,15 @@ export default function Signup() {
                 <div className="flex items-center border-2 border-slate-100 bg-slate-50 rounded-2xl px-4 py-3.5 focus-within:border-blue-500 transition-colors">
                   <User size={20} className="text-slate-400 mr-3" />
                   <input 
-                    {...register("admin_username", { required: true })} 
+                    {...register("admin_username", { 
+                      required: true,
+                      onBlur: (e) => checkAvailability('username', e.target.value)
+                    })} 
                     className="bg-transparent outline-none w-full font-semibold text-slate-800" 
                     placeholder="Ex: admin_joao" 
                   />
                 </div>
+                {usernameError && <span className="text-[10px] text-red-500 font-bold ml-1 uppercase">{usernameError}</span>}
               </div>
 
               {/* Senha */}

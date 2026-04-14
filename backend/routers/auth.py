@@ -10,6 +10,25 @@ from database import get_db, set_tenant_context
 
 router = APIRouter(tags=["Auth"])
 
+# ... (Previous constants)
+
+@router.post("/validate-field", response_model=schemas.FieldValidationResponse)
+def validate_field(request: schemas.FieldValidationRequest, db: Session = Depends(get_db)):
+    """Valida se username ou email já estão em uso (Visão Global)"""
+    set_tenant_context(db, -1)
+    
+    if request.field == "username":
+        exists = db.query(models.User).filter(models.User.username == request.value).first()
+        if exists:
+            return {"available": False, "message": "Este nome de usuário já está em uso"}
+    
+    elif request.field == "email":
+        exists = db.query(models.User).filter(models.User.email == request.value).first()
+        if exists:
+            return {"available": False, "message": "Este e-mail já está cadastrado"}
+            
+    return {"available": True, "message": "Disponível"}
+
 SECRET_KEY = os.getenv("SECRET_KEY", "dev_change_this_secret")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
@@ -35,6 +54,10 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         username: str = payload.get("sub")
         if username is None: raise credentials_exception
     except JWTError: raise credentials_exception
+    
+    # CRÍTICO: Ativa visão global para encontrar o usuário (RLS bloqueia se tenant_id=0)
+    set_tenant_context(db, -1)
+    
     user = db.query(models.User).filter(models.User.username == username).first()
     if user is None: raise credentials_exception
     
@@ -53,24 +76,35 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     return user
 
 async def get_current_admin(current_user: models.User = Depends(get_current_user)):
-    # Permite acesso para admin e superadmin
+    """Acesso nível GERENTE: Pode gerenciar equipe, finanças e configurações."""
     if current_user.role not in ["admin", "superadmin"]:
-        raise HTTPException(status_code=403, detail="Acesso restrito ao administrador")
+        raise HTTPException(status_code=403, detail="Acesso restrito ao Gerente/Administrador")
+    return current_user
+
+async def get_current_receptionist(current_user: models.User = Depends(get_current_user)):
+    """Acesso nível RECEPCIONISTA: Pode ver reservas, quartos e hóspedes."""
+    allowed = ["superadmin", "admin", "recepcionista"]
+    if current_user.role not in allowed:
+        raise HTTPException(status_code=403, detail="Acesso exclusivo para Recepção ou Gerência")
     return current_user
 
 async def get_current_staff(current_user: models.User = Depends(get_current_user)):
-    # Permite superadmin, admin e recepcionista para quase tudo
-    allowed_roles = ["superadmin", "admin", "recepcionista", "manutencao", "faxina", "camareira"]
-    if current_user.role not in allowed_roles:
-        raise HTTPException(status_code=403, detail="Acesso negado")
+    """Acesso nível STAFF/SERVIÇOS: Acesso operacional básico (Limpeza/Manutenção)."""
+    allowed = ["superadmin", "admin", "recepcionista", "servico", "faxina", "camareira", "manutencao"]
+    if current_user.role not in allowed:
+        raise HTTPException(status_code=403, detail="Acesso negado para este nível de serviço")
     return current_user
 
 import re
 
 @router.post("/signup", response_model=schemas.UserResponse)
 def signup(request: schemas.SignupRequest, db: Session = Depends(get_db)):
-    """Fluxo de Auto-Cadastro: Cria Tenant e Admin"""
-    # 1. Valida se usuário já existe
+    """Fluxo de Auto-Cadastro: Cria Tenant e Admin (Atômico)"""
+    # 0. Ativa o bypass (-1) para validação global e criação do ambiente
+    from database import set_tenant_context
+    set_tenant_context(db, -1)
+
+    # 1. Valida se usuário já existe (Agora com visão global)
     if db.query(models.User).filter(models.User.username == request.admin_username).first():
         raise HTTPException(status_code=400, detail="Nome de usuário já está em uso")
     
@@ -81,28 +115,37 @@ def signup(request: schemas.SignupRequest, db: Session = Depends(get_db)):
     if len(request.admin_password) < 8 or not re.search(r"[a-z]", request.admin_password) or not re.search(r"[A-Z]", request.admin_password) or not re.search(r"[0-9]", request.admin_password) or not re.search(r"[!@#$%^&*(),.?\":{}|<>]", request.admin_password):
         raise HTTPException(status_code=400, detail="A senha deve conter no mínimo 8 caracteres, uma letra maiúscula, uma minúscula, um número e um caractere especial.")
     
-    # 2. Cria o Tenant (Pousada)
-    new_tenant = models.Tenant(name=request.pousada_name)
-    db.add(new_tenant)
-    db.commit()
-    db.refresh(new_tenant)
-    
-    # 3. Cria o Usuário Admin vinculado ao Tenant
-    new_user = models.User(
-        username=request.admin_username, 
-        full_name=request.admin_full_name,
-        email=request.admin_email,
-        password_hash=get_password_hash(request.admin_password), 
-        role="admin",
-        tenant_id=new_tenant.id
-    )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    
-    # 4. Configuração Inicial (Ex: Moeda padrão, etc) - Opcional agora
-    
-    return new_user
+    try:
+        # 2. Cria o Tenant (Pousada)
+        new_tenant = models.Tenant(name=request.pousada_name)
+        db.add(new_tenant)
+        db.flush() # Gera o ID, mas não salva permanentemente ainda
+        
+        # 3. Cria o Usuário Admin vinculado ao Tenant
+        new_user = models.User(
+            username=request.admin_username, 
+            full_name=request.admin_full_name,
+            email=request.admin_email,
+            password_hash=get_password_hash(request.admin_password), 
+            role="admin",
+            tenant_id=new_tenant.id
+        )
+        db.add(new_user)
+        
+        # Consolida tudo de uma vez
+        db.commit()
+        db.refresh(new_user)
+        return new_user
+
+    except Exception as e:
+        db.rollback()
+        # Trata duplicidade que passou pela validação (race condition)
+        error_msg = str(e).lower()
+        if "ix_users_username" in error_msg or "username" in error_msg:
+            raise HTTPException(status_code=400, detail="Nome de usuário já está em uso")
+        if "ix_users_email" in error_msg or "email" in error_msg:
+            raise HTTPException(status_code=400, detail="E-mail já está em uso")
+        raise HTTPException(status_code=500, detail=f"Erro interno ao criar ambiente: {str(e)}")
 
 @router.post("/users/", response_model=schemas.UserResponse)
 def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
@@ -116,6 +159,10 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
 
 @router.post("/token", response_model=schemas.Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    # CRÍTICO: Ativa visão global para encontrar o usuário em qualquer tenant
+    # Sem isso, o RLS filtra todos os users (tenant_id=0 não existe)
+    set_tenant_context(db, -1)
+    
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
     if not user or not verify_password(form_data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Login incorreto")

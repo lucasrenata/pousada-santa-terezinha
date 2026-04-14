@@ -7,7 +7,7 @@ from typing import List, Optional
 import asyncio, json
 import models, schemas
 from database import get_db, set_tenant_context
-from .auth import get_current_staff
+from .auth import get_current_receptionist
 from utils.email_sender import send_booking_confirmation
 from utils.pricing import calculate_daily_rates_count, calculate_reservation_total
 
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/bookings", tags=["Bookings"])
 
 # 1. CRIAR RESERVA (Vem do Formulário Web)
 @router.post("/")
-async def create_booking(data: schemas.BookingCreate, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+async def create_booking(data: schemas.BookingCreate, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
     try:
         # --- VALIDAÇÃO DE CAPACIDADE MÁXIMA ---
         if data.room_id:
@@ -121,7 +121,7 @@ async def create_booking(data: schemas.BookingCreate, db: Session = Depends(get_
 
 # 2. CHECK-IN (Transforma reserva pendente em ativa)
 @router.post("/checkin")
-def check_in(data: schemas.CheckInRequest, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+def check_in(data: schemas.CheckInRequest, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
     booking = db.query(models.Booking).with_for_update().filter(models.Booking.id == data.booking_id).first()
     if not booking: 
         raise HTTPException(status_code=404, detail="Reserva não encontrada")
@@ -154,7 +154,7 @@ def check_in(data: schemas.CheckInRequest, db: Session = Depends(get_db), curren
 
 # 3. CHECK-OUT (Com lançamento no Financeiro)
 @router.post("/checkout/{room_id}")
-def check_out(room_id: str, data: schemas.CheckoutPaymentRequest, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+def check_out(room_id: str, data: schemas.CheckoutPaymentRequest, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
     booking = db.query(models.Booking).with_for_update().filter(
         models.Booking.room_id == room_id, 
         models.Booking.status == models.BookingStatus.ATIVO
@@ -222,7 +222,7 @@ def check_out(room_id: str, data: schemas.CheckoutPaymentRequest, db: Session = 
 
 # 3.1. RESUMO PARA CHECK-OUT (diárias x consumos)
 @router.get("/summary/{room_id}")
-def checkout_summary(room_id: str, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+def checkout_summary(room_id: str, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
     booking = db.query(models.Booking).filter(
         models.Booking.room_id == room_id, 
         models.Booking.status == models.BookingStatus.ATIVO
@@ -282,7 +282,7 @@ def checkout_summary(room_id: str, db: Session = Depends(get_db), current_user =
     }
 
 @router.get("/stats/today")
-def stats_today(db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+def stats_today(db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
     start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=1)
     checkins = db.query(models.Booking).filter(
@@ -298,7 +298,7 @@ def stats_today(db: Session = Depends(get_db), current_user = Depends(get_curren
     return {"checkins": int(checkins), "checkouts": int(checkouts)}
 
 @router.get("/stats/stream")
-async def stats_stream(db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+async def stats_stream(db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
     async def event_gen():
         while True:
             try:
@@ -324,7 +324,7 @@ async def stats_stream(db: Session = Depends(get_db), current_user = Depends(get
     return StreamingResponse(event_gen(), media_type="text/event-stream")
 # 4. LISTAR RESERVAS POR PERÍODO (para Calendário)
 @router.get("/", response_model=List[schemas.BookingResponse])
-def list_bookings(start: Optional[date] = None, end: Optional[date] = None, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+def list_bookings(start: Optional[date] = None, end: Optional[date] = None, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
     query = db.query(models.Booking)
     if start and end:
         query = query.filter(models.Booking.check_in_date <= end, models.Booking.check_out_date >= start)
@@ -362,7 +362,7 @@ def list_bookings(start: Optional[date] = None, end: Optional[date] = None, db: 
 
 # 5. BUSCAR RESERVA ATIVA POR QUARTO (para mostrar no modal de quarto)
 @router.get("/active/{room_id}")
-def get_active_booking(room_id: str, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+def get_active_booking(room_id: str, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
     booking = db.query(models.Booking).filter(
         models.Booking.room_id == room_id,
         models.Booking.status == models.BookingStatus.ATIVO
@@ -383,7 +383,7 @@ def get_active_booking(room_id: str, db: Session = Depends(get_db), current_user
     }
 
 @router.get("/availability", response_model=List[schemas.RoomResponse])
-def get_availability(start: datetime, end: datetime, guests: Optional[int] = None, exclude_booking_id: Optional[int] = None, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+def get_availability(start: datetime, end: datetime, guests: Optional[int] = None, exclude_booking_id: Optional[int] = None, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
     blocked_q = db.query(models.Booking.room_id).filter(
         models.Booking.room_id.isnot(None),
         models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
@@ -423,7 +423,7 @@ def get_public_availability(tenant_id: int, start: datetime, end: datetime, gues
     return available
 
 @router.post("/reschedule")
-def reschedule(data: schemas.RescheduleRequest, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+def reschedule(data: schemas.RescheduleRequest, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
     booking = db.query(models.Booking).with_for_update().filter(models.Booking.id == data.booking_id).first()
     if not booking:
         raise HTTPException(status_code=404, detail="Reserva não encontrada")
@@ -536,7 +536,7 @@ async def create_public_booking(data: schemas.BookingPublicCreate, db: Session =
 
 # 7. LER RESERVA ESPECÍFICA
 @router.get("/{booking_id}", response_model=schemas.BookingResponse)
-def get_booking(booking_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+def get_booking(booking_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
     booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
     if not booking:
         raise HTTPException(status_code=404, detail="Reserva não encontrada")
@@ -566,7 +566,7 @@ def get_booking(booking_id: int, db: Session = Depends(get_db), current_user = D
 
 # 8. ATUALIZAR RESERVA
 @router.put("/{booking_id}")
-def update_booking(booking_id: int, data: schemas.BookingUpdate, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+def update_booking(booking_id: int, data: schemas.BookingUpdate, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
     booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
     if not booking:
         raise HTTPException(status_code=404, detail="Reserva não encontrada")
@@ -620,7 +620,7 @@ def update_booking(booking_id: int, data: schemas.BookingUpdate, db: Session = D
 
 # 9. DELETAR RESERVA
 @router.delete("/{booking_id}")
-def delete_booking(booking_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
+def delete_booking(booking_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
     booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
     if not booking:
         raise HTTPException(status_code=404, detail="Reserva não encontrada")
