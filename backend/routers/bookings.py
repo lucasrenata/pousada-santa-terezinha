@@ -355,6 +355,7 @@ def list_bookings(start: Optional[date] = None, end: Optional[date] = None, db: 
             "check_in_time": b.check_in_time,
             "check_out_time": b.check_out_time,
             "notes": b.notes,
+            "payment_receipt_url": b.payment_receipt_url,
             "companions": b.companions
         })
     return response
@@ -559,6 +560,7 @@ def get_booking(booking_id: int, db: Session = Depends(get_db), current_user = D
         "check_in_time": booking.check_in_time,
         "check_out_time": booking.check_out_time,
         "notes": booking.notes,
+        "payment_receipt_url": booking.payment_receipt_url,
         "companions": booking.companions
     }
 

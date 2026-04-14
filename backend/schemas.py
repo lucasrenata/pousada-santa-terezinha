@@ -259,6 +259,7 @@ class BookingResponse(BaseModel):
     check_in_time: Optional[str] = "14:00"
     check_out_time: Optional[str] = "14:00"
     notes: Optional[str] = None
+    payment_receipt_url: Optional[str] = None
     companions: List[CompanionResponse] = []
     
     class Config: from_attributes = True
