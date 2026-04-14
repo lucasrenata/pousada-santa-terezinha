@@ -25,6 +25,9 @@ def set_tenant_context(db: Session, tenant_id: int):
 def get_db():
     db = SessionLocal()
     try:
+        # Reset de segurança para garantir que conexões reaproveitadas do pool
+        # não tragam lixo de sessões anteriores (ex: bypass de SuperAdmin)
+        db.execute(text("SET app.current_tenant = '0'"))
         yield db
     finally:
         db.close()
@@ -36,7 +39,11 @@ def before_flush(session, flush_context, instances):
     try:
         # Usa current_setting com 'true' para não dar erro se o parâmetro não existir
         res = session.execute(text("SELECT current_setting('app.current_tenant', true)")).fetchone()
-        current_tid = int(res[0]) if res and res[0] and res[0].isdigit() and res[0] != '0' else None
+        
+        # Só pegamos o ID se for um ID de Pousada real (maior que 0)
+        # Ignoramos 0 (deslogado) e -1 (SuperAdmin Bypass)
+        val = res[0] if res and res[0] else None
+        current_tid = int(val) if val and val.isdigit() and int(val) > 0 else None
         
         if current_tid:
             for obj in session.new:
