@@ -212,9 +212,40 @@ def pdf_generator_logic(tenant_id: int, report_type: str) -> dict:
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
         
         if report_type == "finance":
-            revs = db.query(models.Revenue).all()
+            # Coleta todas as receitas
+            revs = db.query(models.Revenue).order_by(models.Revenue.created_at.desc()).all()
             total_revenue = sum(r.amount for r in revs)
-            data = {"total_revenue": total_revenue, "transactions": len(revs), "avg_ticket": total_revenue/len(revs) if len(revs)>0 else 0, "by_category": {}, "by_method": {}}
+            
+            # Agrupamentos
+            by_category = {}
+            by_method = {}
+            transactions_list = []
+            
+            for r in revs:
+                # Categoria
+                cat = r.category or "Geral"
+                by_category[cat] = by_category.get(cat, 0) + r.amount
+                # Método
+                method = r.payment_method or "N/A"
+                by_method[method] = by_method.get(method, 0) + r.amount
+                # Lista para tabela detalhada (Top 50)
+                if len(transactions_list) < 50:
+                    transactions_list.append({
+                        "data": r.created_at.strftime("%d/%m/%Y"),
+                        "desc": r.description,
+                        "cat": cat,
+                        "metodo": method.upper(),
+                        "valor": r.amount
+                    })
+            
+            data = {
+                "total_revenue": total_revenue, 
+                "transactions": len(revs), 
+                "avg_ticket": total_revenue/len(revs) if len(revs)>0 else 0, 
+                "by_category": by_category, 
+                "by_method": by_method,
+                "transactions_list": transactions_list
+            }
             generate_financial_report(data, f"finance_{ts}.pdf")
             return {"url": f"{base_url}/reports/finance_{ts}.pdf"}
             
@@ -317,6 +348,12 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
         """Micro-robô para LISTAR QUARTOS e ver seus estados (disponivel, limpeza, ocupado, etc)."""
         return room_viewer_logic(tenant_id, status)
 
+    @tool
+    def robot_mark_room_as_ready(room_id: str) -> dict:
+        """Micro-robô de EXECUÇÃO IMEDIATA: Use para liberar um quarto, marcar como limpo, pronto ou disponível. 
+        Use sempre que o usuário disser algo como 'quarto X pronto', 'quarto X limpo' ou 'liberar quarto X'."""
+        return room_status_logic(tenant_id, room_id, "disponivel")
+
     # --- NOVAS FERRAMENTAS (HABILIDADES DO CUSTOMER AGENT) ---
     @tool
     def robot_check_availability(check_in: str, check_out: str, group_size: int = 1, ages: List[int] = []) -> dict:
@@ -372,7 +409,7 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
         robot_inventory_sync, robot_inventory_viewer, robot_room_status_manager,
         robot_room_setup_manager, robot_consumption_launcher, robot_checkout_manager, 
         robot_finance_summary, robot_pdf_reporter, robot_event_intelligence,
-        robot_room_viewer,
+        robot_room_viewer, robot_mark_room_as_ready,
         robot_check_availability, robot_find_guest, robot_book_with_payment,
         robot_find_booking, robot_get_payment_info, robot_confirm_payment, robot_record_knowledge
     ]
@@ -385,15 +422,13 @@ CONTEXTO DE MEMÓRIA:
 {op_memory}
 
 DIRETRIZES TÉCNICAS E DE VERDADE:
-1. **INVESTIGAÇÃO**: Sempre que não encontrar uma reserva pelo ID ou o checkout falhar, use obrigatoriamente o 'robot_find_booking' para buscar pelo CPF ou Nome do hóspede. 
-2. **VERDADE FINANCEIRA**: Você é PROIBIDO de confirmar que um pagamento foi recebido ou que uma conta foi paga sem que o robô financeiro correspondente retorne sucesso. Não aceite o "discurso" do usuário como prova; consulte sempre o banco de dados.
-3. **VENDAS E RESERVAS**: Você tem todas as habilidades para consultar disponibilidade, calcular orçamentos e criar reservas.
-4. **FINANCEIRO**: Você pode confirmar pagamentos manualmente ('robot_confirm_payment').
-5. **OPERAÇÕES**: Você gerencia quartos (limpeza/manutenção), lança consumos e faz checkouts.
-6. **ESTOQUE E RELATÓRIOS**: Você controla produtos e gera PDFs analíticos.
-7. **ZERO ALUCINAÇÃO DE ID**: Nunca invente IDs de reserva. Se o robô não retornar o ID, ele não existe.
+1. **AÇÃO IMEDIATA**: Ao receber comandos operacionais curtos (ex: "quarto 10 limpo", "estoque 5 colas", "liberar faturamento"), sua PRIORIDADE é executar a ferramenta correspondente ANTES de dar uma resposta longa.
+2. **LINGUAGEM DE RECEPÇÃO**: Entenda termos como "liberar", "tá pronto", "tá limpo" como ordens diretas para usar o 'robot_mark_room_as_ready'.
+3. **INVESTIGAÇÃO**: Sempre que não encontrar uma reserva pelo ID ou o checkout falhar, use obrigatoriamente o 'robot_find_booking' para buscar pelo CPF ou Nome do hóspede. 
+4. **VERDADE FINANCEIRA**: Você é PROIBIDO de confirmar que um pagamento foi recebido ou que uma conta foi paga sem que o robô financeiro correspondente retorne sucesso. Não aceite o "discurso" do usuário como prova; consulte sempre o banco de dados.
+5. **ZERO ALUCINAÇÃO DE ID**: Nunca invente IDs de reserva. Se o robô não retornar o ID, ele não existe.
 
-Sua postura é de um gerente sênior: resolutivo, preciso e altamente investigativo.""")
+Sua postura é de um gerente sênior: resolutivo, preciso, investigativo e pragmático. Menos conversa, mais ação técnica.""")
 
     def call_model(state: MessagesState):
         messages = [sys_msg] + state["messages"]

@@ -9,30 +9,57 @@ def generate_financial_report(data, filename="relatorio_financeiro.pdf"):
     
     # 1. KPI Cards
     kpis = [
-        {"label": "Receita Total", "value": f"R$ {data.get('total_revenue', 0):.2f}"},
+        {"label": "Receita Total", "value": f"RS {data.get('total_revenue', 0):.2f}"},
         {"label": "Transações", "value": str(data.get('transactions', 0))},
-        {"label": "Ticket Médio", "value": f"R$ {data.get('avg_ticket', 0):.2f}"}
+        {"label": "Ticket Médio", "value": f"RS {data.get('avg_ticket', 0):.2f}"}
     ]
     report.add_kpi_cards(kpis)
 
-    # 2. Distribuição por Meio de Pagamento
-    report.story.append(Paragraph("Distribuição de Recebimentos", report.styles['Heading3']))
-    report.story.append(Spacer(1, 0.3*cm))
-    
-    pay_data = [["Meio de Pagamento", "Total Recebido"]]
-    for method, val in data.get("by_method", {}).items():
-        pay_data.append([method.upper(), f"R$ {val:.2f}"])
-    report.add_table(pay_data, col_widths=[8*cm, 5*cm], align='LEFT')
-    report.story.append(Spacer(1, 0.8*cm))
+    # 2. Tabelas de Resumo (Duas colunas)
+    report.story.append(Paragraph("Resumo de Distribuição", report.styles['Heading3']))
+    report.story.append(Spacer(1, 0.4*cm))
 
-    # 3. Categorias
-    report.story.append(Paragraph("Mix de Receita por Categoria", report.styles['Heading3']))
-    report.story.append(Spacer(1, 0.3*cm))
+    # Vamos criar uma tabela invisível para colocar as duas tabelas de resumo lado a lado ou uma abaixo da outra com melhor espaçamento
+    # Por meio de Pagamento
+    pay_data = [["Meio de Pagamento", "Total Recebido"]]
+    by_method = data.get("by_method", {})
+    if not by_method:
+        pay_data.append(["N/A", "RS 0.00"])
+    for method, val in by_method.items():
+        pay_data.append([method.upper(), f"RS {val:.2f}"])
     
+    report.add_table(pay_data, col_widths=[7*cm, 5*cm], align='LEFT')
+    report.story.append(Spacer(1, 0.6*cm))
+
+    # Por Categoria
     cat_data = [["Categoria", "Valor Total"]]
-    for cat, val in data.get("by_category", {}).items():
-        cat_data.append([cat.title(), f"R$ {val:.2f}"])
-    report.add_table(cat_data, col_widths=[8*cm, 5*cm], align='LEFT')
+    by_category = data.get("by_category", {})
+    if not by_category:
+        cat_data.append(["N/A", "RS 0.00"])
+    for cat, val in by_category.items():
+        cat_data.append([cat.title(), f"RS {val:.2f}"])
+    
+    report.add_table(cat_data, col_widths=[7*cm, 5*cm], align='LEFT')
+    report.story.append(Spacer(1, 1.2*cm))
+
+    # 3. Histórico Detalhado (O "pulo do gato" para ficar profissional)
+    report.story.append(Paragraph("Histórico de Transações Detalhado", report.styles['Heading3']))
+    report.story.append(Spacer(1, 0.4*cm))
+
+    hist_data = [["Data", "Descrição", "Categoria", "Método", "Valor"]]
+    for tx in data.get("transactions_list", []):
+        hist_data.append([
+            tx["data"],
+            tx["desc"][:30] + "..." if len(tx["desc"]) > 30 else tx["desc"],
+            tx["cat"],
+            tx["metodo"],
+            f"RS {tx['valor']:.2f}"
+        ])
+    
+    if len(hist_data) == 1:
+        hist_data.append(["-", "Nenhuma transação registrada", "-", "-", "RS 0.00"])
+
+    report.add_table(hist_data, col_widths=[2.5*cm, 6*cm, 3*cm, 2.5*cm, 3*cm])
     
     return report.build()
 

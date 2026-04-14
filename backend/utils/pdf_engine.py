@@ -26,21 +26,22 @@ class PousadaProfessionalReport:
         self.styles.add(ParagraphStyle(
             name='PousadaTitle',
             parent=self.styles['Heading1'],
-            fontSize=16,
-            textColor=colors.HexColor("#1e293b"), # Slate 800
-            spaceAfter=12
+            fontSize=18,
+            textColor=colors.HexColor("#0f172a"), # Navy Dark
+            spaceAfter=15,
+            fontName='Helvetica-Bold'
         ))
         
         self.styles.add(ParagraphStyle(
             name='PousadaHeader',
-            fontSize=10,
+            fontSize=9,
             textColor=colors.HexColor("#64748b"), # Slate 500
             alignment=2 # Right
         ))
 
         self.styles.add(ParagraphStyle(
             name='PousadaKPI',
-            fontSize=12,
+            fontSize=11,
             textColor=colors.HexColor("#334155"), # Slate 700
             alignment=1, # Center
             fontName='Helvetica-Bold'
@@ -59,46 +60,44 @@ class PousadaProfessionalReport:
         now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         header_text = f"<b>{p_name}</b><br/>Gerado em: {now}"
         self.story.append(Paragraph(header_text, self.styles['PousadaHeader']))
-        self.story.append(Spacer(1, 0.5*cm))
+        self.story.append(Spacer(1, 0.3*cm))
         self.story.append(Paragraph(self.title, self.styles['PousadaTitle']))
-        self.story.append(Spacer(1, 0.5*cm))
+        self.story.append(Spacer(1, 0.4*cm))
 
     def add_kpi_cards(self, cards: list):
         """
-        Recebe uma lista de dicts: [{'label': 'Receita', 'value': 'R$ 100'}]
-        Renderiza como pequenos cards lado a lado.
+        Renderiza como cards elegantes com bordas suaves.
         """
-        data = [[Paragraph(f"<b>{c['label']}</b><br/><br/><font size=14><b>{c['value']}</b></font>", self.styles['PousadaKPI']) for c in cards]]
+        data = [[Paragraph(f"<font color='#64748b' size=9>{c['label']}</font><br/><br/><font size=15><b>{c['value']}</b></font>", self.styles['PousadaKPI']) for c in cards]]
         
-        # Colunas flexíveis baseadas no número de cards
         cw = (A4[0] - 4*cm) / len(cards)
         t = Table(data, colWidths=[cw]*len(cards))
         t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#f8fafc")), # Slate 50
-            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")), # Slate 300
-            ('TOPPADDING', (0, 0), (-1, -1), 15),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 15),
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#f8fafc")), 
+            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")), 
+            ('TOPPADDING', (0, 0), (-1, -1), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]))
         self.story.append(t)
-        self.story.append(Spacer(1, 1*cm))
+        self.story.append(Spacer(1, 0.8*cm))
 
     def add_table(self, data, col_widths=None, align='CENTER'):
-        """Adiciona uma tabela estilizada seguindo o padrão Qualitec."""
+        """Adiciona uma tabela estilizada Premium."""
         t = Table(data, colWidths=col_widths)
         t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1e293b")), # Slate 800
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#0f172a")), # Navy Black
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
             ('ALIGN', (0, 0), (-1, -1), align),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 10),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
-            ('TOPPADDING', (0, 0), (-1, 0), 10),
+            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+            ('TOPPADDING', (0, 0), (-1, 0), 8),
             ('BACKGROUND', (0, 1), (-1, -1), colors.white),
-            ('GRID', (0, 0), (-1, -1), 0.1, colors.HexColor("#e2e8f0")), # Slate 200
+            ('GRID', (0, 0), (-1, -1), 0.1, colors.HexColor("#f1f5f9")),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('FONTSIZE', (0, 1), (-1, -1), 9),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]) # Zebra
+            ('FONTSIZE', (0, 1), (-1, -1), 8),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]) 
         ]))
         self.story.append(t)
 
