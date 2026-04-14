@@ -72,8 +72,16 @@ const paymentVariants: Record<string, any> = {
 
 export function ReservationCard({ reservation, onEdit, onDelete, onCheckIn, onCheckOut }: ReservationCardProps) {
   const hasReceipt = !!reservation.payment_receipt_url;
-  const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8003';
-  const receiptFullUrl = reservation.payment_receipt_url ? `${apiBaseUrl}${reservation.payment_receipt_url}` : null;
+  
+  // Lógica robusta: Prioriza VITE_API_URL se definida no build. 
+  // Caso contrário, usa /api (padrão produção) em vez de localhost.
+  const apiBaseUrl = import.meta.env.VITE_API_URL && import.meta.env.VITE_API_URL !== 'http://localhost:8003' 
+    ? import.meta.env.VITE_API_URL 
+    : '/api';
+    
+  // Remove barras duplicadas para evitar links como //static
+  const cleanBaseUrl = apiBaseUrl.endsWith('/') ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
+  const receiptFullUrl = reservation.payment_receipt_url ? `${cleanBaseUrl}${reservation.payment_receipt_url}` : null;
 
   return (
     <Card className={`w-full hover:shadow-lg transition-all duration-300 relative overflow-hidden bg-white ${
