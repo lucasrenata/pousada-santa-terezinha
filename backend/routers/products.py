@@ -1,25 +1,33 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, BackgroundTasks
+from fastapi.responses import FileResponse
 from .auth import get_current_staff, get_current_admin
 
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import models, schemas
-from database import get_db
+from database import get_db, set_tenant_context
 import io, csv
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import re
+import os
+from utils.inventory_pdf import generate_inventory_report, generate_shopping_list_report
 
 router = APIRouter(prefix="/products", tags=["Products/Stock"])
 
 # 1. CRIAR PRODUTO (Com validação de Barcode)
 @router.post("/", response_model=schemas.ProductResponse)
 def create_product(product: schemas.ProductCreate, db: Session = Depends(get_db), user = Depends(get_current_staff)):
+    set_tenant_context(db, user.get("tenant_id") if isinstance(user, dict) else user.tenant_id)
     if product.barcode:
         existing = db.query(models.Product).filter(models.Product.barcode == product.barcode).first()
         if existing:
             raise HTTPException(status_code=400, detail="Código de barras já cadastrado")
             
-    new_prod = models.Product(**product.model_dump())
+    # Converte string vazia para None para evitar erro de UniqueViolation no banco
+    data = product.model_dump()
+    if not data.get("barcode"): data["barcode"] = None
+    
+    new_prod = models.Product(**data)
     db.add(new_prod)
     db.commit()
     db.refresh(new_prod)
@@ -33,6 +41,7 @@ def list_products(
     db: Session = Depends(get_db),
     user = Depends(get_current_staff)
 ):
+    set_tenant_context(db, user.get("tenant_id") if isinstance(user, dict) else user.tenant_id)
     query = db.query(models.Product)
     
     if only_active:
@@ -43,20 +52,49 @@ def list_products(
         
     return query.all()
 
+@router.get("/categories", response_model=List[schemas.ProductCategoryResponse])
+def list_categories(db: Session = Depends(get_db), user = Depends(get_current_staff)):
+    set_tenant_context(db, user.get("tenant_id") if isinstance(user, dict) else user.tenant_id)
+    cats = db.query(models.ProductCategory).all()
+    if not cats:
+        # Inicializa categorias padrão se estiver vazio
+        defaults = ["Bebidas", "Alimentos", "Higiene", "Mercearia", "Limpeza"]
+        for name in defaults:
+            db.add(models.ProductCategory(name=name))
+        db.commit()
+        cats = db.query(models.ProductCategory).all()
+    return cats
+
+@router.post("/categories", response_model=schemas.ProductCategoryResponse)
+def create_category(payload: schemas.ProductCategoryCreate, db: Session = Depends(get_db), user = Depends(get_current_staff)):
+    set_tenant_context(db, user.get("tenant_id") if isinstance(user, dict) else user.tenant_id)
+    exists = db.query(models.ProductCategory).filter(models.ProductCategory.name.ilike(payload.name)).first()
+    if exists: return exists
+    new_cat = models.ProductCategory(name=payload.name)
+    db.add(new_cat)
+    db.commit()
+    db.refresh(new_cat)
+    return new_cat
+
 # 3. DASHBOARD DE ESTOQUE (KPIs da Documentação)
 @router.get("/dashboard", response_model=schemas.StockDashboard)
 def get_stock_dashboard(db: Session = Depends(get_db), user = Depends(get_current_staff)):
+    set_tenant_context(db, user.get("tenant_id") if isinstance(user, dict) else user.tenant_id)
     products = db.query(models.Product).filter(models.Product.is_active == True).all()
     
     total_items = len(products)
-    total_value = sum([p.price * p.stock_quantity for p in products])
+    total_val  = sum([(p.price or 0) * (p.stock_quantity or 0) for p in products])
+    total_cost = sum([(p.cost_price or 0) * (p.stock_quantity or 0) for p in products])
+    profit     = total_val - total_cost
     
     # Alerta de Estoque Baixo (Estoque Atual <= Mínimo)
-    low_stock_list = [p for p in products if p.stock_quantity <= p.min_stock]
+    low_stock_list = [p for p in products if (p.stock_quantity or 0) <= (p.min_stock or 0)]
     
     return {
         "total_products": total_items,
-        "total_value": total_value,
+        "total_value": total_val,
+        "total_cost_value": total_cost,
+        "potential_profit": profit,
         "low_stock_count": len(low_stock_list),
         "low_stock_items": low_stock_list
     }
@@ -64,6 +102,7 @@ def get_stock_dashboard(db: Session = Depends(get_db), user = Depends(get_curren
 # 4. CONSUMO (Mantido, mas checando is_active)
 @router.post("/consumption")
 def add_consumption(data: schemas.ConsumptionRequest, db: Session = Depends(get_db), user = Depends(get_current_staff)):
+    set_tenant_context(db, user.get("tenant_id") if isinstance(user, dict) else user.tenant_id)
     booking = db.query(models.Booking).filter(models.Booking.room_id == data.room_id, models.Booking.status == models.BookingStatus.ATIVO).first()
     if not booking: raise HTTPException(status_code=400, detail="Sem check-in ativo")
     
@@ -83,6 +122,7 @@ def add_consumption(data: schemas.ConsumptionRequest, db: Session = Depends(get_
 # 5. ATUALIZAR PRODUTO (inclui quantidade e preço)
 @router.put("/{product_id}", response_model=schemas.ProductResponse)
 def update_product(product_id: int, payload: schemas.ProductUpdate, db: Session = Depends(get_db), user = Depends(get_current_staff)):
+    set_tenant_context(db, user.get("tenant_id") if isinstance(user, dict) else user.tenant_id)
     prod = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not prod:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
@@ -93,7 +133,8 @@ def update_product(product_id: int, payload: schemas.ProductUpdate, db: Session 
     if payload.name is not None: prod.name = payload.name
     if payload.price is not None: prod.price = payload.price
     if payload.category is not None: prod.category = payload.category
-    if payload.barcode is not None: prod.barcode = payload.barcode
+    if payload.barcode is not None: 
+        prod.barcode = payload.barcode if payload.barcode.strip() else None
     if payload.unit_measure is not None: prod.unit_measure = payload.unit_measure
     if payload.stock_quantity is not None: prod.stock_quantity = payload.stock_quantity
     if payload.min_stock is not None: prod.min_stock = payload.min_stock
@@ -119,6 +160,7 @@ def stock_receipt(
     db: Session = Depends(get_db),
     user = Depends(get_current_staff)
 ):
+    set_tenant_context(db, user.get("tenant_id") if isinstance(user, dict) else user.tenant_id)
     filename = file.filename.lower()
     rows: List[dict] = []
     if filename.endswith(".csv"):
@@ -268,6 +310,7 @@ def list_stock_entries(
     db: Session = Depends(get_db),
     user = Depends(get_current_staff)
 ):
+    set_tenant_context(db, user.get("tenant_id") if isinstance(user, dict) else user.tenant_id)
     q = db.query(models.StockEntry)
     if start: q = q.filter(models.StockEntry.invoice_date >= start)
     if end: q = q.filter(models.StockEntry.invoice_date <= end)
@@ -291,6 +334,7 @@ def stock_ocr(
     db: Session = Depends(get_db),
     user = Depends(get_current_staff)
 ):
+    set_tenant_context(db, user.get("tenant_id") if isinstance(user, dict) else user.tenant_id)
     filename = (file.filename or "").lower()
     if not (filename.endswith(".png") or filename.endswith(".jpg") or filename.endswith(".jpeg") or filename.endswith(".pdf")):
         raise HTTPException(status_code=400, detail="Envie imagem PNG/JPG ou PDF")
@@ -418,6 +462,7 @@ def stock_ocr(
 
 @router.delete("/stock/entries/{entry_id}")
 def delete_stock_entry(entry_id: int, db: Session = Depends(get_db), admin = Depends(get_current_admin)):
+    set_tenant_context(db, admin.tenant_id)
     """Exclui uma entrada de estoque e reverte as quantidades dos produtos."""
     entry = db.query(models.StockEntry).filter(models.StockEntry.id == entry_id).first()
     if not entry:
@@ -434,3 +479,90 @@ def delete_stock_entry(entry_id: int, db: Session = Depends(get_db), admin = Dep
     db.delete(entry)
     db.commit()
     return {"message": "Entrada de estoque removida e quantidades revertidas com sucesso"}
+
+# 9. RELATÓRIOS PDF
+@router.get("/reports/inventory")
+def get_inventory_pdf(db: Session = Depends(get_db), user = Depends(get_current_staff)):
+    set_tenant_context(db, user.get("tenant_id") if isinstance(user, dict) else user.tenant_id)
+    products = db.query(models.Product).filter(models.Product.is_active == True).all()
+    
+    # O relatório de inventário usa preço de CUSTO para valorização de ativos
+    total_cost = sum([(p.cost_price or 0) * (p.stock_quantity or 0) for p in products])
+    
+    data = {
+        "products": [
+            {
+                "id": p.id,
+                "name": p.name,
+                "category": p.category,
+                "stock": p.stock_quantity,
+                "min_stock": p.min_stock,
+                "price": p.cost_price or 0
+            } for p in products
+        ],
+        "total_inventory_value": total_cost
+    }
+    
+    filename = f"inventario_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    tid = user.get("tenant_id") if isinstance(user, dict) else user.tenant_id
+    path = generate_inventory_report(data, filename, tenant_id=tid)
+    
+    if not os.path.exists(path):
+        raise HTTPException(status_code=500, detail="Erro ao gerar arquivo PDF")
+        
+    def remove_file(path: str):
+        try:
+            if os.path.exists(path): os.remove(path)
+        except Exception as e: print(f"Erro ao deletar relatório {path}: {e}")
+
+    background_tasks = BackgroundTasks()
+    background_tasks.add_task(remove_file, path)
+    return FileResponse(path, media_type="application/pdf", filename=filename, background=background_tasks)
+
+@router.get("/reports/shopping-list")
+def get_shopping_list_pdf(db: Session = Depends(get_db), user = Depends(get_current_staff)):
+    set_tenant_context(db, user.get("tenant_id") if isinstance(user, dict) else user.tenant_id)
+    products = db.query(models.Product).filter(models.Product.is_active == True).all()
+    
+    # Lógica de Giro: busca consumos dos últimos 30 dias para identificar itens de alta saída
+    thirty_days_ago = datetime.now() - timedelta(days=30)
+    consumptions = db.query(models.Consumption).filter(models.Consumption.created_at >= thirty_days_ago).all()
+    
+    usage_count = {}
+    for c in consumptions:
+        usage_count[c.product_id] = usage_count.get(c.product_id, 0) + c.quantity
+        
+    items_to_buy = []
+    for p in products:
+        is_low = (p.stock_quantity or 0) <= (p.min_stock or 0)
+        high_usage = usage_count.get(p.id, 0) > 10 # Regra: mais de 10 consumos/mês
+        approaching_min = (p.stock_quantity or 0) <= (p.min_stock or 0) * 1.5 # Alerta antecipado
+        
+        if is_low or (high_usage and approaching_min):
+            items_to_buy.append({
+                "name": p.name,
+                "category": p.category,
+                "stock": p.stock_quantity,
+                "min_stock": p.min_stock,
+                "is_critical": is_low,
+                "suggested_buy": max((p.min_stock * 2) - p.stock_quantity, 5),
+                "unit": p.unit_measure or "un",
+                "cost_price": p.cost_price or 0
+            })
+            
+    data = {"items": items_to_buy}
+    filename = f"lista_compras_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    tid = user.get("tenant_id") if isinstance(user, dict) else user.tenant_id
+    path = generate_shopping_list_report(data, filename, tenant_id=tid)
+    
+    if not os.path.exists(path):
+        raise HTTPException(status_code=500, detail="Erro ao gerar arquivo PDF")
+        
+    def remove_file(path: str):
+        try:
+            if os.path.exists(path): os.remove(path)
+        except Exception as e: print(f"Erro ao deletar relatório {path}: {e}")
+
+    background_tasks = BackgroundTasks()
+    background_tasks.add_task(remove_file, path)
+    return FileResponse(path, media_type="application/pdf", filename=filename, background=background_tasks)

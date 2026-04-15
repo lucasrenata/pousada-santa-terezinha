@@ -259,3 +259,21 @@ def store_operational_memory_logic(tenant_id: int, content: str, category: str =
         db.add(new_mem)
         db.commit()
         return {"success": True}
+
+def search_events_logic(tenant_id: int, query: str) -> dict:
+    """Busca eventos cadastrados por nome."""
+    with SessionLocal() as db:
+        set_tenant_context(db, tenant_id)
+        events = db.query(models.Event).filter(models.Event.name.ilike(f"%{query}%")).all()
+        if not events:
+            return {"error": f"Nenhum evento encontrado para '{query}'."}
+        
+        results = []
+        for e in events:
+            results.append({
+                "name": e.name,
+                "start_date": str(e.start_date),
+                "end_date": str(e.end_date),
+                "description": e.description
+            })
+        return {"results": results}

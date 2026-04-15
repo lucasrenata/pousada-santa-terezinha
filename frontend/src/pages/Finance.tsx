@@ -1,8 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import api from '../services/api';
+import {
+  TrendingUp, TrendingDown, Minus, DollarSign,
+  CheckCircle, Clock, Trash2, Pencil, Plus, ArrowRightLeft, FileText
+} from 'lucide-react';
 
+// ─── Types ────────────────────────────────────────────────────────────────────
 type RevenueCategory = 'hospedagem' | 'consumo' | 'outros';
 type PaymentMethod = 'pix' | 'credito' | 'debito' | 'dinheiro';
+type ExpenseCategory =
+  | 'agua' | 'energia' | 'internet' | 'manutencao' | 'salarios' | 'limpeza'
+  | 'fornecedor' | 'marketing' | 'impostos' | 'aluguel' | 'alimentacao' | 'outros';
 
 interface Revenue {
   id: number;
@@ -14,224 +22,244 @@ interface Revenue {
   booking_id?: number | null;
 }
 
+interface Expense {
+  id: number;
+  description: string;
+  amount: number;
+  category: ExpenseCategory;
+  due_date: string;
+  paid_date?: string | null;
+  is_paid: boolean;
+  payment_method?: PaymentMethod | null;
+  notes?: string | null;
+  created_at: string;
+}
+
+interface CashFlowItem {
+  date: string;
+  revenue: number;
+  expense: number;
+  net: number;       // backend retorna 'net', não 'balance'
+}
+
+interface CfSummary {
+  total_revenue: number;
+  total_expense: number;
+  net_result: number;
+  pending_expenses: number;
+}
+
+// Formato real do compare endpoint
+interface PeriodSummary {
+  start: string; end: string; days: number;
+  revenue: number; expense: number; net: number;
+  checkins: number; checkouts: number; daily_avg_revenue: number;
+}
+interface DeltaItem { absolute: number; percent: number | null; }
+interface CompareResult {
+  period_a: PeriodSummary;
+  period_b: PeriodSummary;
+  delta: { revenue: DeltaItem; expense: DeltaItem; net: DeltaItem; checkins: DeltaItem; daily_avg_revenue: DeltaItem; };
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const fmtCurrency = (v: number) =>
+  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+
+const fmtDate = (s: string) =>
+  new Date(s + 'T12:00:00').toLocaleDateString('pt-BR');
+
+const palette = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#84cc16'];
+
+const EXPENSE_LABELS: Record<string, string> = {
+  agua: 'Água', energia: 'Energia', internet: 'Internet',
+  manutencao: 'Manutenção', salarios: 'Salários', limpeza: 'Limpeza',
+  fornecedor: 'Fornecedor', marketing: 'Marketing', impostos: 'Impostos',
+  aluguel: 'Aluguel', alimentacao: 'Alimentação', outros: 'Outros'
+};
+
+// ─── Charts ───────────────────────────────────────────────────────────────────
+function PieChart({ data }: { data: Record<string, number> }) {
+  const entries = Object.entries(data);
+  const total = entries.reduce((acc, [, v]) => acc + v, 0);
+  const size = 140; const r = 55; const c = 2 * Math.PI * r;
+  let acc = 0;
+  return (
+    <div className="flex items-center gap-4 flex-wrap">
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#e5e7eb" strokeWidth={20} />
+          {entries.map(([k, v], i) => {
+            const dash = total ? (v / total) * c : 0;
+            const el = <circle key={k} cx={size / 2} cy={size / 2} r={r} fill="none"
+              stroke={palette[i % palette.length]} strokeWidth={20}
+              strokeDasharray={`${dash} ${c - dash}`} strokeDashoffset={c - acc} />;
+            acc += dash; return el;
+          })}
+        </g>
+        <text x="50%" y="50%" dominantBaseline="middle" textAnchor="middle" fontSize="11" fill="#0f172a" fontWeight="bold">
+          {fmtCurrency(total)}
+        </text>
+      </svg>
+      <div className="space-y-1 text-sm">
+        {entries.map(([k, v], i) => (
+          <div key={k} className="flex items-center gap-2">
+            <span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: palette[i % palette.length] }} />
+            <span className="text-slate-600">{k}</span>
+            <span className="ml-auto font-semibold text-slate-800">{fmtCurrency(v)}</span>
+          </div>
+        ))}
+        {entries.length === 0 && <p className="text-slate-400 italic text-xs">Sem dados</p>}
+      </div>
+    </div>
+  );
+}
+
+function BarChart({ data }: { data: Record<string, number> }) {
+  const entries = Object.entries(data);
+  const max = entries.reduce((acc, [, v]) => Math.max(acc, v), 0) || 1;
+  return (
+    <div className="space-y-3">
+      {entries.map(([k, v], i) => (
+        <div key={k}>
+          <div className="flex justify-between text-sm text-slate-600 mb-1">
+            <span>{k}</span>
+            <span className="font-semibold text-slate-800">{fmtCurrency(v)}</span>
+          </div>
+          <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
+            <div className="h-full rounded-full transition-all duration-700"
+              style={{ width: `${(v / max) * 100}%`, backgroundColor: palette[i % palette.length] }} />
+          </div>
+        </div>
+      ))}
+      {entries.length === 0 && <p className="text-slate-400 italic text-xs">Sem dados</p>}
+    </div>
+  );
+}
+
+// ─── Delta badge ──────────────────────────────────────────────────────────────
+function Delta({ pct, inverted = false }: { pct: number; inverted?: boolean }) {
+  const isGood = inverted ? pct < 0 : pct > 0;
+  const color = pct === 0 ? 'text-slate-500' : isGood ? 'text-emerald-600' : 'text-red-500';
+  const Icon = pct === 0 ? Minus : pct > 0 ? TrendingUp : TrendingDown;
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs font-bold ${color}`}>
+      <Icon size={13} />
+      {pct === 0 ? '0%' : `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`}
+    </span>
+  );
+}
+
+// ─── Tab navigation ───────────────────────────────────────────────────────────
+type Tab = 'receitas' | 'despesas' | 'fluxo' | 'comparativo' | 'relatorios';
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'receitas', label: '💰 Receitas' },
+  { id: 'despesas', label: '📋 Despesas' },
+  { id: 'fluxo', label: '📊 Fluxo de Caixa' },
+  { id: 'comparativo', label: '🔀 Comparativo' },
+  { id: 'relatorios', label: '📈 Relatórios' },
+];
+
+// ─── Main component ───────────────────────────────────────────────────────────
 export default function Finance() {
-  const [start, setStart] = useState<string>('');
-  const [end, setEnd] = useState<string>('');
-  const [summary, setSummary] = useState<{ total_revenue: number; transactions: number } | null>(null);
-  const [revenues, setRevenues] = useState<Revenue[]>([]);
+  const [activeTab, setActiveTab] = useState<Tab>('receitas');
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+
+  // Auto-clear messages
+  useEffect(() => {
+    if (!message && !error) return;
+    const t = setTimeout(() => { setMessage(null); setError(null); }, 4000);
+    return () => clearTimeout(t);
+  }, [message, error]);
+
+  // Modal States
+  const [isRevModalOpen, setIsRevModalOpen] = useState(false);
+  const [isExpModalOpen, setIsExpModalOpen] = useState(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportConfig, setExportConfig] = useState({
+    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10),
+    end: new Date().toISOString().slice(0, 10),
+    mode: 'full' as 'full' | 'summary'
+  });
+
+  const closeFormModals = () => {
+    setIsRevModalOpen(false);
+    setIsExpModalOpen(false);
+    setEditing(null);
+    setEditingExp(null);
+  };
+
+  // ════════════════════════════════════════════════════════════════
+  // ABA 1 — RECEITAS (código original preservado)
+  // ════════════════════════════════════════════════════════════════
+  const [start, setStart] = useState('');
+  const [end, setEnd] = useState('');
+  const [summary, setSummary] = useState<{ total_revenue: number; transactions: number } | null>(null);
+  const [revenues, setRevenues] = useState<Revenue[]>([]);
   const [filterCategory, setFilterCategory] = useState<RevenueCategory | ''>('');
   const [filterPayment, setFilterPayment] = useState<PaymentMethod | ''>('');
-  const [search, setSearch] = useState<string>('');
+  const [search, setSearch] = useState('');
   const [byCategory, setByCategory] = useState<Record<string, number>>({});
   const [byPayment, setByPayment] = useState<Record<string, number>>({});
   const [editing, setEditing] = useState<Revenue | null>(null);
-  const [editForm, setEditForm] = useState({
-    description: '',
-    amount: '',
-    category: '' as RevenueCategory | '',
-    payment_method: '' as PaymentMethod | '',
-    booking_id: '',
-  });
-
-  const [form, setForm] = useState({
-    description: '',
-    amount: '',
-    category: 'hospedagem' as RevenueCategory,
-    payment_method: 'pix' as PaymentMethod,
-    booking_id: '',
-  });
-  const [page, setPage] = useState<number>(1);
-  const [pageSize, setPageSize] = useState<number>(10);
-  const [pages, setPages] = useState<number>(0);
+  const [editForm, setEditForm] = useState({ description: '', amount: '', category: '' as RevenueCategory | '', payment_method: '' as PaymentMethod | '', booking_id: '' });
+  const [form, setForm] = useState({ description: '', amount: '', category: 'hospedagem' as RevenueCategory, payment_method: 'pix' as PaymentMethod, booking_id: '' });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [pages, setPages] = useState(0);
   const [sortBy, setSortBy] = useState<'created_at' | 'amount' | 'description' | 'category' | 'payment_method'>('created_at');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-  const palette = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#84cc16'];
-  
-  function headerSort(field: 'created_at' | 'amount' | 'description' | 'category' | 'payment_method') {
-    if (sortBy === field) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-    } else {
-      setSortBy(field);
-      setSortDir('desc');
-    }
-    setPage(1);
-    setTimeout(loadReport, 0);
-  }
-  function sortArrow(field: typeof sortBy) {
-    if (sortBy !== field) return '';
-    return sortDir === 'asc' ? '↑' : '↓';
-  }
-  function getPageNumbers(total: number, current: number) {
-    const nums: (number | string)[] = [];
-    if (total <= 7) {
-      for (let i = 1; i <= total; i++) nums.push(i);
-      return nums;
-    }
-    nums.push(1);
-    if (current > 3) nums.push('...');
-    const start = Math.max(2, current - 1);
-    const end = Math.min(total - 1, current + 1);
-    for (let i = start; i <= end; i++) nums.push(i);
-    if (current < total - 2) nums.push('...');
-    nums.push(total);
-    return nums;
-  }
-  
-  function PieChart({ data }: { data: Record<string, number> }) {
-    const entries = Object.entries(data);
-    const total = entries.reduce((acc, [, v]) => acc + v, 0);
-    const size = 140;
-    const r = 55;
-    const c = 2 * Math.PI * r;
-    let acc = 0;
-    return (
-      <div className="flex items-center gap-4">
-        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-          <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
-            <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#e5e7eb" strokeWidth={20} />
-            {entries.map(([k, v], i) => {
-              const dash = total ? (v / total) * c : 0;
-              const el = (
-                <circle
-                  key={k}
-                  cx={size / 2}
-                  cy={size / 2}
-                  r={r}
-                  fill="none"
-                  stroke={palette[i % palette.length]}
-                  strokeWidth={20}
-                  strokeDasharray={`${dash} ${c - dash}`}
-                  strokeDashoffset={c - acc}
-                />
-              );
-              acc += dash;
-              return el;
-            })}
-          </g>
-          <text x="50%" y="50%" dominantBaseline="middle" textAnchor="middle" fontSize="14" fill="#0f172a">
-            {`R$ ${(total ?? 0).toFixed(2)}`}
-          </text>
-        </svg>
-        <div className="space-y-1">
-          {entries.map(([k, v], i) => (
-            <div key={k} className="flex items-center gap-2">
-              <span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: palette[i % palette.length] }} />
-              <span className="text-slate-700">{k}</span>
-              <span className="ml-auto font-semibold">R$ {v.toFixed(2)}</span>
-            </div>
-          ))}
-          {entries.length === 0 && <p className="text-slate-500">Sem dados</p>}
-        </div>
-      </div>
-    );
-  }
-  
-  function BarChart({ data }: { data: Record<string, number> }) {
-    const entries = Object.entries(data);
-    const max = entries.reduce((acc, [, v]) => Math.max(acc, v), 0) || 1;
-    return (
-      <div className="space-y-2">
-        {entries.map(([k, v], i) => (
-          <div key={k}>
-            <div className="flex justify-between text-sm text-slate-600">
-              <span>{k}</span>
-              <span className="font-semibold text-slate-800">R$ {v.toFixed(2)}</span>
-            </div>
-            <div className="h-3 bg-slate-200 rounded">
-              <div
-                className="h-3 rounded"
-                style={{ width: `${(v / max) * 100}%`, backgroundColor: palette[i % palette.length] }}
-              />
-            </div>
-          </div>
-        ))}
-        {entries.length === 0 && <p className="text-slate-500">Sem dados</p>}
-      </div>
-    );
-  }
 
   function toDateString(date: string) {
     if (!date) return undefined;
     const d = new Date(date);
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  function sortArrow(field: typeof sortBy) { return sortBy !== field ? '' : sortDir === 'asc' ? '↑' : '↓'; }
+  function headerSort(field: typeof sortBy) {
+    if (sortBy === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc'); else { setSortBy(field); setSortDir('desc'); }
+    setPage(1); setTimeout(loadReport, 0);
+  }
+  function getPageNumbers(total: number, current: number) {
+    const nums: (number | string)[] = [];
+    if (total <= 7) { for (let i = 1; i <= total; i++) nums.push(i); return nums; }
+    nums.push(1); if (current > 3) nums.push('...');
+    for (let i = Math.max(2, current - 1); i <= Math.min(total - 1, current + 1); i++) nums.push(i);
+    if (current < total - 2) nums.push('...'); nums.push(total); return nums;
   }
 
   async function loadReport() {
     try {
       setError(null);
       const params: Record<string, string> = {};
-      const s = toDateString(start);
-      const e = toDateString(end);
-      if (s) params.start = s;
-      if (e) params.end = e;
+      const s = toDateString(start); const e = toDateString(end);
+      if (s) params.start = s; if (e) params.end = e;
       if (filterCategory) params.category = filterCategory;
       if (filterPayment) params.payment_method = filterPayment;
-      const q = search.trim();
-      if (q) params.search = q;
-      params.page = String(page);
-      params.page_size = String(pageSize);
-      params.sort_by = sortBy;
-      params.sort_dir = sortDir;
+      const q = search.trim(); if (q) params.search = q;
+      params.page = String(page); params.page_size = String(pageSize);
+      params.sort_by = sortBy; params.sort_dir = sortDir;
       const res = await api.get('/finance/report', { params });
       setSummary({ total_revenue: res.data.total_revenue, transactions: res.data.transactions });
       setRevenues(res.data.data);
       setByCategory(res.data.by_category ?? {});
       setByPayment(res.data.by_payment_method ?? {});
       setPages(res.data.pages ?? 0);
-    } catch {
-      setError('Falha ao carregar relatório financeiro');
-    }
+    } catch { setError('Falha ao carregar relatório'); }
   }
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      loadReport();
-    }, 0);
-    return () => clearTimeout(t);
-  }, []);
+  useEffect(() => { loadReport(); }, []);
 
   async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
-    setMessage(null);
-    setError(null);
+    e.preventDefault(); setMessage(null); setError(null);
     try {
-      const payload = {
-        description: form.description,
-        amount: parseFloat(form.amount),
-        category: form.category,
-        payment_method: form.payment_method,
-        booking_id: form.booking_id ? parseInt(form.booking_id) : null,
-      };
-      await api.post('/finance/', payload);
-      setMessage('Receita lançada');
-      setForm({ description: '', amount: '', category: 'hospedagem', payment_method: 'pix', booking_id: '' });
-      await loadReport();
-    } catch {
-      setError('Erro ao lançar receita');
-    }
+      await api.post('/finance/', { description: form.description, amount: parseFloat(form.amount), category: form.category, payment_method: form.payment_method, booking_id: form.booking_id ? parseInt(form.booking_id) : null });
+      setMessage('Receita lançada!'); setForm({ description: '', amount: '', category: 'hospedagem', payment_method: 'pix', booking_id: '' }); setIsRevModalOpen(false); await loadReport();
+    } catch { setError('Erro ao lançar receita'); }
   }
-  
-
-
-  function startEdit(r: Revenue) {
-    setEditing(r);
-    setEditForm({
-      description: r.description,
-      amount: String(r.amount),
-      category: r.category,
-      payment_method: r.payment_method,
-      booking_id: r.booking_id ? String(r.booking_id) : '',
-    });
-  }
-
+  function startEdit(r: Revenue) { setEditing(r); setEditForm({ description: r.description, amount: String(r.amount), category: r.category, payment_method: r.payment_method, booking_id: r.booking_id ? String(r.booking_id) : '' }); setIsRevModalOpen(true); }
   async function submitEdit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!editing) return;
+    e.preventDefault(); if (!editing) return;
     try {
       const payload: any = {};
       if (editForm.description) payload.description = editForm.description;
@@ -239,288 +267,893 @@ export default function Finance() {
       if (editForm.category) payload.category = editForm.category;
       if (editForm.payment_method) payload.payment_method = editForm.payment_method;
       if (editForm.booking_id) payload.booking_id = parseInt(editForm.booking_id);
-      await api.put(`/finance/${editing.id}`, payload);
-      setEditing(null);
-      await loadReport();
-      setMessage('Receita atualizada');
-    } catch {
-      setError('Erro ao atualizar receita');
-    }
+      await api.put(`/finance/${editing.id}`, payload); setEditing(null); setIsRevModalOpen(false); await loadReport(); setMessage('Receita atualizada!');
+    } catch { setError('Erro ao atualizar receita'); }
+  }
+  async function deleteRevenue(id: number) {
+    if (!confirm('Excluir esta receita?')) return;
+    try { await api.delete(`/finance/${id}`); await loadReport(); setMessage('Receita excluída'); }
+    catch { setError('Erro ao excluir'); }
   }
 
-  async function deleteRevenue(id: number) {
+  // ════════════════════════════════════════════════════════════════
+  // ABA 2 — DESPESAS
+  // ════════════════════════════════════════════════════════════════
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [expLoading, setExpLoading] = useState(false);
+  const [expFilterCat, setExpFilterCat] = useState<ExpenseCategory | ''>('');
+  const [expFilterPaid, setExpFilterPaid] = useState<'all' | 'paid' | 'pending'>('all');
+  const [expStart, setExpStart] = useState('');
+  const [expEnd, setExpEnd] = useState('');
+  const [editingExp, setEditingExp] = useState<Expense | null>(null);
+  const [expForm, setExpForm] = useState({
+    description: '', amount: '', category: 'outros' as ExpenseCategory,
+    due_date: '', payment_method: '' as PaymentMethod | '', notes: '',
+  });
+
+  const loadExpenses = useCallback(async () => {
+    setExpLoading(true);
     try {
-      await api.delete(`/finance/${id}`);
-      await loadReport();
-      setMessage('Receita excluída');
-    } catch {
-      setError('Erro ao excluir receita');
-    }
+      const params: Record<string, string> = {};
+      if (expFilterCat) params.category = expFilterCat;
+      if (expFilterPaid === 'paid') params.is_paid = 'true';
+      if (expFilterPaid === 'pending') params.is_paid = 'false';
+      if (expStart) params.start = expStart;
+      if (expEnd) params.end = expEnd;
+      const res = await api.get('/finance/expenses/', { params });
+      setExpenses(res.data.data ?? res.data);
+    } catch { setError('Falha ao carregar despesas'); }
+    finally { setExpLoading(false); }
+  }, [expFilterCat, expFilterPaid, expStart, expEnd]);
+
+  useEffect(() => { if (activeTab === 'despesas') loadExpenses(); }, [activeTab, loadExpenses]);
+
+  async function createExpense(e: React.FormEvent) {
+    e.preventDefault(); setMessage(null); setError(null);
+    try {
+      await api.post('/finance/expenses/', {
+        description: expForm.description, amount: parseFloat(expForm.amount),
+        category: expForm.category, due_date: expForm.due_date,
+        payment_method: expForm.payment_method || null, notes: expForm.notes || null,
+      });
+      setMessage('Despesa lançada!');
+      setExpForm({ description: '', amount: '', category: 'outros', due_date: '', payment_method: '', notes: '' });
+      setIsExpModalOpen(false);
+      await loadExpenses();
+    } catch { setError('Erro ao lançar despesa'); }
   }
+
+  async function markAsPaid(exp: Expense) {
+    try {
+      await api.put(`/finance/expenses/${exp.id}`, { is_paid: true, paid_date: new Date().toISOString().slice(0, 10) });
+      setMessage('Marcada como paga!'); await loadExpenses();
+    } catch { setError('Erro ao marcar como paga'); }
+  }
+
+  async function deleteExpense(id: number) {
+    if (!confirm('Excluir esta despesa?')) return;
+    try { await api.delete(`/finance/expenses/${id}`); setMessage('Despesa excluída'); await loadExpenses(); }
+    catch { setError('Erro ao excluir despesa'); }
+  }
+
+  async function submitEditExp(e: React.FormEvent) {
+    e.preventDefault(); if (!editingExp) return;
+    try {
+      const payload: any = {
+        description: expForm.description,
+        amount: parseFloat(expForm.amount),
+        category: expForm.category,
+        due_date: expForm.due_date,
+        payment_method: expForm.payment_method || null,
+        notes: expForm.notes || null,
+      };
+      await api.put(`/finance/expenses/${editingExp.id}`, payload);
+      setEditingExp(null); setMessage('Despesa atualizada!'); setIsExpModalOpen(false); await loadExpenses();
+    } catch { setError('Erro ao atualizar despesa'); }
+  }
+
+  function startEditExp(exp: Expense) {
+    setEditingExp(exp);
+    setExpForm({
+      description: exp.description, amount: String(exp.amount),
+      category: exp.category, due_date: exp.due_date,
+      payment_method: exp.payment_method ?? '', notes: exp.notes ?? '',
+    });
+    setIsExpModalOpen(true);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // ABA 3 — FLUXO DE CAIXA
+  // ════════════════════════════════════════════════════════════════
+  const [cashFlow, setCashFlow] = useState<CashFlowItem[]>([]);
+  const [cfLoading, setCfLoading] = useState(false);
+  const [cfStart, setCfStart] = useState(() => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); });
+  const [cfEnd, setCfEnd] = useState(() => new Date().toISOString().slice(0, 10));
+
+  const [cfSummary, setCfSummary] = useState<CfSummary>({ total_revenue: 0, total_expense: 0, net_result: 0, pending_expenses: 0 });
+
+  const loadCashFlow = useCallback(async () => {
+    setCfLoading(true);
+    try {
+      const res = await api.get('/finance/cash-flow', { params: { start: cfStart, end: cfEnd } });
+      // Backend retorna um OBJETO com chave 'timeline', não um array diretamente
+      const data = res.data;
+      setCashFlow(Array.isArray(data.timeline) ? data.timeline : []);
+      setCfSummary({
+        total_revenue: data.total_revenue ?? 0,
+        total_expense: data.total_expense ?? 0,
+        net_result: data.net_result ?? 0,
+        pending_expenses: data.pending_expenses ?? 0,
+      });
+    } catch { setError('Falha ao carregar fluxo de caixa'); }
+    finally { setCfLoading(false); }
+  }, [cfStart, cfEnd]);
+
+  useEffect(() => { if (activeTab === 'fluxo') loadCashFlow(); }, [activeTab, loadCashFlow]);
+
+  // ════════════════════════════════════════════════════════════════
+  // ABA 4 — COMPARATIVO
+  // ════════════════════════════════════════════════════════════════
+  const [cmpResult, setCmpResult] = useState<CompareResult | null>(null);
+  const [cmpLoading, setCmpLoading] = useState(false);
+  const [p1Start, setP1Start] = useState('');
+  const [p1End, setP1End] = useState('');
+  const [p2Start, setP2Start] = useState('');
+  const [p2End, setP2End] = useState('');
+
+  async function loadCompare() {
+    if (!p1Start || !p1End || !p2Start || !p2End) { setError('Preencha os 4 campos de data'); return; }
+    setCmpLoading(true);
+    try {
+      const res = await api.get('/finance/compare', { params: { p1_start: p1Start, p1_end: p1End, p2_start: p2Start, p2_end: p2End } });
+      setCmpResult(res.data);
+    } catch { setError('Falha ao carregar comparativo'); }
+    finally { setCmpLoading(false); }
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // INPUT / SELECT helpers
+  // ════════════════════════════════════════════════════════════════
+  const inputCls = 'border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white w-full';
+  const btnPrimary = 'bg-blue-600 text-white px-5 py-2 rounded-xl shadow hover:bg-blue-700 transition font-semibold text-sm disabled:opacity-50';
+  const btnSecondary = 'border border-slate-200 px-4 py-2 rounded-xl bg-white hover:bg-slate-50 text-sm font-medium transition';
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h2 className="text-2xl font-bold text-slate-800">Financeiro</h2>
-        <p className="text-slate-500">Relatório simples e lançamento de receitas.</p>
-      </div>
+    <div className="flex flex-col md:flex-row min-h-screen bg-slate-50/50">
 
-      {error && <div className="bg-red-50 text-red-700 rounded-lg border border-red-200 p-4">{error}</div>}
-      {message && <div className="bg-green-50 text-green-700 rounded-lg border border-green-200 p-4">{message}</div>}
+      {/* ── Sidebar de Navegação ── */}
+      <aside className="w-full md:w-64 bg-white border-r border-slate-200 p-6 flex flex-col gap-6">
+        <div>
+          <h2 className="text-2xl font-black text-slate-800 tracking-tight flex items-center gap-2">
+            <DollarSign className="text-blue-600" />
+            ParcerIA
+          </h2>
+          <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1 ml-8">Gestão Financeira</p>
+        </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-        <p className="text-lg font-semibold text-slate-800 mb-4">Filtro</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-600 mb-1">Início</label>
-            <input type="date" className="border rounded-lg px-3 py-2 w-full" value={start} onChange={(e) => setStart(e.target.value)} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-600 mb-1">Fim</label>
-            <input type="date" className="border rounded-lg px-3 py-2 w-full" value={end} onChange={(e) => setEnd(e.target.value)} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-600 mb-1">Categoria</label>
-            <select className="border rounded-lg px-3 py-2 w-full" value={filterCategory} onChange={(e) => setFilterCategory(e.target.value as RevenueCategory | '')}>
-              <option value="">Todas</option>
-              <option value="hospedagem">Hospedagem</option>
-              <option value="consumo">Consumo</option>
-              <option value="outros">Outros</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-600 mb-1">Forma</label>
-            <select className="border rounded-lg px-3 py-2 w-full" value={filterPayment} onChange={(e) => setFilterPayment(e.target.value as PaymentMethod | '')}>
-              <option value="">Todas</option>
-              <option value="pix">PIX</option>
-              <option value="credito">Crédito</option>
-              <option value="debito">Débito</option>
-              <option value="dinheiro">Dinheiro</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-600 mb-1">Buscar</label>
-            <input className="border rounded-lg px-3 py-2 w-full" placeholder="Descrição..." value={search} onChange={(e) => setSearch(e.target.value)} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-600 mb-1">Ordenar por</label>
-            <select className="border rounded-lg px-3 py-2 w-full" value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)}>
-              <option value="created_at">Data</option>
-              <option value="amount">Valor</option>
-              <option value="description">Descrição</option>
-              <option value="category">Categoria</option>
-              <option value="payment_method">Forma</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-600 mb-1">Direção</label>
-            <select className="border rounded-lg px-3 py-2 w-full" value={sortDir} onChange={(e) => setSortDir(e.target.value as typeof sortDir)}>
-              <option value="desc">Desc</option>
-              <option value="asc">Asc</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-600 mb-1">Itens por página</label>
-            <select className="border rounded-lg px-3 py-2 w-full" value={pageSize} onChange={(e) => setPageSize(parseInt(e.target.value))}>
-              <option value={10}>10</option>
-              <option value={25}>25</option>
-              <option value={50}>50</option>
-            </select>
-          </div>
-          <div className="flex items-end">
-            <button onClick={loadReport} className="bg-slate-800 text-white px-4 py-2 rounded-lg hover:bg-slate-900 w-full h-10">Aplicar</button>
+        <nav className="space-y-1">
+          {TABS.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all duration-200 ${activeTab === tab.id
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
+                  : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'
+                }`}
+            >
+              <span className="text-lg">{tab.label.split(' ')[0]}</span>
+              {tab.label.split(' ').slice(1).join(' ')}
+            </button>
+          ))}
+        </nav>
+        <div className="mt-auto pt-6 border-t border-slate-100 flex flex-col gap-3">
+          <div className="bg-slate-50 rounded-2xl p-4">
+            <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Resumo Rápido</p>
+            <div className="space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-slate-500">Saldo Hoje</span>
+                <span className={`text-xs font-bold ${cfSummary.net_result >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                  {fmtCurrency(cfSummary.net_result)}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      </aside>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <p className="text-sm text-slate-500">Receita total</p>
-          <p className="text-3xl font-bold text-slate-800">R$ {(summary?.total_revenue ?? 0).toFixed(2)}</p>
-        </div>
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <p className="text-sm text-slate-500">Transações</p>
-          <p className="text-3xl font-bold text-slate-800">{summary?.transactions ?? 0}</p>
-        </div>
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <p className="text-sm text-slate-500">Última atualização</p>
-          <p className="text-3xl font-bold text-slate-800">{new Date().toLocaleString()}</p>
-        </div>
-      </div>
-      
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <p className="text-lg font-semibold text-slate-800 mb-3">Por categoria</p>
-          <PieChart data={byCategory} />
-        </div>
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <p className="text-lg font-semibold text-slate-800 mb-3">Por forma</p>
-          <BarChart data={byPayment} />
-        </div>
-      </div>
+      {/* ── Conteúdo Principal ── */}
+      <main className="flex-1 p-4 md:p-8 space-y-8 max-w-6xl mx-auto w-full">
+        {/* Alertas */}
+        {error && <div className="bg-red-50 text-red-700 rounded-xl border border-red-200 p-4 text-sm animate-in fade-in slide-in-from-top-2">{error}</div>}
+        {message && <div className="bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-200 p-4 text-sm animate-in fade-in slide-in-from-top-2">{message}</div>}
 
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-        <p className="text-lg font-semibold text-slate-800 mb-4">Lançar Receita</p>
-        <form onSubmit={handleCreate} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          <input
-            placeholder="Descrição"
-            className="border rounded-lg px-3 py-2"
-            value={form.description}
-            onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-          />
-          <input
-            type="number"
-            step="0.01"
-            placeholder="Valor"
-            className="border rounded-lg px-3 py-2"
-            value={form.amount}
-            onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
-          />
-          <select
-            className="border rounded-lg px-3 py-2"
-            value={form.category}
-            onChange={(e) => setForm((f) => ({ ...f, category: e.target.value as RevenueCategory }))}
-          >
-            <option value="hospedagem">Hospedagem</option>
-            <option value="consumo">Consumo</option>
-            <option value="outros">Outros</option>
-          </select>
-          <select
-            className="border rounded-lg px-3 py-2"
-            value={form.payment_method}
-            onChange={(e) => setForm((f) => ({ ...f, payment_method: e.target.value as PaymentMethod }))}
-          >
-            <option value="pix">PIX</option>
-            <option value="credito">Crédito</option>
-            <option value="debito">Débito</option>
-            <option value="dinheiro">Dinheiro</option>
-          </select>
-          <input
-            type="number"
-            placeholder="Reserva (opcional)"
-            className="border rounded-lg px-3 py-2"
-            value={form.booking_id}
-            onChange={(e) => setForm((f) => ({ ...f, booking_id: e.target.value }))}
-          />
-          <button type="submit" className="bg-blue-600 text-white px-5 py-2 rounded-lg shadow-md hover:bg-blue-700 transition font-semibold">Salvar</button>
-        </form>
-      </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-        <p className="text-lg font-semibold text-slate-800 mb-4">Transações</p>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="text-slate-600">
-                <th className="py-2">
-                  <button className="flex items-center gap-1 hover:underline" onClick={() => headerSort('created_at')}>
-                    <span>Data</span><span>{sortArrow('created_at')}</span>
-                  </button>
-                </th>
-                <th className="py-2">
-                  <button className="flex items-center gap-1 hover:underline" onClick={() => headerSort('description')}>
-                    <span>Descrição</span><span>{sortArrow('description')}</span>
-                  </button>
-                </th>
-                <th className="py-2">
-                  <button className="flex items-center gap-1 hover:underline" onClick={() => headerSort('amount')}>
-                    <span>Valor</span><span>{sortArrow('amount')}</span>
-                  </button>
-                </th>
-                <th className="py-2">
-                  <button className="flex items-center gap-1 hover:underline" onClick={() => headerSort('category')}>
-                    <span>Categoria</span><span>{sortArrow('category')}</span>
-                  </button>
-                </th>
-                <th className="py-2">
-                  <button className="flex items-center gap-1 hover:underline" onClick={() => headerSort('payment_method')}>
-                    <span>Forma</span><span>{sortArrow('payment_method')}</span>
-                  </button>
-                </th>
-                <th className="py-2">Reserva</th>
-                <th className="py-2">Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {revenues.map((r) => (
-                <tr key={r.id} className="border-t">
-                  <td className="py-2">{new Date(r.created_at).toLocaleString()}</td>
-                  <td className="py-2">{r.description}</td>
-                  <td className="py-2">R$ {r.amount.toFixed(2)}</td>
-                  <td className="py-2">{r.category}</td>
-                  <td className="py-2">{r.payment_method}</td>
-                  <td className="py-2">{r.booking_id ?? '-'}</td>
-                  <td className="py-2">
-                    <div className="flex gap-2">
-                      <button onClick={() => startEdit(r)} className="px-3 py-1 border rounded-lg bg-white hover:bg-slate-50">Editar</button>
-                      <button onClick={() => deleteRevenue(r.id)} className="px-3 py-1 border rounded-lg bg-white hover:bg-slate-50">Excluir</button>
+        {/* ══════════════════════════════════ ABA RECEITAS ══════════════════════════════════ */}
+        {activeTab === 'receitas' && (
+          <div className="space-y-6 animate-in fade-in duration-500">
+
+            <div className="flex justify-between items-end gap-4">
+              <div>
+                <h3 className="text-2xl font-bold text-slate-800">Receitas</h3>
+                <p className="text-slate-500 text-sm">Controle de entradas e pagamentos de hóspedes.</p>
+              </div>
+              <button
+                onClick={() => { setIsRevModalOpen(true); setEditing(null); setForm({ description: '', amount: '', category: 'hospedagem', payment_method: 'pix', booking_id: '' }); }}
+                className={btnPrimary + " flex items-center gap-2 py-3 px-6 shadow-blue-200 shadow-lg"}
+              >
+                <Plus size={18} /> Nova Receita
+              </button>
+            </div>
+
+            {/* Filtros */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+              <p className="text-base font-semibold text-slate-800 mb-4">Filtro de Período</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9 gap-3">
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Início</label><input type="date" className={inputCls} value={start} onChange={e => setStart(e.target.value)} /></div>
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Fim</label><input type="date" className={inputCls} value={end} onChange={e => setEnd(e.target.value)} /></div>
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Categoria</label>
+                  <select className={inputCls} value={filterCategory} onChange={e => setFilterCategory(e.target.value as RevenueCategory | '')}>
+                    <option value="">Todas</option><option value="hospedagem">Hospedagem</option><option value="consumo">Consumo</option><option value="outros">Outros</option>
+                  </select></div>
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Forma</label>
+                  <select className={inputCls} value={filterPayment} onChange={e => setFilterPayment(e.target.value as PaymentMethod | '')}>
+                    <option value="">Todas</option><option value="pix">PIX</option><option value="credito">Crédito</option><option value="debito">Débito</option><option value="dinheiro">Dinheiro</option>
+                  </select></div>
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Buscar</label><input className={inputCls} placeholder="Descrição..." value={search} onChange={e => setSearch(e.target.value)} /></div>
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Ordenar</label>
+                  <select className={inputCls} value={sortBy} onChange={e => setSortBy(e.target.value as typeof sortBy)}>
+                    <option value="created_at">Data</option><option value="amount">Valor</option><option value="description">Descrição</option><option value="category">Categoria</option><option value="payment_method">Forma</option>
+                  </select></div>
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Direção</label>
+                  <select className={inputCls} value={sortDir} onChange={e => setSortDir(e.target.value as typeof sortDir)}>
+                    <option value="desc">Desc</option><option value="asc">Asc</option>
+                  </select></div>
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Por página</label>
+                  <select className={inputCls} value={pageSize} onChange={e => setPageSize(parseInt(e.target.value))}>
+                    <option value={10}>10</option><option value={25}>25</option><option value={50}>50</option>
+                  </select></div>
+                <div className="flex items-end"><button onClick={loadReport} className={btnPrimary + ' w-full'}>Aplicar</button></div>
+              </div>
+            </div>
+
+            {/* KPI cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-white rounded-2xl border border-slate-200 p-5"><p className="text-xs text-slate-500 mb-1">Receita Total</p><p className="text-3xl font-black text-slate-800">{fmtCurrency(summary?.total_revenue ?? 0)}</p></div>
+              <div className="bg-white rounded-2xl border border-slate-200 p-5"><p className="text-xs text-slate-500 mb-1">Transações</p><p className="text-3xl font-black text-slate-800">{summary?.transactions ?? 0}</p></div>
+              <div className="bg-white rounded-2xl border border-slate-200 p-5"><p className="text-xs text-slate-500 mb-1">Última atualização</p><p className="text-xl font-bold text-slate-800">{new Date().toLocaleTimeString('pt-BR')}</p></div>
+            </div>
+
+            {/* Gráficos */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-white rounded-2xl border border-slate-200 p-6"><p className="text-sm font-semibold text-slate-700 mb-4">Por categoria</p><PieChart data={byCategory} /></div>
+              <div className="bg-white rounded-2xl border border-slate-200 p-6"><p className="text-sm font-semibold text-slate-700 mb-4">Por forma de pagamento</p><BarChart data={byPayment} /></div>
+            </div>
+
+            {/* Tabela de receitas */}
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="p-5 border-b border-slate-100"><p className="text-base font-semibold text-slate-800">Transações</p></div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-slate-600 text-xs">
+                    <tr>
+                      {(['created_at', 'description', 'amount', 'category', 'payment_method'] as const).map(field => (
+                        <th key={field} className="px-4 py-3 text-left font-semibold">
+                          <button className="hover:text-slate-900 flex items-center gap-1" onClick={() => headerSort(field)}>
+                            {{ created_at: 'Data', description: 'Descrição', amount: 'Valor', category: 'Categoria', payment_method: 'Forma' }[field]} {sortArrow(field)}
+                          </button>
+                        </th>
+                      ))}
+                      <th className="px-4 py-3 text-left font-semibold">Reserva</th>
+                      <th className="px-4 py-3"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {revenues.map(r => (
+                      <tr key={r.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-4 py-3 text-slate-600">{new Date(r.created_at).toLocaleDateString('pt-BR')}</td>
+                        <td className="px-4 py-3 font-medium text-slate-800">{r.description}</td>
+                        <td className="px-4 py-3 text-emerald-700 font-semibold">{fmtCurrency(r.amount)}</td>
+                        <td className="px-4 py-3"><span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded-lg text-xs font-medium capitalize">{r.category}</span></td>
+                        <td className="px-4 py-3 uppercase text-xs text-slate-500">{r.payment_method}</td>
+                        <td className="px-4 py-3 text-slate-500">{r.booking_id ?? '-'}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex gap-1">
+                            <button onClick={() => startEdit(r)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-700"><Pencil size={14} /></button>
+                            <button onClick={() => deleteRevenue(r.id)} className="p-1.5 rounded-lg hover:bg-red-50 text-slate-500 hover:text-red-600"><Trash2 size={14} /></button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {revenues.length === 0 && <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400 italic">Sem registros para este filtro</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+              {/* Paginação */}
+            </div>
+          </div>
+        )}
+
+        {/* ══════════════════════════════════ ABA DESPESAS ══════════════════════════════════ */}
+        {activeTab === 'despesas' && (
+          <div className="space-y-6 animate-in fade-in duration-500">
+
+            <div className="flex justify-between items-end gap-4">
+              <div>
+                <h3 className="text-2xl font-bold text-slate-800">Despesas</h3>
+                <p className="text-slate-500 text-sm">Gestão de contas a pagar e custos fixos.</p>
+              </div>
+              <button
+                onClick={() => { setIsExpModalOpen(true); setEditingExp(null); setExpForm({ description: '', amount: '', category: 'outros', due_date: '', payment_method: '', notes: '' }); }}
+                className={btnPrimary + " flex items-center gap-2 py-3 px-6 shadow-blue-200 shadow-lg"}
+              >
+                <Plus size={18} /> Nova Despesa
+              </button>
+            </div>
+
+            {/* Filtros despesas */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-5">
+              <div className="flex flex-wrap gap-3 items-end">
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Início</label><input type="date" className={inputCls} value={expStart} onChange={e => setExpStart(e.target.value)} /></div>
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Fim</label><input type="date" className={inputCls} value={expEnd} onChange={e => setExpEnd(e.target.value)} /></div>
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Categoria</label>
+                  <select className={inputCls + ' min-w-[140px]'} value={expFilterCat} onChange={e => setExpFilterCat(e.target.value as ExpenseCategory | '')}>
+                    <option value="">Todas</option>
+                    {Object.entries(EXPENSE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select></div>
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Status</label>
+                  <select className={inputCls} value={expFilterPaid} onChange={e => setExpFilterPaid(e.target.value as typeof expFilterPaid)}>
+                    <option value="all">Todas</option><option value="pending">Pendentes</option><option value="paid">Pagas</option>
+                  </select></div>
+                <button onClick={loadExpenses} className={btnPrimary}>Filtrar</button>
+              </div>
+            </div>
+
+            {/* Tabela de despesas */}
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-slate-600 text-xs">
+                    <tr>
+                      <th className="px-4 py-3 text-left font-semibold">Descrição</th>
+                      <th className="px-4 py-3 text-left font-semibold">Valor</th>
+                      <th className="px-4 py-3 text-left font-semibold">Categoria</th>
+                      <th className="px-4 py-3 text-left font-semibold">Vencimento</th>
+                      <th className="px-4 py-3 text-left font-semibold">Status</th>
+                      <th className="px-4 py-3 text-left font-semibold">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {expLoading && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400 text-xs">Carregando...</td></tr>}
+                    {!expLoading && expenses.map(exp => {
+                      const overdue = !exp.is_paid && exp.due_date < new Date().toISOString().slice(0, 10);
+                      return (
+                        <tr key={exp.id} className={`hover:bg-slate-50 transition-colors ${overdue ? 'bg-red-50/40' : ''}`}>
+                          <td className="px-4 py-3 font-medium text-slate-800">
+                            {exp.description}
+                            {exp.notes && <p className="text-xs text-slate-400 mt-0.5">{exp.notes}</p>}
+                          </td>
+                          <td className="px-4 py-3 text-red-600 font-semibold">{fmtCurrency(exp.amount)}</td>
+                          <td className="px-4 py-3"><span className="bg-orange-50 text-orange-700 px-2 py-0.5 rounded-lg text-xs font-medium">{EXPENSE_LABELS[exp.category] ?? exp.category}</span></td>
+                          <td className={`px-4 py-3 text-xs ${overdue ? 'text-red-600 font-bold' : 'text-slate-500'}`}>{fmtDate(exp.due_date)}{overdue && <span className="ml-1 text-[10px] bg-red-100 text-red-600 px-1 rounded">VENCIDA</span>}</td>
+                          <td className="px-4 py-3">
+                            {exp.is_paid
+                              ? <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg text-xs font-semibold"><CheckCircle size={11} />Paga{exp.paid_date && ` · ${fmtDate(exp.paid_date)}`}</span>
+                              : <span className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 px-2 py-0.5 rounded-lg text-xs font-semibold"><Clock size={11} />Pendente</span>
+                            }
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex gap-1">
+                              {!exp.is_paid && <button onClick={() => markAsPaid(exp)} title="Marcar como paga" className="p-1.5 rounded-lg hover:bg-emerald-50 text-slate-500 hover:text-emerald-700"><CheckCircle size={14} /></button>}
+                              <button onClick={() => startEditExp(exp)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-700"><Pencil size={14} /></button>
+                              <button onClick={() => deleteExpense(exp.id)} className="p-1.5 rounded-lg hover:bg-red-50 text-slate-500 hover:text-red-600"><Trash2 size={14} /></button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {!expLoading && expenses.length === 0 && <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-400 italic">Nenhuma despesa encontrada</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ══════════════════════════════════ ABA FLUXO DE CAIXA ══════════════════════════════════ */}
+        {activeTab === 'fluxo' && (
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div>
+              <h3 className="text-2xl font-bold text-slate-800">Fluxo de Caixa</h3>
+              <p className="text-slate-500 text-sm">Visão consolidada de entradas e saídas.</p>
+            </div>
+            {/* Filtro período */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-5">
+              <div className="flex flex-wrap gap-3 items-end">
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Início</label><input type="date" className={inputCls} value={cfStart} onChange={e => setCfStart(e.target.value)} /></div>
+                <div><label className="block text-xs font-medium text-slate-600 mb-1">Fim</label><input type="date" className={inputCls} value={cfEnd} onChange={e => setCfEnd(e.target.value)} /></div>
+                <button onClick={loadCashFlow} className={btnPrimary}>Aplicar</button>
+              </div>
+            </div>
+
+            {/* Totais — vindos diretamente do backend (pré-calculados) */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-gradient-to-br from-emerald-600 to-teal-700 text-white rounded-2xl p-5">
+                <p className="text-xs opacity-70 mb-1">Total Receitas</p>
+                <p className="text-3xl font-black">{fmtCurrency(cfSummary.total_revenue)}</p>
+              </div>
+              <div className="bg-gradient-to-br from-red-500 to-rose-600 text-white rounded-2xl p-5">
+                <p className="text-xs opacity-70 mb-1">Total Despesas Pagas</p>
+                <p className="text-3xl font-black">{fmtCurrency(cfSummary.total_expense)}</p>
+              </div>
+              <div className={`text-white rounded-2xl p-5 bg-gradient-to-br ${cfSummary.net_result >= 0 ? 'from-blue-600 to-indigo-700' : 'from-slate-600 to-slate-700'}`}>
+                <p className="text-xs opacity-70 mb-1">Saldo Líquido</p>
+                <p className="text-3xl font-black">{fmtCurrency(cfSummary.net_result)}</p>
+                {cfSummary.pending_expenses > 0 && <p className="text-[10px] opacity-60 mt-1">{fmtCurrency(cfSummary.pending_expenses)} em contas pendentes</p>}
+              </div>
+            </div>
+
+            {/* Tabela diária */}
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="p-4 border-b border-slate-100 flex justify-between items-center">
+                <p className="text-sm font-semibold text-slate-800">Detalhamento Diário</p>
+              </div>
+              {cfLoading ? <div className="p-8 text-center text-slate-400 text-sm">Carregando...</div> : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-xs text-slate-600">
+                      <tr>
+                        <th className="px-4 py-3 text-left font-semibold">Data</th>
+                        <th className="px-4 py-3 text-right font-semibold text-emerald-700">+ Receitas</th>
+                        <th className="px-4 py-3 text-right font-semibold text-red-600">− Despesas</th>
+                        <th className="px-4 py-3 text-right font-semibold">= Saldo</th>
+                        <th className="px-4 py-3 text-right font-semibold">Gráfico</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {cashFlow.map(row => {
+                        const maxVal = Math.max(...cashFlow.map(r => r.revenue || 0), 1);
+                        return (
+                          <tr key={row.date} className="hover:bg-slate-50 transition-colors">
+                            <td className="px-4 py-3 font-medium text-slate-700">{fmtDate(row.date)}</td>
+                            <td className="px-4 py-3 text-right text-emerald-700 font-semibold">{fmtCurrency(row.revenue)}</td>
+                            <td className="px-4 py-3 text-right text-red-600 font-semibold">{row.expense > 0 ? fmtCurrency(row.expense) : '—'}</td>
+                            {/* campo é 'net' no backend, não 'balance' */}
+                            <td className={`px-4 py-3 text-right font-bold ${row.net >= 0 ? 'text-slate-800' : 'text-red-600'}`}>{fmtCurrency(row.net)}</td>
+                            <td className="px-4 py-3 w-32">
+                              <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                                <div className={`h-full rounded-full ${row.net >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`} style={{ width: `${Math.min((Math.abs(row.net || 0) / maxVal) * 100, 100)}%` }} />
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {cashFlow.length === 0 && <tr><td colSpan={5} className="px-4 py-10 text-center text-slate-400 italic">Nenhum dado no período</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ══════════════════════════════════ ABA COMPARATIVO ══════════════════════════════════ */}
+        {activeTab === 'comparativo' && (
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div>
+              <h3 className="text-2xl font-bold text-slate-800">Comparativo</h3>
+              <p className="text-slate-500 text-sm">Analise o desempenho entre diferentes períodos.</p>
+            </div>
+            {/* Seletor de períodos */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-6">
+              <p className="text-base font-semibold text-slate-800 mb-4 flex items-center gap-2"><ArrowRightLeft size={16} />Comparar dois períodos</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50">
+                  <p className="text-xs font-bold text-blue-700 uppercase mb-3">Período A</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div><label className="text-xs text-slate-600 block mb-1">Início</label><input type="date" className={inputCls} value={p1Start} onChange={e => setP1Start(e.target.value)} /></div>
+                    <div><label className="text-xs text-slate-600 block mb-1">Fim</label><input type="date" className={inputCls} value={p1End} onChange={e => setP1End(e.target.value)} /></div>
+                  </div>
+                </div>
+                <div className="p-4 rounded-xl border border-violet-200 bg-violet-50/50">
+                  <p className="text-xs font-bold text-violet-700 uppercase mb-3">Período B</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div><label className="text-xs text-slate-600 block mb-1">Início</label><input type="date" className={inputCls} value={p2Start} onChange={e => setP2Start(e.target.value)} /></div>
+                    <div><label className="text-xs text-slate-600 block mb-1">Fim</label><input type="date" className={inputCls} value={p2End} onChange={e => setP2End(e.target.value)} /></div>
+                  </div>
+                </div>
+              </div>
+              <button onClick={loadCompare} disabled={cmpLoading} className={btnPrimary + ' mt-4'}>
+                {cmpLoading ? 'Comparando...' : 'Comparar Períodos'}
+              </button>
+            </div>
+
+            {/* Resultado */}
+            {cmpResult && (() => {
+              const { period_a, period_b, delta } = cmpResult;
+              // backend: period_a.net (não .balance), delta.revenue.percent (não .revenue_pct)
+              const rows = [
+                { label: 'Receitas', a: period_a.revenue, b: period_b.revenue, dpct: delta.revenue?.percent ?? 0, inverted: false },
+                { label: 'Despesas', a: period_a.expense, b: period_b.expense, dpct: delta.expense?.percent ?? 0, inverted: true },
+                { label: 'Saldo', a: period_a.net, b: period_b.net, dpct: delta.net?.percent ?? 0, inverted: false },
+              ];
+              return (
+                <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+                  <div className="grid grid-cols-3 text-center text-xs font-bold uppercase border-b border-slate-100">
+                    <div className="p-4 text-blue-700 bg-blue-50">Período A<br /><span className="text-[10px] font-normal normal-case text-slate-500">{fmtDate(period_a.start)} – {fmtDate(period_a.end)}</span></div>
+                    <div className="p-4 text-slate-600">Indicador</div>
+                    <div className="p-4 text-violet-700 bg-violet-50">Período B<br /><span className="text-[10px] font-normal normal-case text-slate-500">{fmtDate(period_b.start)} – {fmtDate(period_b.end)}</span></div>
+                  </div>
+                  {rows.map(row => (
+                    <div key={row.label} className="grid grid-cols-3 text-center border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors">
+                      <div className="p-4 text-lg font-black text-blue-800">{fmtCurrency(row.a)}</div>
+                      <div className="p-4 flex flex-col items-center justify-center gap-1">
+                        <span className="text-xs font-semibold text-slate-600">{row.label}</span>
+                        <Delta pct={row.dpct} inverted={row.inverted} />
+                        <span className="text-[10px] text-slate-400">{row.b >= row.a ? '+' : ''}{fmtCurrency(row.b - row.a)}</span>
+                      </div>
+                      <div className="p-4 text-lg font-black text-violet-800">{fmtCurrency(row.b)}</div>
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="flex items-center justify-between mt-4">
-          <p className="text-sm text-slate-600">Página {page} de {Math.max(pages, 1)}</p>
-          <div className="flex items-center gap-2">
-            <button
-              className="px-3 py-1 rounded-lg border bg-white hover:bg-slate-50"
-              disabled={page <= 1}
-              onClick={() => { setPage((p) => Math.max(1, p - 1)); setTimeout(loadReport, 0); }}
-            >
-              Anterior
-            </button>
-            {getPageNumbers(pages, page).map((n, idx) => (
-              typeof n === 'number' ? (
-                <button
-                  key={`${n}-${idx}`}
-                  className={`px-3 py-1 rounded-lg border ${n === page ? 'bg-blue-600 text-white border-blue-600' : 'bg-white hover:bg-slate-50'}`}
-                  onClick={() => { setPage(n); setTimeout(loadReport, 0); }}
-                >
-                  {n}
-                </button>
-              ) : (
-                <span key={`dots-${idx}`} className="px-2 text-slate-500">…</span>
-              )
-            ))}
-            <button
-              className="px-3 py-1 rounded-lg border bg-white hover:bg-slate-50"
-              disabled={page >= pages}
-              onClick={() => { setPage((p) => p + 1); setTimeout(loadReport, 0); }}
-            >
-              Próxima
-            </button>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
-        </div>
-        {editing && (
-          <div className="mt-6 border-t pt-4">
-            <p className="text-lg font-semibold text-slate-800 mb-3">Editar Receita</p>
-            <form onSubmit={submitEdit} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              <input className="border rounded-lg px-3 py-2" placeholder="Descrição" value={editForm.description} onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))} />
-              <input className="border rounded-lg px-3 py-2" type="number" step="0.01" placeholder="Valor" value={editForm.amount} onChange={(e) => setEditForm((f) => ({ ...f, amount: e.target.value }))} />
-              <select className="border rounded-lg px-3 py-2" value={editForm.category} onChange={(e) => setEditForm((f) => ({ ...f, category: e.target.value as RevenueCategory }))}>
-                <option value="">Categoria</option>
-                <option value="hospedagem">Hospedagem</option>
-                <option value="consumo">Consumo</option>
-                <option value="outros">Outros</option>
-              </select>
-              <select className="border rounded-lg px-3 py-2" value={editForm.payment_method} onChange={(e) => setEditForm((f) => ({ ...f, payment_method: e.target.value as PaymentMethod }))}>
-                <option value="">Forma</option>
-                <option value="pix">PIX</option>
-                <option value="credito">Crédito</option>
-                <option value="debito">Débito</option>
-                <option value="dinheiro">Dinheiro</option>
-              </select>
-              <input className="border rounded-lg px-3 py-2" type="number" placeholder="Reserva (opcional)" value={editForm.booking_id} onChange={(e) => setEditForm((f) => ({ ...f, booking_id: e.target.value }))} />
-              <div className="flex gap-2">
-                <button type="submit" className="bg-blue-600 text-white px-5 py-2 rounded-lg shadow-md hover:bg-blue-700 transition font-semibold">Salvar alterações</button>
-                <button type="button" onClick={() => setEditing(null)} className="border px-5 py-2 rounded-lg bg-white hover:bg-slate-50">Cancelar</button>
+        )}
+
+        {/* ══════════════════════════════════ ABA RELATÓRIOS ══════════════════════════════════ */}
+        {activeTab === 'relatorios' && (
+          <div className="space-y-6 animate-in fade-in duration-500 max-w-2xl">
+            <div className="flex justify-between items-end">
+              <div>
+                <h3 className="text-2xl font-black text-slate-800 tracking-tight">Relatórios Elite</h3>
+                <p className="text-slate-500 text-sm">Gere documentos de padrão bancário para análise ou contabilidade.</p>
+              </div>
+              <div className="bg-blue-600/5 p-2 rounded-2xl border border-blue-100">
+                <TrendingUp className="text-blue-600" size={24} />
+              </div>
+            </div>
+
+            <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-200 overflow-hidden">
+              <div className="bg-slate-900 p-8 text-white">
+                <h4 className="font-bold text-xl mb-1">Configurar Exportação Profissional</h4>
+                <p className="text-slate-400 text-xs">O documento será gerado seguindo as diretrizes visuais Qualitec.</p>
+              </div>
+
+              <div className="p-10 space-y-8">
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Data de Início</label>
+                    <input
+                      type="date"
+                      className={inputCls + " text-sm font-semibold py-3"}
+                      value={exportConfig.start}
+                      onChange={e => setExportConfig({ ...exportConfig, start: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Data de Término</label>
+                    <input
+                      type="date"
+                      className={inputCls + " text-sm font-semibold py-3"}
+                      value={exportConfig.end}
+                      onChange={e => setExportConfig({ ...exportConfig, end: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Nível de Detalhamento</label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <button
+                      onClick={() => setExportConfig({ ...exportConfig, mode: 'summary' })}
+                      className={`p-5 rounded-3xl border-2 text-left transition-all relative overflow-hidden group ${exportConfig.mode === 'summary'
+                          ? 'border-blue-600 bg-blue-50/50 shadow-md shadow-blue-50'
+                          : 'border-slate-100 bg-slate-50/30 hover:border-slate-200 hover:bg-slate-50'
+                        }`}
+                    >
+                      <div className="flex justify-between items-center mb-2">
+                        <p className={`font-black text-sm ${exportConfig.mode === 'summary' ? 'text-blue-700' : 'text-slate-600'}`}>Resumido</p>
+                        {exportConfig.mode === 'summary' && <CheckCircle size={18} className="text-blue-600" />}
+                      </div>
+                      <p className="text-[10px] text-slate-500 font-medium leading-relaxed">KPIs comparativos, gráficos de categoria e visão geral corporativa de saldo.</p>
+                    </button>
+
+                    <button
+                      onClick={() => setExportConfig({ ...exportConfig, mode: 'full' })}
+                      className={`p-5 rounded-3xl border-2 text-left transition-all relative overflow-hidden group ${exportConfig.mode === 'full'
+                          ? 'border-blue-700 bg-blue-50/50 shadow-md shadow-blue-50'
+                          : 'border-slate-100 bg-slate-50/30 hover:border-slate-200 hover:bg-slate-50'
+                        }`}
+                    >
+                      <div className="flex justify-between items-center mb-2">
+                        <p className={`font-black text-sm ${exportConfig.mode === 'full' ? 'text-blue-800' : 'text-slate-600'}`}>Completo</p>
+                        {exportConfig.mode === 'full' && <CheckCircle size={18} className="text-blue-700" />}
+                      </div>
+                      <p className="text-[10px] text-slate-500 font-medium leading-relaxed">Inclui Extrato Analítico detalhado e Fluxo de Caixa Diário completo para auditoria.</p>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="pt-6">
+                  <button
+                    onClick={async () => {
+                      setMessage('Iniciando geração do PDF executivo... aguarde um instante.');
+                      try {
+                        const res = await api.get('/finance/reports/export', {
+                          params: exportConfig,
+                          responseType: 'blob'
+                        });
+                        const url = window.URL.createObjectURL(new Blob([res.data]));
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.setAttribute('download', `Relatorio_Financeiro_${exportConfig.mode}_${new Date().toISOString().slice(0, 10)}.pdf`);
+                        document.body.appendChild(link);
+                        link.click();
+                        setMessage('Relatório financeiro gerado e pronto para download!');
+                      } catch {
+                        setError('Falha ao processar relatório. Tente um período com mais transações.');
+                      }
+                    }}
+                    className="w-full bg-blue-600 hover:bg-slate-900 text-white py-5 rounded-3xl font-black text-sm tracking-widest shadow-xl shadow-blue-100 transition-all flex items-center justify-center gap-3 active:scale-[0.98]"
+                  >
+                    📥 BAIXAR RELATÓRIO PDF
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 bg-blue-50/50 rounded-3xl border border-blue-100 flex items-start gap-4">
+              <div className="bg-blue-600 text-white p-2 rounded-xl">
+                <FileText size={20} />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-blue-900 uppercase tracking-tighter mb-1">Sistema Profissional ParcerIA</p>
+                <p className="text-xs text-blue-700/80 leading-relaxed">Este relatório utiliza o motor Executive Engine v2 para garantir precisão e elegância bancária. Ideal para tomada de decisão estratégica.</p>
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* ── Modais de Formulário ── */}
+
+      {/* Modal Receitas */}
+      {isRevModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+              <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <Plus className="text-blue-600" size={20} />
+                {editing ? `Editar Receita #${editing.id}` : 'Lançar Nova Receita'}
+              </h3>
+              <button onClick={closeFormModals} className="text-slate-400 hover:text-slate-600 p-2 hover:bg-slate-100 rounded-full transition-colors">
+                <Plus size={24} className="rotate-45" />
+              </button>
+            </div>
+            <form onSubmit={editing ? submitEdit : handleCreate} className="p-8 space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Descrição da Receita</label>
+                  <input
+                    placeholder="Ex: Diária quarto 101, Venda de refrigerante..."
+                    required
+                    className={inputCls + " text-lg py-3"}
+                    value={editing ? editForm.description : form.description}
+                    onChange={e => editing ? setEditForm({ ...editForm, description: e.target.value }) : setForm({ ...form, description: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Valor (R$)</label>
+                  <input
+                    type="number" step="0.01"
+                    placeholder="0,00"
+                    required
+                    className={inputCls + " text-lg py-3 font-mono"}
+                    value={editing ? editForm.amount : form.amount}
+                    onChange={e => editing ? setEditForm({ ...editForm, amount: e.target.value }) : setForm({ ...form, amount: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Categoria</label>
+                  <select
+                    className={inputCls + " py-3"}
+                    value={editing ? editForm.category : form.category}
+                    onChange={e => editing ? setEditForm({ ...editForm, category: e.target.value as RevenueCategory }) : setForm({ ...form, category: e.target.value as RevenueCategory })}
+                  >
+                    <option value="hospedagem">Hospedagem</option>
+                    <option value="consumo">Consumo</option>
+                    <option value="outros">Outros</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Forma de Pagamento</label>
+                  <select
+                    className={inputCls + " py-3"}
+                    value={editing ? editForm.payment_method : form.payment_method}
+                    onChange={e => editing ? setEditForm({ ...editForm, payment_method: e.target.value as PaymentMethod }) : setForm({ ...form, payment_method: e.target.value as PaymentMethod })}
+                  >
+                    <option value="pix">PIX</option>
+                    <option value="credito">Crédito</option>
+                    <option value="debito">Débito</option>
+                    <option value="dinheiro">Dinheiro</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Reserva Vinculada (Opcional)</label>
+                  <input
+                    type="number"
+                    placeholder="ID da Reserva"
+                    className={inputCls + " py-3"}
+                    value={editing ? editForm.booking_id : form.booking_id}
+                    onChange={e => editing ? setEditForm({ ...editForm, booking_id: e.target.value }) : setForm({ ...form, booking_id: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button type="button" onClick={closeFormModals} className="flex-1 py-4 text-slate-600 font-bold hover:bg-slate-50 rounded-2xl transition-all border border-transparent hover:border-slate-200">
+                  Cancelar
+                </button>
+                <button type="submit" className="flex-1 py-4 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100">
+                  {editing ? 'Salvar Alterações' : 'Lançar Receita'}
+                </button>
               </div>
             </form>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {/* Modal Despesas */}
+      {isExpModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+              <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <Plus className="text-red-500" size={20} />
+                {editingExp ? `Editar Despesa` : 'Lançar Nova Despesa'}
+              </h3>
+              <button onClick={closeFormModals} className="text-slate-400 hover:text-slate-600 p-2 hover:bg-slate-100 rounded-full transition-colors">
+                <Plus size={24} className="rotate-45" />
+              </button>
+            </div>
+            <form onSubmit={editingExp ? submitEditExp : createExpense} className="p-8 space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Descrição da Despesa</label>
+                  <input
+                    placeholder="Ex: Conta de Luz, Manutenção Ar Condicionado..."
+                    required
+                    className={inputCls + " text-lg py-3"}
+                    value={expForm.description}
+                    onChange={e => setExpForm({ ...expForm, description: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Valor (R$)</label>
+                  <input
+                    type="number" step="0.01"
+                    placeholder="0,00"
+                    required
+                    className={inputCls + " text-lg py-3 font-mono"}
+                    value={expForm.amount}
+                    onChange={e => setExpForm({ ...expForm, amount: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Categoria</label>
+                  <select
+                    required
+                    className={inputCls + " py-3"}
+                    value={expForm.category}
+                    onChange={e => setExpForm({ ...expForm, category: e.target.value as ExpenseCategory })}
+                  >
+                    {Object.entries(EXPENSE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Vencimento</label>
+                  <input
+                    type="date"
+                    required
+                    className={inputCls + " py-3"}
+                    value={expForm.due_date}
+                    onChange={e => setExpForm({ ...expForm, due_date: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Observações</label>
+                  <input
+                    placeholder="Opcional..."
+                    className={inputCls + " py-3"}
+                    value={expForm.notes || ''}
+                    onChange={e => setExpForm({ ...expForm, notes: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button type="button" onClick={closeFormModals} className="flex-1 py-4 text-slate-600 font-bold hover:bg-slate-50 rounded-2xl transition-all border border-transparent hover:border-slate-200">
+                  Cancelar
+                </button>
+                <button type="submit" className="flex-1 py-4 bg-red-600 text-white font-bold rounded-2xl hover:bg-red-700 transition-all shadow-lg shadow-red-100">
+                  {editingExp ? 'Salvar Alterações' : 'Lançar Despesa'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Exportação Elite */}
+      {isExportModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="bg-gradient-to-r from-blue-700 to-indigo-800 p-6 text-white text-center">
+              <h3 className="text-xl font-bold">Relatório Executivo Elite</h3>
+              <p className="text-blue-100 text-xs mt-1">Gere um documento de padrão bancário para análise</p>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Início</label>
+                  <input type="date" className={inputCls} value={exportConfig.start} onChange={e => setExportConfig({ ...exportConfig, start: e.target.value })} />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Fim</label>
+                  <input type="date" className={inputCls} value={exportConfig.end} onChange={e => setExportConfig({ ...exportConfig, end: e.target.value })} />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nível de Detalhamento</label>
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <button
+                    onClick={() => setExportConfig({ ...exportConfig, mode: 'summary' })}
+                    className={`p-3 rounded-xl border text-center transition ${exportConfig.mode === 'summary' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-500'}`}
+                  >
+                    <p className="font-bold text-sm">Resumido</p>
+                    <p className="text-[10px] opacity-70">KPIs e Gráficos</p>
+                  </button>
+                  <button
+                    onClick={() => setExportConfig({ ...exportConfig, mode: 'full' })}
+                    className={`p-3 rounded-xl border text-center transition ${exportConfig.mode === 'full' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-50'}`}
+                  >
+                    <p className="font-bold text-sm">Completo</p>
+                    <p className="text-[10px] opacity-70">Extrato + Fluxo</p>
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-4">
+                <button onClick={closeFormModals} className={btnSecondary + ' flex-1'}>Cancelar</button>
+                <button
+                  onClick={async () => {
+                    setMessage('Gerando relatório... aguarde um instante.');
+                    try {
+                      // Usar window.location.origin + api.defaults.baseURL para construir a URL se necessário, 
+                      // mas aqui vamos usar o axios com responseType blob
+                      const res = await api.get('/finance/reports/export', {
+                        params: exportConfig,
+                        responseType: 'blob'
+                      });
+                      const url = window.URL.createObjectURL(new Blob([res.data]));
+                      const link = document.createElement('a');
+                      link.href = url;
+                      link.setAttribute('download', `Relatorio_Financeiro_${exportConfig.mode}_${new Date().toISOString().slice(0, 10)}.pdf`);
+                      document.body.appendChild(link);
+                      link.click();
+                      closeFormModals();
+                    } catch { setError('Falha ao exportar PDF'); }
+                  }}
+                  className={btnPrimary + ' flex-1'}
+                >
+                  Download PDF
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

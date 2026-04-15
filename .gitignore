@@ -21,3 +21,5 @@ Thumbs.db
 build_output.txt
 resumo.txt
 docker-compose.yml
+backend/reports/
+*.pdf

@@ -153,6 +153,14 @@ class ProductCreate(ProductBase):
 class ProductResponse(ProductBase):
     id: int
     class Config: from_attributes = True
+
+class ProductCategoryCreate(BaseModel):
+    name: str
+
+class ProductCategoryResponse(BaseModel):
+    id: int
+    name: str
+    class Config: from_attributes = True
  
 class ProductUpdate(BaseModel):
     name: Optional[str] = None
@@ -172,7 +180,9 @@ class ProductUpdate(BaseModel):
 
 class StockDashboard(BaseModel):
     total_products: int
-    total_value: float
+    total_value: float # Preço de Venda
+    total_cost_value: float # Preço de Custo
+    potential_profit: float # Lucro Potencial
     low_stock_count: int
     low_stock_items: List[ProductResponse]
  
@@ -241,6 +251,7 @@ class CheckInRequest(BaseModel):
 
 class CheckoutPaymentRequest(BaseModel):
     payment_method: models.PaymentMethod
+    discount: float = 0.0
 
 class ConsumptionRequest(BaseModel):
     room_id: str

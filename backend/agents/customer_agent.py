@@ -77,9 +77,8 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
 
     @tool
     def robot_search_events(query: str) -> dict:
-        """Micro-robô de consulta de eventos locais."""
-        # Lógica simplificada ou importada se disponível
-        return {"results": []}
+        """Micro-robô de consulta de eventos locais. Use sempre que o hóspede mencionar um evento pelo nome (ex: Hosana Brasil, Canção Nova, Kairós)."""
+        return shared_tools.search_events_logic(tenant_id, query)
 
     @tool
     def robot_book_with_payment(guest_id: int, room_id: str, check_in: str, check_out: str, group_size: int, companions: List[dict] = []) -> dict:
@@ -163,6 +162,11 @@ REGRAS OBRIGATÓRIAS DE ORQUESTRAÇÃO:
    - É terminantemente PROIBIDO pedir CPF ou Nome se você já tem o ID da reserva.
    - Se o hóspede pedir para pagar uma reserva e der o ID, use 'robot_get_payment_info' na hora.
    - Use 'robot_find_booking' para validar IDs ou buscar reservas se o hóspede apenas der o CPF/Nome.
+
+8. INTELIGÊNCIA DE EVENTOS:
+   - Se o hóspede mencionar um evento pelo nome (ex: "vaga para o Hosana", "Cancao Nova"), você DEVE usar obrigatoriamente o 'robot_search_events' antes de perguntar as datas.
+   - Se o evento for encontrado, apresente as datas ao hóspede e use-as automaticamente para chamar o 'robot_check_availability'.
+   - Informe ao hóspede que você localizou o evento e está verificando a disponibilidade para o período correspondente.
 
 ESTILO: Profissional, eficiente e acolhedor, mas focado na conclusão correta da transação.
 """)

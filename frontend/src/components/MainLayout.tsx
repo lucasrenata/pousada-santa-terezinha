@@ -13,7 +13,7 @@ export default function MainLayout() {
     { label: 'Quartos', icon: BedDouble, path: '/rooms', roles: ['admin', 'recepcionista', 'servico'] },
     { label: 'Reservas', icon: CalendarDays, path: '/bookings', roles: ['admin', 'recepcionista'] },
     { label: 'Estoque', icon: Package, path: '/inventory', roles: ['admin', 'recepcionista'] },
-    { label: 'Receitas', icon: DollarSign, path: '/finance', roles: ['admin'] },
+    { label: 'Financeiro', icon: DollarSign, path: '/finance', roles: ['admin'] },
     { label: 'Eventos', icon: CalendarHeart, path: '/events', roles: ['admin', 'recepcionista'] },
     { label: 'Usuários', icon: Users, path: '/admin/users', roles: ['admin'] },
     { label: 'Configurações', icon: Settings, path: '/settings', roles: ['admin'] },

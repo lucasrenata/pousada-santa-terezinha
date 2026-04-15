@@ -9,6 +9,7 @@ router = APIRouter(prefix="/guests", tags=["Guests"])
 
 @router.post("/", response_model=schemas.GuestResponse)
 def create_guest(guest: schemas.GuestCreate, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
+    set_tenant_context(db, current_user.tenant_id)
     if db.query(models.Guest).filter(models.Guest.document == guest.document).first():
         raise HTTPException(status_code=400, detail="Este CPF/RG já está cadastrado no sistema.")
     
@@ -51,6 +52,7 @@ def create_guest_public(guest_data: schemas.GuestPublicCreate, db: Session = Dep
 
 @router.get("/", response_model=List[schemas.GuestResponse])
 def list_guests(q: Optional[str] = None, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
+    set_tenant_context(db, current_user.tenant_id)
     query = db.query(models.Guest)
     if q:
         query = query.filter(
@@ -62,6 +64,7 @@ def list_guests(q: Optional[str] = None, db: Session = Depends(get_db), current_
 
 @router.get("/{guest_id}", response_model=schemas.GuestResponse)
 def get_guest(guest_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
+    set_tenant_context(db, current_user.tenant_id)
     guest = db.query(models.Guest).filter(models.Guest.id == guest_id).first()
     if not guest:
         raise HTTPException(status_code=404, detail="Hóspede não encontrado")
@@ -69,6 +72,7 @@ def get_guest(guest_id: int, db: Session = Depends(get_db), current_user = Depen
 
 @router.put("/{guest_id}", response_model=schemas.GuestResponse)
 def update_guest(guest_id: int, data: schemas.GuestUpdate, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
+    set_tenant_context(db, current_user.tenant_id)
     guest = db.query(models.Guest).filter(models.Guest.id == guest_id).first()
     if not guest:
         raise HTTPException(status_code=404, detail="Hóspede não encontrado")
@@ -82,6 +86,7 @@ def update_guest(guest_id: int, data: schemas.GuestUpdate, db: Session = Depends
 
 @router.delete("/{guest_id}")
 def delete_guest(guest_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
+    set_tenant_context(db, current_user.tenant_id)
     guest = db.query(models.Guest).filter(models.Guest.id == guest_id).first()
     if not guest:
         raise HTTPException(status_code=404, detail="Hóspede não encontrado")

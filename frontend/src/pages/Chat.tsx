@@ -263,7 +263,7 @@ export default function Chat() {
       {/* Footer Tips */}
       <div className="flex flex-wrap gap-4 px-2">
         <div className="flex items-center gap-2 text-xs text-slate-400 font-medium">
-          <Check size={14} className="text-green-500" /> GPT-4o Mini Ativado
+          <Check size={14} className="text-green-500" /> IA do Sistema Ativada
         </div>
         <div className="flex items-center gap-2 text-xs text-slate-400 font-medium">
            <AlertCircle size={14} className="text-indigo-500" /> Assistente Administrativo

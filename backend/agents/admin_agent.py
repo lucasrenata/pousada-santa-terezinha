@@ -3,17 +3,36 @@ import os
 from sqlalchemy.orm import Session
 import models
 from database import SessionLocal, set_tenant_context
-from utils.pdf_reports import generate_financial_report, generate_inventory_report, generate_shopping_list_report
+from utils.finance_pdf import generate_financial_report
+from utils.inventory_pdf import generate_inventory_report, generate_shopping_list_report
 from datetime import datetime, date, timedelta
 from typing import Optional, List
 
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode
 from agents import shared_tools
+
+# =============================================================================
+# CONVERSÃO DE HISTÓRICO
+# =============================================================================
+def convert_history_to_langchain(history: list):
+    """Converte o histórico do DB para o formato LangChain."""
+    lc_messages = []
+    for h in history[-15:]:
+        role = h.get("role")
+        content = h.get("content", "")
+        # No futuro, se salvarmos tool_calls no DB, recuperamos aqui
+        tool_calls = h.get("tool_calls")
+        if role == "user": lc_messages.append(HumanMessage(content=content))
+        elif role == "assistant":
+            if tool_calls: lc_messages.append(AIMessage(content=content, tool_calls=tool_calls))
+            else: lc_messages.append(AIMessage(content=content))
+        elif role == "tool": lc_messages.append(ToolMessage(content=content, tool_call_id=h.get("tool_call_id", "")))
+    return lc_messages
 
 # =============================================================================
 # MICRO-ROBÔS: LÓGICAS ESPECIALIZADAS (BACKEND)
@@ -204,64 +223,106 @@ def finance_summary_logic(tenant_id: int) -> dict:
         total = sum(r.amount for r in revenues)
         return {"receita_total": total, "total_transacoes": len(revenues)}
 
-def pdf_generator_logic(tenant_id: int, report_type: str) -> dict:
+def pdf_generator_logic(tenant_id: int, report_type: str, mode: str = "full", start_date: str = None, end_date: str = None) -> dict:
     """Lógica atômica e motor de geração de arquivos PDF analíticos."""
     with SessionLocal() as db:
         set_tenant_context(db, tenant_id)
-        # Usa /api como padrão para que o link funcione no proxy da VPS.
         base_url = os.getenv("BASE_URL", "/api")
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
         
+        # Filtros de Data
+        end_d = date.today()
+        if end_date:
+            try: end_d = datetime.strptime(end_date, "%Y-%m-%d").date()
+            except: pass
+            
+        start_d = end_d - timedelta(days=29)
+        if start_date:
+            try: start_d = datetime.strptime(start_date, "%Y-%m-%d").date()
+            except: pass
+
+        start_dt = datetime.combine(start_d, datetime.min.time())
+        end_dt   = datetime.combine(end_d,   datetime.max.time())
+        
         if report_type == "finance":
-            # Coleta todas as receitas
-            revs = db.query(models.Revenue).order_by(models.Revenue.created_at.desc()).all()
+            revs = db.query(models.Revenue).filter(
+                models.Revenue.created_at >= start_dt,
+                models.Revenue.created_at <= end_dt
+            ).order_by(models.Revenue.created_at.desc()).all()
+            
+            exps = db.query(models.Expense).filter(
+                models.Expense.is_paid == True,
+                models.Expense.paid_date >= start_d,
+                models.Expense.paid_date <= end_d
+            ).order_by(models.Expense.paid_date.desc()).all()
+
             total_revenue = sum(r.amount for r in revs)
+            total_expense = sum(e.amount for e in exps)
+            total_discounts = sum(r.discount or 0.0 for r in revs)
+            
+            incomes_list = [{"data": r.created_at.strftime("%d/%m/%Y"), "desc": r.description, "cat": r.category.value if r.category else "Geral", "valor": r.amount, "desconto": r.discount or 0.0} for r in revs]
+            outcomes_list = [{"data": e.paid_date.strftime("%d/%m/%Y"), "desc": e.description, "cat": e.category.value if e.category else "Geral", "metodo": "Transferência", "valor": e.amount} for e in exps]
             
             # Agrupamentos
             by_category = {}
-            by_method = {}
-            transactions_list = []
-            
             for r in revs:
-                # Categoria
-                cat = r.category or "Geral"
+                cat = r.category.value if r.category else "Geral"
                 by_category[cat] = by_category.get(cat, 0) + r.amount
-                # Método
-                method = r.payment_method or "N/A"
-                by_method[method] = by_method.get(method, 0) + r.amount
-                # Lista para tabela detalhada (Top 50)
-                if len(transactions_list) < 50:
-                    transactions_list.append({
-                        "data": r.created_at.strftime("%d/%m/%Y"),
-                        "desc": r.description,
-                        "cat": cat,
-                        "metodo": method.upper(),
-                        "valor": r.amount
-                    })
             
+            expense_by_category = {}
+            for e in exps:
+                cat = e.category.value if e.category else "Geral"
+                expense_by_category[cat] = expense_by_category.get(cat, 0) + e.amount
+
+            # Timeline
+            timeline = []
+            cursor = start_d
+            while cursor <= end_d:
+                d_start = datetime.combine(cursor, datetime.min.time())
+                d_end = datetime.combine(cursor, datetime.max.time())
+                d_rev = sum(r.amount for r in revs if d_start <= r.created_at <= d_end)
+                d_exp = sum(e.amount for e in exps if e.paid_date == cursor)
+                timeline.append({"date": cursor.strftime("%d/%m/%Y"), "revenue": d_rev, "expense": d_exp, "net": d_rev - d_exp})
+                cursor += timedelta(days=1)
+
             data = {
-                "total_revenue": total_revenue, 
-                "transactions": len(revs), 
-                "avg_ticket": total_revenue/len(revs) if len(revs)>0 else 0, 
-                "by_category": by_category, 
-                "by_method": by_method,
-                "transactions_list": transactions_list
+                "start": start_d.strftime("%d/%m/%Y"), "end": end_d.strftime("%d/%m/%Y"),
+                "total_revenue": total_revenue, "total_expense": total_expense, "total_discounts": total_discounts,
+                "incomes_list": incomes_list, "outcomes_list": outcomes_list,
+                "by_category": by_category, "expense_by_category": expense_by_category,
+                "timeline": timeline
             }
-            generate_financial_report(data, f"finance_{ts}.pdf")
-            return {"url": f"{base_url}/reports/finance_{ts}.pdf"}
+            
+            filename = f"finance_{ts}.pdf"
+            generate_financial_report(data, filename, tenant_id=tenant_id, mode=mode)
+            return {
+                "url": f"{base_url}/reports/{filename}", 
+                "message": f"Relatório financeiro ({mode}) gerado com sucesso.",
+                "title": "Relatório Financeiro"
+            }
             
         elif report_type == "inventory":
             prods = db.query(models.Product).filter(models.Product.is_active == True).all()
             data = {"total_inventory_value": sum(p.price*p.stock_quantity for p in prods), "products": [{"name": p.name, "stock": p.stock_quantity, "min_stock": p.min_stock, "price": p.price, "category": p.category} for p in prods]}
-            generate_inventory_report(data, f"stock_{ts}.pdf")
-            return {"url": f"{base_url}/reports/stock_{ts}.pdf"}
+            filename = f"stock_{ts}.pdf"
+            generate_inventory_report(data, filename, tenant_id=tenant_id)
+            return {
+                "url": f"{base_url}/reports/{filename}",
+                "message": "Relatório de estoque gerado.",
+                "title": "Relatório de Estoque"
+            }
             
         elif report_type == "shopping":
             prods = db.query(models.Product).filter(models.Product.is_active == True).all()
             alert_items = [p for p in prods if p.stock_quantity <= (p.min_stock * 1.5)]
-            data = {"items": [{"name": p.name, "category": p.category, "stock": p.stock_quantity, "min_stock": p.min_stock, "is_critical": p.stock_quantity <= p.min_stock, "suggested_buy": max(0, (p.min_stock * 2) - p.stock_quantity), "unit": p.unit_measure or "un"} for p in alert_items]}
-            generate_shopping_list_report(data, f"shopping_{ts}.pdf")
-            return {"url": f"{base_url}/reports/shopping_{ts}.pdf"}
+            data = {"items": [{"name": p.name, "category": p.category, "stock": p.stock_quantity, "min_stock": p.min_stock, "is_critical": p.stock_quantity <= p.min_stock, "suggested_buy": max(0, (p.min_stock * 2) - p.stock_quantity), "unit": p.unit_measure or "un", "cost_price": p.cost_price or 0} for p in alert_items]}
+            filename = f"shopping_{ts}.pdf"
+            generate_shopping_list_report(data, filename, tenant_id=tenant_id)
+            return {
+                "url": f"{base_url}/reports/{filename}",
+                "message": "Lista de compras gerada com base no estoque crítico.",
+                "title": "Lista de Compras"
+            }
         
         return {"error": "Tipo de relatório inválido."}
 
@@ -335,9 +396,12 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
         return finance_summary_logic(tenant_id)
 
     @tool
-    def robot_pdf_reporter(report_type: str) -> dict:
-        """Micro-robô para GERAR PDF. Tipos: 'finance', 'inventory', 'shopping'."""
-        return pdf_generator_logic(tenant_id, report_type)
+    def robot_pdf_reporter(report_type: str, mode: str = "full", start_date: str = None, end_date: str = None) -> dict:
+        """Micro-robô para GERAR RELATÓRIOS PDF PROFISSIONAIS. 
+        Tipos: 'finance' (financeiro), 'inventory' (estoque), 'shopping' (compras).
+        Para financeiro, 'mode' pode ser 'full' (completo com extrato e fluxo de caixa) ou 'summary' (apenas KPIs principais).
+        Datas no formato YYYY-MM-DD."""
+        return pdf_generator_logic(tenant_id, report_type, mode, start_date, end_date)
 
     @tool
     def robot_event_intelligence(action: str = "query") -> dict:
@@ -417,19 +481,14 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
     llm_with_tools = llm.bind_tools(tools)
     
     sys_msg = SystemMessage(content=f"""Você é o ORQUESTRADOR MESTRE e GERENTE GERAL do estabelecimento.
-Sua missão é coordenar uma equipe de Micro-Robôs especializados para realizar qualquer tarefa operacional, administrativa ou de vendas.
-
-CONTEXTO DE MEMÓRIA:
+DIRETRIZES DE COMUNICAÇÃO:
+1. **NARRATIVA DE PROGRESSO**: Seja transparente. Se for acionar um motor de relatórios ou estoque, avise brevemente: "Entendido, estou acessando os dados financeiros agora..." ou "Vou verificar a disponibilidade nos quartos para você...".
+2. **FEEDBACK OBRIGATÓRIO**: Após o retorno de qualquer ferramenta, você DEVE confirmar o resultado ao usuário. NUNCA envie respostas vazias.
+3. **DIFICULDADES E PERMISSÕES**: Caso não tenha permissão para algo ou encontre um erro técnico no robô, explique: "Infelizmente meu acesso ao histórico de faturamento está restrito no momento" ou "Encontrei uma dificuldade para gerar seu arquivo agora, pode tentar novamente?".
+4. **MEMÓRIA OPERACIONAL**:
 {op_memory}
 
-DIRETRIZES TÉCNICAS E DE VERDADE:
-1. **AÇÃO IMEDIATA**: Ao receber comandos operacionais curtos (ex: "quarto 10 limpo", "estoque 5 colas", "liberar faturamento"), sua PRIORIDADE é executar a ferramenta correspondente ANTES de dar uma resposta longa.
-2. **LINGUAGEM DE RECEPÇÃO**: Entenda termos como "liberar", "tá pronto", "tá limpo" como ordens diretas para usar o 'robot_mark_room_as_ready'.
-3. **INVESTIGAÇÃO**: Sempre que não encontrar uma reserva pelo ID ou o checkout falhar, use obrigatoriamente o 'robot_find_booking' para buscar pelo CPF ou Nome do hóspede. 
-4. **VERDADE FINANCEIRA**: Você é PROIBIDO de confirmar que um pagamento foi recebido ou que uma conta foi paga sem que o robô financeiro correspondente retorne sucesso. Não aceite o "discurso" do usuário como prova; consulte sempre o banco de dados.
-5. **ZERO ALUCINAÇÃO DE ID**: Nunca invente IDs de reserva. Se o robô não retornar o ID, ele não existe.
-
-Sua postura é de um gerente sênior: resolutivo, preciso, investigativo e pragmático. Menos conversa, mais ação técnica.""")
+Sua postura é de um gerente sênior: resolutivo, preciso e pragmático.""")
 
     def call_model(state: MessagesState):
         messages = [sys_msg] + state["messages"]
@@ -444,12 +503,8 @@ Sua postura é de um gerente sênior: resolutivo, preciso, investigativo e pragm
     workflow.add_edge("tools", "agent")
     app = workflow.compile()
 
-    # Conversão de histórico para LangChain
-    lc_messages = []
-    for h in history[-10:]:
-        role = h.get("role", "user")
-        if role == "user": lc_messages.append(HumanMessage(content=h.get("content", "")))
-        elif role == "assistant": lc_messages.append(AIMessage(content=h.get("content", "")))
+    # Conversão de histórico para LangChain de forma robusta
+    lc_messages = convert_history_to_langchain(history)
     lc_messages.append(HumanMessage(content=message))
 
     try:
@@ -469,9 +524,26 @@ Sua postura é de um gerente sênior: resolutivo, preciso, investigativo e pragm
                     full_text += part
             response_content = full_text.strip()
         
-        # Fallback para mensagens sem texto mas com chamadas de ferramenta
+        # Fallback para mensagens sem texto mas com chamadas de ferramenta pendentes
         if not response_content and hasattr(response_msg, 'tool_calls') and response_msg.tool_calls:
             response_content = "Processando sua solicitação... 🤖"
+
+        # VÁLVULA DE ESCAPE: Se a IA ficou muda APÓS a execução das ferramentas
+        if not response_content or response_content.strip() == "":
+            last_tool_msg = next((m for m in reversed(final_state["messages"]) if isinstance(m, ToolMessage)), None)
+            if last_tool_msg:
+                try:
+                    import json
+                    res_j = json.loads(last_tool_msg.content)
+                    msg_info = res_j.get("message") or res_j.get("error") or "Solicitação processada com sucesso."
+                    url_pdf = res_j.get("url")
+                    title_pdf = res_j.get("title") or "Baixar Arquivo"
+                    response_content = f"{msg_info}"
+                    if url_pdf: response_content += f"\n\n[{title_pdf}]({url_pdf})"
+                except:
+                    response_content = "Seu robô completou a tarefa com sucesso. Algo mais em que posso ajudar?"
+            else:
+                response_content = "Entendido. No que posso te ajudar agora?"
 
         return {"response": response_content}
     except Exception as e:

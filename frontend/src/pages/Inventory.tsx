@@ -1,6 +1,11 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import api from '../services/api';
 import type { AxiosError } from 'axios';
+import { 
+  Package, Plus, Search, FileText, BarChart3, ArrowUpDown, 
+  Edit, Trash2, Archive, Upload, Download, AlertTriangle,
+  ChevronRight, Filter, ShoppingCart, TrendingUp, DollarSign
+} from 'lucide-react';
 
 interface Product {
   id: number;
@@ -19,7 +24,9 @@ interface Product {
 
 interface StockDashboard {
   total_products: number;
-  total_value: number;
+  total_value: number; // Venda
+  total_cost_value: number; // Custo
+  potential_profit: number; // Lucro
   low_stock_count: number;
   low_stock_items: Product[];
 }
@@ -30,6 +37,7 @@ interface StockEntryItem {
   quantity: number;
   unit_price?: number | null;
 }
+
 interface StockEntry {
   id: number;
   supplier?: string | null;
@@ -39,53 +47,50 @@ interface StockEntry {
   created_at: string;
   items: StockEntryItem[];
 }
+
+interface Category {
+  id: number;
+  name: string;
+}
+
+type Tab = 'geral' | 'produtos' | 'relatorios';
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'geral',     label: '📊 Visão Geral' },
+  { id: 'produtos',  label: '📦 Produtos' },
+  { id: 'relatorios', label: '📄 Relatórios' },
+];
+
 export default function Inventory() {
   const role = localStorage.getItem('role');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [activeTab, setActiveTab] = useState<Tab>('geral');
   const [products, setProducts] = useState<Product[]>([]);
   const [dashboard, setDashboard] = useState<StockDashboard | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [editing, setEditing] = useState<Product | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  
   const [editForm, setEditForm] = useState({
-    name: '',
-    price: '',
-    category: '',
-    stock_quantity: '',
-    min_stock: '',
-    barcode: '',
-    cost_price: '',
-    markup_percent: '',
+    name: '', price: '', category: '', stock_quantity: '', min_stock: '', barcode: '', cost_price: '', markup_percent: '',
   });
+  const [form, setForm] = useState({
+    name: '', price: '', category: '', stock_quantity: '', min_stock: '5', barcode: '', cost_price: '', markup_percent: '',
+  });
+
   const [uploadSummary, setUploadSummary] = useState<StockEntry | null>(null);
   const [entries, setEntries] = useState<StockEntry[]>([]);
-  const [entryFilters, setEntryFilters] = useState({
-    supplier: '',
-    invoice_number: '',
-    start: '',
-    end: '',
-  });
-  const [receiptMeta, setReceiptMeta] = useState({
-    supplier: '',
-    invoice_number: '',
-    invoice_date: '',
-    note: '',
-  });
-
-  const [form, setForm] = useState({
-    name: '',
-    price: '',
-    category: '',
-    stock_quantity: '',
-    min_stock: '5',
-    barcode: '',
-    cost_price: '',
-    markup_percent: '',
-  });
-
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [isAddingCategory, setIsAddingCategory] = useState(false);
+  const [newCatName, setNewCatName] = useState('');
+  
   const [searchTerm, setSearchTerm] = useState('');
+  const [filterCategory, setFilterCategory] = useState('');
+  const [sortOrder, setSortOrder] = useState<'name' | 'stock_asc' | 'stock_desc'>('name');
 
-  async function load() {
+  const fmtCurrency = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+
+  const load = useCallback(async () => {
     try {
       setError(null);
       const [listRes, dashRes] = await Promise.all([
@@ -97,523 +102,520 @@ export default function Inventory() {
     } catch {
       setError('Falha ao carregar estoque');
     }
-  }
+  }, []);
 
-  useEffect(() => {
-    const t = setTimeout(() => {
-      load();
-    }, 0);
-    return () => clearTimeout(t);
+  const loadEntries = useCallback(async () => {
+    try {
+      const res = await api.get('/products/stock/entries');
+      setEntries(res.data);
+    } catch { /* erro silencioso */ }
   }, []);
-  useEffect(() => {
-    loadEntries();
+
+  const loadCategories = useCallback(async () => {
+    try {
+      const res = await api.get('/products/categories');
+      setCategories(res.data);
+    } catch { /* erro silencioso */ }
   }, []);
-  useEffect(() => {
-    const t = setTimeout(() => {
-      loadEntries();
-    }, 200);
-    return () => clearTimeout(t);
-  }, [entryFilters.supplier, entryFilters.invoice_number, entryFilters.start, entryFilters.end]);
-  
-  // Cálculo automático de preço de venda (Criação)
+
+  useEffect(() => { load(); loadEntries(); loadCategories(); }, [load, loadEntries, loadCategories]);
+
+  // Cálculo de preço sugerido
   useEffect(() => {
     const cost = parseFloat(form.cost_price) || 0;
     const markup = parseFloat(form.markup_percent) || 0;
     if (cost > 0 || markup > 0) {
-      const calculated = cost * (1 + markup / 100);
-      setForm(f => ({ ...f, price: calculated.toFixed(2) }));
+      setForm(f => ({ ...f, price: (cost * (1 + markup / 100)).toFixed(2) }));
     }
   }, [form.cost_price, form.markup_percent]);
 
-  // Cálculo automático de preço de venda (Edição)
   useEffect(() => {
     const cost = parseFloat(editForm.cost_price) || 0;
     const markup = parseFloat(editForm.markup_percent) || 0;
     if (cost > 0 || markup > 0) {
-      const calculated = cost * (1 + markup / 100);
-      setEditForm(f => ({ ...f, price: calculated.toFixed(2) }));
+      setEditForm(f => ({ ...f, price: (cost * (1 + markup / 100)).toFixed(2) }));
     }
   }, [editForm.cost_price, editForm.markup_percent]);
 
   async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
-    setMessage(null);
-    setError(null);
+    e.preventDefault(); setMessage(null); setError(null);
+    
+    // Validação básica
+    if (!form.price || isNaN(parseFloat(form.price))) return setError('Preço de venda é obrigatório e deve ser numérico');
+    if (!form.category) return setError('Selecione uma categoria');
+
     try {
-      const payload = {
-        name: form.name,
+      await api.post('/products/', {
+        ...form,
         price: parseFloat(form.price),
-        category: form.category,
         stock_quantity: parseInt(form.stock_quantity) || 0,
         min_stock: parseInt(form.min_stock) || 5,
-        cost_price: parseFloat(form.cost_price) || 0.0,
-        markup_percent: parseFloat(form.markup_percent) || 0.0,
-        is_active: true,
-        is_quick_access: false,
-      };
-      await api.post('/products/', payload);
-      setMessage('Produto criado');
+        cost_price: parseFloat(form.cost_price) || 0,
+        markup_percent: parseFloat(form.markup_percent) || 0,
+      });
+      setMessage('Produto cadastrado com sucesso!');
       setForm({ name: '', price: '', category: '', stock_quantity: '', min_stock: '5', barcode: '', cost_price: '', markup_percent: '' });
-      await load();
-    } catch (err) {
-      const axErr = err as AxiosError<{ detail?: string }>;
-      const msg = axErr.response?.data?.detail ?? 'Erro ao criar produto';
-      setError(msg);
-    }
-  }
-  
-  async function deleteEntry(id: number) {
-    if (!window.confirm('Tem certeza que deseja excluir esta entrada? O estoque será revertido.')) return;
-    try {
-      await api.delete(`/products/stock/entries/${id}`);
-      setMessage('Entrada excluída e estoque revertido');
-      await load();
-      await loadEntries();
-    } catch {
-      setError('Falha ao excluir entrada');
-    }
+      setIsModalOpen(false); await load();
+    } catch (err: any) { setError(err.response?.data?.detail ?? 'Erro ao cadastrar'); }
   }
 
-  async function loadEntries() {
-    try {
-      const params: any = {};
-      if (entryFilters.supplier) params.supplier = entryFilters.supplier;
-      if (entryFilters.invoice_number) params.invoice_number = entryFilters.invoice_number;
-      if (entryFilters.start) params.start = entryFilters.start;
-      if (entryFilters.end) params.end = entryFilters.end;
-      const res = await api.get('/products/stock/entries', { params });
-      setEntries(res.data);
-    } catch {
-      // silencioso
-    }
-  }
-  function formatMoney(v: number) {
-    return `R$ ${Number(v ?? 0).toFixed(2)}`;
-  }
-  function stockStatus(p: Product) {
-    const q = p.stock_quantity ?? 0;
-    const min = p.min_stock ?? 0;
-    const max = p.max_stock ?? null;
-    if (q <= min) return { label: `Baixo (${q})`, className: 'bg-red-600 text-white' };
-    if (max != null && q >= max) return { label: `Bom (${q})`, className: 'bg-green-600 text-white' };
-    return { label: `Normal (${q})`, className: 'bg-slate-300 text-slate-800' };
-  }
-  async function archiveProduct(p: Product) {
-    try {
-      await api.put(`/products/${p.id}`, { is_active: false });
-      await load();
-      setMessage('Produto arquivado');
-    } catch {
-      setError('Falha ao arquivar produto');
-    }
-  }
-  
-  function openEdit(p: Product) {
-    setEditing(p);
-    setEditForm({
-      name: p.name,
-      price: String(p.price),
-      category: p.category,
-      stock_quantity: String(p.stock_quantity),
-      min_stock: String(p.min_stock),
-      barcode: p.barcode || '',
-      cost_price: String(p.cost_price || 0),
-      markup_percent: String(p.markup_percent || 0),
-    });
-  }
   async function submitEdit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!editing) return;
-    setError(null);
-    setMessage(null);
+    e.preventDefault(); if (!editing) return;
+    
+    if (!editForm.price || isNaN(parseFloat(editForm.price))) return setError('Preço de venda deve ser numérico');
+
     try {
-      const payload: any = {};
-      if (editForm.name) payload.name = editForm.name;
-      if (editForm.price) payload.price = parseFloat(editForm.price);
-      if (editForm.category) payload.category = editForm.category;
-      if (editForm.stock_quantity) payload.stock_quantity = parseInt(editForm.stock_quantity);
-      if (editForm.min_stock) payload.min_stock = parseInt(editForm.min_stock);
-      if (editForm.cost_price) payload.cost_price = parseFloat(editForm.cost_price);
-      if (editForm.markup_percent) payload.markup_percent = parseFloat(editForm.markup_percent);
-      payload.barcode = editForm.barcode || null;
-      await api.put(`/products/${editing.id}`, payload);
-      setEditing(null);
-      await load();
-      setMessage('Produto atualizado');
-    } catch (err) {
-      const axErr = err as AxiosError<{ detail?: string }>;
-      const msg = axErr.response?.data?.detail ?? 'Erro ao atualizar produto';
-      setError(msg);
-    }
+      await api.put(`/products/${editing.id}`, {
+        ...editForm,
+        price: parseFloat(editForm.price),
+        stock_quantity: parseInt(editForm.stock_quantity) || 0,
+        min_stock: parseInt(editForm.min_stock) || 0,
+        cost_price: parseFloat(editForm.cost_price) || 0,
+        markup_percent: parseFloat(editForm.markup_percent) || 0,
+      });
+      setEditing(null); setMessage('Produto atualizado!'); await load();
+      setIsModalOpen(false);
+    } catch (err: any) { setError(err.response?.data?.detail ?? 'Erro ao atualizar'); }
   }
+
+  async function handleAddCategory() {
+    if (!newCatName.trim()) return;
+    try {
+      const res = await api.post('/products/categories', { name: newCatName.trim() });
+      setCategories(prev => [...prev.filter(c => c.name !== res.data.name), res.data]);
+      if (editing) setEditForm(f => ({ ...f, category: res.data.name }));
+      else setForm(f => ({ ...f, category: res.data.name }));
+      setNewCatName(''); setIsAddingCategory(false);
+    } catch { setError('Erro ao adicionar categoria'); }
+  }
+
+  async function archiveProduct(id: number) {
+    if (!confirm('Deseja arquivar este produto?')) return;
+    try { await api.put(`/products/${id}`, { is_active: false }); await load(); setMessage('Produto arquivado'); }
+    catch { setError('Erro ao arquivar'); }
+  }
+
   async function handleInvoiceUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    setError(null);
-    setMessage(null);
-    setUploadSummary(null);
     try {
-      const fd = new FormData();
-      fd.append('file', file);
-      const params: any = {};
-      if (receiptMeta.supplier) params.supplier = receiptMeta.supplier;
-      if (receiptMeta.invoice_number) params.invoice_number = receiptMeta.invoice_number;
-      if (receiptMeta.invoice_date) params.invoice_date = receiptMeta.invoice_date;
-      if (receiptMeta.note) params.note = receiptMeta.note;
+      const fd = new FormData(); fd.append('file', file);
       const endpoint = file.type.includes('image') || file.name.toLowerCase().endsWith('.pdf') ? '/products/stock/ocr' : '/products/stock/receipt';
-      const res = await api.post(endpoint, fd, { params, headers: { 'Content-Type': 'multipart/form-data' } });
-      setUploadSummary(res.data as StockEntry);
-      await load();
-      await loadEntries();
-      setMessage('Estoque atualizado pela nota fiscal');
-    } catch {
-      setError('Falha ao processar nota fiscal');
-    } finally {
-      e.target.value = '';
-    }
+      const res = await api.post(endpoint, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      setUploadSummary(res.data); await load(); await loadEntries(); setMessage('Estoque atualizado!');
+    } catch { setError('Erro ao processar arquivo'); } finally { e.target.value = ''; }
   }
 
+  const downloadReport = async (type: 'inventory' | 'shopping') => {
+    try {
+      const endpoint = type === 'inventory' ? '/products/reports/inventory' : '/products/reports/shopping-list';
+      const response = await api.get(endpoint, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', type === 'inventory' ? 'inventario.pdf' : 'lista_compras.pdf');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch { setError('Erro ao gerar relatório'); }
+  };
+
+  const filteredProducts = products.filter(p => {
+    const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) || (p.barcode?.includes(searchTerm));
+    const matchesCat = !filterCategory || p.category === filterCategory;
+    return matchesSearch && matchesCat;
+  }).sort((a,b) => {
+    if (sortOrder === 'stock_asc') return a.stock_quantity - b.stock_quantity;
+    if (sortOrder === 'stock_desc') return b.stock_quantity - a.stock_quantity;
+    return a.name.localeCompare(b.name);
+  });
+
+  const productCategories = Array.from(new Set([...categories.map(c => c.name), ...products.map(p => p.category)]));
+
+  const btnPrimary = 'bg-blue-600 text-white px-5 py-2.5 rounded-xl shadow-lg shadow-blue-100 hover:bg-blue-700 transition font-bold text-sm flex items-center gap-2';
+  const inputCls = 'border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white w-full transition-all';
+
   return (
-    <div className="space-y-8">
-      <div>
-        <h2 className="text-2xl font-bold text-slate-800">Estoque</h2>
-        <p className="text-slate-500">KPIs e cadastro rápido de produtos.</p>
-      </div>
-
-      {error && <div className="bg-red-50 text-red-700 rounded-lg border border-red-200 p-4">{error}</div>}
-      {message && <div className="bg-green-50 text-green-700 rounded-lg border border-green-200 p-4">{message}</div>}
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <p className="text-sm text-slate-500">Produtos ativos</p>
-          <p className="text-3xl font-bold text-slate-800">{dashboard?.total_products ?? 0}</p>
+    <div className="flex flex-col md:flex-row min-h-screen bg-slate-50/50 -m-8">
+      
+      {/* ── Sidebar ── */}
+      <aside className="w-full md:w-64 bg-white border-r border-slate-200 p-6 flex flex-col gap-6">
+        <div>
+          <h2 className="text-2xl font-black text-slate-800 tracking-tight flex items-center gap-2">
+            <Package className="text-blue-600" />
+            ParcerIA
+          </h2>
+          <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mt-1 ml-8">Gestão de Estoque</p>
         </div>
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <p className="text-sm text-slate-500">Valor total em estoque</p>
-          <p className="text-3xl font-bold text-slate-800">
-            R$ {(dashboard?.total_value ?? 0).toFixed(2)}
-          </p>
-        </div>
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <p className="text-sm text-slate-500">Itens com estoque baixo</p>
-          <p className="text-3xl font-bold text-slate-800">{dashboard?.low_stock_count ?? 0}</p>
-        </div>
-      </div>
 
-      {dashboard?.low_stock_items?.length ? (
-        <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-lg p-4">
-          <p className="font-semibold mb-2">Atenção: estoque baixo</p>
-          <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {dashboard.low_stock_items.map((p) => (
-              <li key={p.id} className="bg-white border border-yellow-200 rounded-lg p-3 flex justify-between">
-                <span>{p.name} — {p.category}</span>
-                <span className="font-medium">Qtd: {p.stock_quantity}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-        <p className="text-lg font-semibold text-slate-800 mb-4">Buscar Produtos</p>
-        <div className="relative">
-          <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
-            🔍
-          </span>
-          <input
-            type="text"
-            placeholder="Pesquisar por nome ou código de barras..."
-            className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-      </div>
-
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-        <p className="text-lg font-semibold text-slate-800 mb-4">Cadastro de Produto</p>
-        <form onSubmit={handleCreate} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Nome</label>
-            <input
-              placeholder="Ex: Coca-Cola 350ml"
-              className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
-              value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              required
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Código de Barras</label>
-            <input
-              placeholder="Escaneie ou digite"
-              className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
-              value={form.barcode}
-              onChange={(e) => setForm((f) => ({ ...f, barcode: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Categoria</label>
-            <input
-              placeholder="Ex: Bebidas"
-              className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
-              value={form.category}
-              onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
-              required
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Custo (R$)</label>
-            <input
-              type="number"
-              step="0.01"
-              placeholder="0.00"
-              className="w-full border rounded-lg px-3 py-2 bg-slate-50 focus:ring-2 focus:ring-blue-500 outline-none"
-              value={form.cost_price}
-              onChange={(e) => setForm((f) => ({ ...f, cost_price: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Margem (%)</label>
-            <input
-              type="number"
-              placeholder="0"
-              className="w-full border rounded-lg px-3 py-2 bg-slate-50 focus:ring-2 focus:ring-blue-500 outline-none"
-              value={form.markup_percent}
-              onChange={(e) => setForm((f) => ({ ...f, markup_percent: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Preço de Venda</label>
-            <input
-              type="number"
-              step="0.01"
-              placeholder="0.00"
-              className="w-full border border-blue-200 bg-blue-50 font-bold rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
-              value={form.price}
-              onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
-              required
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Qtd em Estoque</label>
-            <input
-              type="number"
-              placeholder="0"
-              className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
-              value={form.stock_quantity}
-              onChange={(e) => setForm((f) => ({ ...f, stock_quantity: e.target.value }))}
-              required
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Estoque Mínimo</label>
-            <input
-              type="number"
-              placeholder="5"
-              className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
-              value={form.min_stock}
-              onChange={(e) => setForm((f) => ({ ...f, min_stock: e.target.value }))}
-            />
-          </div>
-          <div className="lg:col-span-3 flex justify-end">
+        <nav className="space-y-1">
+          {TABS.map(tab => (
             <button
-              type="submit"
-              className="bg-blue-600 text-white px-8 py-2 rounded-lg shadow-md hover:bg-blue-700 transition font-semibold"
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all duration-200 ${
+                activeTab === tab.id 
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-100' 
+                  : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'
+              }`}
             >
-              Criar Produto
+              <span className="text-lg">{tab.label.split(' ')[0]}</span>
+              {tab.label.split(' ').slice(1).join(' ')}
             </button>
-          </div>
-        </form>
-      </div>
+          ))}
+        </nav>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-        <div className="mb-4 flex items-center justify-between">
-          <p className="text-lg font-semibold text-slate-800">Produtos</p>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="inline-flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg shadow hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1"
-            >
-              <span>Upload Nota Fiscal</span>
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv,.xlsx,.pdf,image/*,.xml"
-              onChange={handleInvoiceUpload}
-              className="hidden"
-            />
+        <div className="mt-auto pt-6 border-t border-slate-100">
+          <div className="bg-slate-50 rounded-2xl p-4">
+            <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Saúde do Estoque</p>
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs">
+                <span className="text-slate-500">Alertas</span>
+                <span className="font-bold text-red-500">{dashboard?.low_stock_count ?? 0}</span>
+              </div>
+              <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-red-500 transition-all duration-500" 
+                  style={{ width: `${Math.min(((dashboard?.low_stock_count ?? 0) / (dashboard?.total_products || 1)) * 100, 100)}%` }} 
+                />
+              </div>
+            </div>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-3 mb-4">
-          <input placeholder="Fornecedor" className="border rounded-lg px-3 py-2 text-sm" value={receiptMeta.supplier} onChange={(e) => setReceiptMeta((m) => ({ ...m, supplier: e.target.value }))} />
-          <input placeholder="NF" className="border rounded-lg px-3 py-2 text-sm" value={receiptMeta.invoice_number} onChange={(e) => setReceiptMeta((m) => ({ ...m, invoice_number: e.target.value }))} />
-          <input type="date" className="border rounded-lg px-3 py-2 text-sm" value={receiptMeta.invoice_date} onChange={(e) => setReceiptMeta((m) => ({ ...m, invoice_date: e.target.value }))} />
-          <input placeholder="Observação" className="border rounded-lg px-3 py-2 text-sm w-60" value={receiptMeta.note} onChange={(e) => setReceiptMeta((m) => ({ ...m, note: e.target.value }))} />
-        </div>
-        {uploadSummary && (
-          <div className="mb-4 bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm text-slate-700">
-            <p className="font-semibold">Entrada registrada #{uploadSummary.id}</p>
-            <p>Fornecedor: {uploadSummary.supplier || '—'} • NF: {uploadSummary.invoice_number || '—'} • Data: {uploadSummary.invoice_date || '—'}</p>
-            <p>Itens: {uploadSummary.items?.length ?? 0}</p>
+      </aside>
+
+      {/* ── Main ── */}
+      <main className="flex-1 p-4 md:p-8 space-y-8 max-w-6xl mx-auto w-full">
+        {error && <div className="bg-red-50 text-red-700 rounded-xl border border-red-200 p-4 text-sm flex items-center gap-3"><AlertTriangle size={18}/>{error}</div>}
+        {message && <div className="bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-200 p-4 text-sm flex items-center gap-3"><Package size={18}/>{message}</div>}
+
+        {/* ══ ABA: VISÃO GERAL ══ */}
+        {activeTab === 'geral' && (
+          <div className="space-y-8 animate-in fade-in duration-500">
+            <div className="flex justify-between items-end">
+              <div>
+                <h3 className="text-2xl font-bold text-slate-800">Visão Geral</h3>
+                <p className="text-slate-500 text-sm">Resumo da saúde financeira e física do estoque.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm hover:shadow-md transition-shadow">
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl"><Package size={24}/></div>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Produtos Ativos</p>
+                </div>
+                <p className="text-4xl font-black text-slate-800">{dashboard?.total_products ?? 0}</p>
+              </div>
+              <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm hover:shadow-md transition-shadow">
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="p-3 bg-amber-50 text-amber-600 rounded-2xl"><DollarSign size={24}/></div>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Valor em Estoque (Custo)</p>
+                </div>
+                <p className="text-4xl font-black text-slate-800">{fmtCurrency(dashboard?.total_cost_value ?? 0)}</p>
+              </div>
+              <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm hover:shadow-md transition-shadow">
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl"><TrendingUp size={24}/></div>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Lucro Estimado</p>
+                </div>
+                <p className="text-4xl font-black text-slate-800 font-mono">{fmtCurrency(dashboard?.potential_profit ?? 0)}</p>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
+              <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex items-center gap-2 text-red-600 font-bold">
+                <AlertTriangle size={20}/> Alerta de Reposição (Abaixo do Mínimo)
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50/50 text-slate-500 text-xs uppercase tracking-wider">
+                    <tr>
+                      <th className="px-6 py-4 text-left font-bold">Produto</th>
+                      <th className="px-6 py-4 text-left font-bold">Categoria</th>
+                      <th className="px-6 py-4 text-right font-bold">Estoque Atual</th>
+                      <th className="px-6 py-4 text-right font-bold">Estoque Mínimo</th>
+                      <th className="px-6 py-4 text-center font-bold">Déficit</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {dashboard?.low_stock_items?.map(p => (
+                      <tr key={p.id} className="hover:bg-red-50/30 transition-colors">
+                        <td className="px-6 py-4 font-bold text-slate-800">{p.name}</td>
+                        <td className="px-6 py-4 text-slate-500">{p.category}</td>
+                        <td className="px-6 py-4 text-right font-black text-red-600">{p.stock_quantity}</td>
+                        <td className="px-6 py-4 text-right font-semibold text-slate-500">{p.min_stock}</td>
+                        <td className="px-6 py-4 text-center">
+                          <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-[10px] font-black uppercase">
+                            - {(p.min_stock - p.stock_quantity)} {p.unit_measure || 'un'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                    {!dashboard?.low_stock_items?.length && (
+                      <tr><td colSpan={5} className="px-6 py-12 text-center text-slate-400 italic">Tudo em ordem! Nenhum produto abaixo do limite.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         )}
-        <div className="overflow-x-auto rounded-xl border border-slate-200">
-          <table className="min-w-full divide-y divide-slate-200">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700">Produto</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700">Categoria</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700">Custo/Venda</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700">Markup</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700">Estoque</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700">Status</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700">Código</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 bg-white">
-              {products
-                .filter(p => 
-                  p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                  (p.barcode && p.barcode.includes(searchTerm))
-                )
-                .map((p) => {
-                const st = stockStatus(p);
-                return (
-                  <tr key={p.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-4">
-                      <div className="font-semibold text-slate-800">{p.name}</div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="text-slate-700">{p.category}</div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="text-xs text-slate-500">Custo: {formatMoney(p.cost_price || 0)}</div>
-                      <div className="text-sm font-bold text-slate-800">Venda: {formatMoney(p.price)}</div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="text-slate-700">{p.markup_percent || 0}%</div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="text-slate-800">{p.stock_quantity} {p.unit_measure || 'unidade'}</div>
-                      <div className="text-xs text-slate-500">Min: {p.min_stock} {p.max_stock != null ? `| Max: ${p.max_stock}` : ''}</div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold ${st.className}`}>{st.label}</span>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="text-slate-800">{p.barcode || '—'}</div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="flex items-center gap-3">
-                        <button className="p-2 rounded-lg border bg-white hover:bg-slate-50" onClick={() => openEdit(p)} title="Editar">✏️</button>
-                        {role === 'admin' && (
-                          <button className="p-2 rounded-lg border bg-white hover:bg-red-50 text-red-600" onClick={() => archiveProduct(p)} title="Arquivar">🗑️</button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-              {products.length === 0 && (
-                <tr>
-                  <td className="px-4 py-6 text-slate-500" colSpan={7}>Nenhum produto encontrado</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      
-      {editing && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setEditing(null)}>
-          <div className="bg-white rounded-2xl w-full max-w-lg p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-start mb-4">
+
+        {/* ══ ABA: PRODUTOS ══ */}
+        {activeTab === 'produtos' && (
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
               <div>
-                <p className="text-sm text-slate-500">Produto #{editing.id}</p>
-                <h3 className="text-xl font-bold text-slate-800">{editing.name}</h3>
+                <h3 className="text-2xl font-bold text-slate-800">Gestão de Produtos</h3>
+                <p className="text-slate-500 text-sm">Cadastre, edite e acompanhe seu inventário detalhadamente.</p>
               </div>
-              <button onClick={() => setEditing(null)} className="px-3 py-2 rounded-lg border bg-white">Fechar</button>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="bg-indigo-600 text-white px-5 py-2.5 rounded-xl shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition font-bold text-sm flex items-center gap-2"
+                >
+                  <Upload size={18}/> Importar XML
+                </button>
+                <input ref={fileInputRef} type="file" accept=".xml,.csv,.xlsx,.pdf,image/*" onChange={handleInvoiceUpload} className="hidden" />
+                <button onClick={() => { setIsModalOpen(true); setEditing(null); }} className={btnPrimary}>
+                  <Plus size={18}/> Novo Produto
+                </button>
+              </div>
             </div>
-            <form onSubmit={submitEdit} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Nome</label>
-                <input className="w-full border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500" placeholder="Nome" value={editForm.name} onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))} />
+
+            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm flex flex-wrap gap-4 items-end">
+              <div className="flex-1 min-w-[250px]">
+                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Buscar Produto</label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18}/>
+                  <input 
+                    className={inputCls + " pl-10"} 
+                    placeholder="Nome ou código de barras..." 
+                    value={searchTerm} 
+                    onChange={e => setSearchTerm(e.target.value)} 
+                  />
+                </div>
               </div>
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Código de Barras</label>
-                <input className="w-full border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500" placeholder="Código de barras" value={editForm.barcode} onChange={(e) => setEditForm((f) => ({ ...f, barcode: e.target.value }))} />
+              <div className="w-full md:w-48">
+                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Categoria</label>
+                <select className={inputCls} value={filterCategory} onChange={e => setFilterCategory(e.target.value)}>
+                  <option value="">Todas</option>
+                  {productCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
               </div>
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Categoria</label>
-                <input className="w-full border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500" placeholder="Categoria" value={editForm.category} onChange={(e) => setEditForm((f) => ({ ...f, category: e.target.value }))} />
+              <div className="w-full md:w-48">
+                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Ordenação</label>
+                <select className={inputCls} value={sortOrder} onChange={e => setSortOrder(e.target.value as any)}>
+                  <option value="name">Nome (A-Z)</option>
+                  <option value="stock_asc">Menor Estoque</option>
+                  <option value="stock_desc">Maior Estoque</option>
+                </select>
               </div>
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Custo (R$)</label>
-                <input className="w-full border rounded-lg px-3 py-2 outline-none bg-slate-50 focus:ring-2 focus:ring-blue-500" type="number" step="0.01" value={editForm.cost_price} onChange={(e) => setEditForm((f) => ({ ...f, cost_price: e.target.value }))} />
+            </div>
+
+            <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-100">
+                  <tr>
+                    <th className="px-6 py-4 text-left font-bold">Produto</th>
+                    <th className="px-6 py-4 text-left font-bold">Preços (Custo/Venda)</th>
+                    <th className="px-6 py-4 text-center font-bold">Estoque</th>
+                    <th className="px-6 py-4 text-left font-bold">Fornecedor</th>
+                    <th className="px-6 py-4 text-right"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredProducts.map(p => {
+                    const isLow = p.stock_quantity <= p.min_stock;
+                    return (
+                      <tr key={p.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-6 py-4">
+                          <p className="font-bold text-slate-800">{p.name}</p>
+                          <p className="text-[10px] text-slate-400 font-mono tracking-tighter">{p.barcode || 'SEM BARRAS'}</p>
+                        </td>
+                        <td className="px-6 py-4">
+                          <p className="text-xs text-slate-500">Custo: {fmtCurrency(p.cost_price || 0)}</p>
+                          <p className="text-sm font-black text-blue-600">Venda: {fmtCurrency(p.price)}</p>
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          <div className={`inline-flex flex-col items-center px-3 py-1.5 rounded-2xl ${isLow ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                            <span className="text-sm font-black">{p.stock_quantity}</span>
+                            <span className="text-[10px] font-bold uppercase tracking-tight">{p.unit_measure || 'un'}</span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 mt-1 uppercase font-bold">Mín: {p.min_stock}</p>
+                        </td>
+                        <td className="px-6 py-4 text-slate-500 text-xs italic">{p.supplier || '-'}</td>
+                        <td className="px-6 py-4">
+                          <div className="flex justify-end gap-1">
+                            <button onClick={() => { setEditing(p); setEditForm({
+                              name: p.name, price: String(p.price), category: p.category, stock_quantity: String(p.stock_quantity), 
+                              min_stock: String(p.min_stock), barcode: p.barcode || '', cost_price: String(p.cost_price || 0), 
+                              markup_percent: String(p.markup_percent || 0),
+                            }); setIsModalOpen(true); }} className="p-2 rounded-xl hover:bg-blue-50 text-slate-400 hover:text-blue-600 transition-colors">
+                              <Edit size={16}/>
+                            </button>
+                            {role === 'admin' && (
+                              <button onClick={() => archiveProduct(p.id)} className="p-2 rounded-xl hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors">
+                                <Archive size={16}/>
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ══ ABA: RELATÓRIOS ══ */}
+        {activeTab === 'relatorios' && (
+          <div className="space-y-8 animate-in fade-in duration-500">
+            <div>
+              <h3 className="text-2xl font-bold text-slate-800">Centro de Relatórios</h3>
+              <p className="text-slate-500 text-sm">Gere documentos PDF customizados para sua gestão.</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-white rounded-3xl border border-slate-200 p-8 shadow-sm hover:border-blue-300 transition-colors group">
+                <div className="p-4 bg-blue-50 text-blue-600 rounded-3xl w-fit mb-6 transition-transform group-hover:scale-110"><FileText size={32}/></div>
+                <h4 className="text-xl font-bold text-slate-800 mb-2">Inventário Geral</h4>
+                <p className="text-slate-500 text-sm mb-6">Lista completa de todos os ativos em estoque com valoração baseada em preço de custo.</p>
+                <button onClick={() => downloadReport('inventory')} className={btnPrimary + ' w-full'}>
+                  <Download size={18}/> Gerar Inventário em PDF
+                </button>
               </div>
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Margem (%)</label>
-                <input className="w-full border rounded-lg px-3 py-2 outline-none bg-slate-50 focus:ring-2 focus:ring-blue-500" type="number" value={editForm.markup_percent} onChange={(e) => setEditForm((f) => ({ ...f, markup_percent: e.target.value }))} />
+
+              <div className="bg-white rounded-3xl border border-slate-200 p-8 shadow-sm hover:border-amber-300 transition-colors group">
+                <div className="p-4 bg-amber-50 text-amber-600 rounded-3xl w-fit mb-6 transition-transform group-hover:scale-110"><ShoppingCart size={32}/></div>
+                <h4 className="text-xl font-bold text-slate-800 mb-2">Lista de Compras Inteligente</h4>
+                <p className="text-slate-500 text-sm mb-6">Reúne itens abaixo do mínimo e produtos de alto giro que estão se aproximando do limite.</p>
+                <button onClick={() => downloadReport('shopping')} className="bg-amber-600 text-white px-5 py-2.5 rounded-xl shadow-lg shadow-amber-100 hover:bg-amber-700 transition font-bold text-sm flex items-center gap-2 w-full">
+                  <Download size={18}/> Gerar Lista de Compras
+                </button>
               </div>
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Preço de Venda</label>
-                <input className="w-full border border-blue-200 bg-blue-50 font-bold rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500" type="number" step="0.01" value={editForm.price} onChange={(e) => setEditForm((f) => ({ ...f, price: e.target.value }))} />
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* ── Modal Novo/Editar ── */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2rem] w-full max-w-2xl shadow-2xl overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-200">
+            <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+              <h3 className="text-xl font-black text-slate-800 flex items-center gap-3">
+                <Plus className="text-blue-600" size={24} />
+                {editing ? `Editar Produto #${editing.id}` : 'Nova Ficha de Produto'}
+              </h3>
+              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-2 hover:bg-slate-100 rounded-full transition-colors">
+                <Plus size={24} className="rotate-45" />
+              </button>
+            </div>
+            <form onSubmit={editing ? submitEdit : handleCreate} className="p-8 space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2 tracking-widest">Identificação do Produto</label>
+                  <input required className={inputCls + ' text-lg'} placeholder="Ex: Cerveja Budweiser 350ml" 
+                    value={editing ? editForm.name : form.name} 
+                    onChange={e => editing ? setEditForm({...editForm, name: e.target.value}) : setForm({...form, name: e.target.value})} 
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2 tracking-widest">Código de Barras</label>
+                  <input className={inputCls} placeholder="EAN / GTIN" 
+                    value={editing ? editForm.barcode : form.barcode} 
+                    onChange={e => editing ? setEditForm({...editForm, barcode: e.target.value}) : setForm({...form, barcode: e.target.value})} 
+                  />
+                </div>
+                <div className="relative">
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2 tracking-widest">Categoria</label>
+                  {!isAddingCategory ? (
+                    <div className="flex gap-2">
+                      <select required className={inputCls} 
+                        value={editing ? editForm.category : form.category} 
+                        onChange={e => {
+                          const val = e.target.value;
+                          if (val === 'NEW') setIsAddingCategory(true);
+                          else editing ? setEditForm({...editForm, category: val}) : setForm({...form, category: val});
+                        }}
+                      >
+                        <option value="">Selecione...</option>
+                        {productCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                        <option value="NEW" className="font-bold text-blue-600">+ Adicionar Nova...</option>
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2">
+                      <input autoFocus className={inputCls} placeholder="Nome da categoria..." 
+                        value={newCatName} onChange={e => setNewCatName(e.target.value)} 
+                        onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), handleAddCategory())}
+                      />
+                      <button type="button" onClick={handleAddCategory} className="bg-blue-600 text-white px-3 rounded-xl hover:bg-blue-700 transition">
+                        <Plus size={20}/>
+                      </button>
+                      <button type="button" onClick={() => setIsAddingCategory(false)} className="bg-slate-100 text-slate-400 px-3 rounded-xl hover:bg-slate-200 transition">
+                        <Plus size={20} className="rotate-45" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+                
+                <div className="md:col-span-2 p-6 bg-slate-50 rounded-3xl border border-slate-200 grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">Preço Custo</label>
+                    <input type="number" step="0.01" className={inputCls} placeholder="0,00" 
+                      value={editing ? editForm.cost_price : form.cost_price} 
+                      onChange={e => editing ? setEditForm({...editForm, cost_price: e.target.value}) : setForm({...form, cost_price: e.target.value})} 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">Markup (%)</label>
+                    <input type="number" className={inputCls} placeholder="0 %" 
+                      value={editing ? editForm.markup_percent : form.markup_percent} 
+                      onChange={e => editing ? setEditForm({...editForm, markup_percent: e.target.value}) : setForm({...form, markup_percent: e.target.value})} 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-blue-500 uppercase mb-1">Preço Venda</label>
+                    <input required type="number" step="0.01" className={inputCls + ' border-blue-200 font-bold text-blue-600'} 
+                      value={editing ? editForm.price : form.price} 
+                      onChange={e => editing ? setEditForm({...editForm, price: e.target.value}) : setForm({...form, price: e.target.value})} 
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2 tracking-widest">Estoq. Atual</label>
+                  <input required type="number" className={inputCls} 
+                    value={editing ? editForm.stock_quantity : form.stock_quantity} 
+                    onChange={e => editing ? setEditForm({...editForm, stock_quantity: e.target.value}) : setForm({...form, stock_quantity: e.target.value})} 
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2 tracking-widest">Estoq. Mínimo</label>
+                  <input required type="number" className={inputCls + ' border-amber-200'} 
+                    value={editing ? editForm.min_stock : form.min_stock} 
+                    onChange={e => editing ? setEditForm({...editForm, min_stock: e.target.value}) : setForm({...form, min_stock: e.target.value})} 
+                  />
+                </div>
               </div>
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Quantidade</label>
-                <input className="w-full border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500" type="number" placeholder="Quantidade" value={editForm.stock_quantity} onChange={(e) => setEditForm((f) => ({ ...f, stock_quantity: e.target.value }))} />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Estoque Mínimo</label>
-                <input className="w-full border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500" type="number" placeholder="Estoque mínimo" value={editForm.min_stock} onChange={(e) => setEditForm((f) => ({ ...f, min_stock: e.target.value }))} />
-              </div>
-              
-              <div className="flex gap-2 col-span-1 sm:col-span-2 mt-4 pt-4 border-t border-slate-100">
-                <button type="submit" className="flex-1 bg-blue-600 text-white px-5 py-2.5 rounded-lg shadow-md hover:bg-blue-700 transition font-semibold">Salvar alterações</button>
-                <button type="button" onClick={() => setEditing(null)} className="flex-1 border px-5 py-2.5 rounded-lg bg-white hover:bg-slate-50 font-semibold text-slate-700">Cancelar</button>
+
+              <div className="flex gap-4 pt-4">
+                <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-4 text-slate-500 font-bold hover:bg-slate-50 rounded-2xl transition-all">
+                  Descartar
+                </button>
+                <button type="submit" className="flex-2 py-4 bg-blue-600 text-white font-black rounded-2xl hover:bg-blue-700 transition-all shadow-xl shadow-blue-100">
+                  {editing ? 'Atualizar Produto' : 'Concluir Cadastro'}
+                </button>
               </div>
             </form>
           </div>
         </div>
       )}
-      
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-        <div className="flex items-center justify-between mb-4">
-          <p className="text-lg font-semibold text-slate-800">Entradas de Estoque</p>
-          <div className="flex gap-2">
-            <input placeholder="Fornecedor" className="border rounded-lg px-2 py-1 text-sm" value={entryFilters.supplier} onChange={(e) => setEntryFilters((f) => ({ ...f, supplier: e.target.value }))} />
-            <input placeholder="NF" className="border rounded-lg px-2 py-1 text-sm" value={entryFilters.invoice_number} onChange={(e) => setEntryFilters((f) => ({ ...f, invoice_number: e.target.value }))} />
-            <input type="date" className="border rounded-lg px-2 py-1 text-sm" value={entryFilters.start} onChange={(e) => setEntryFilters((f) => ({ ...f, start: e.target.value }))} />
-            <input type="date" className="border rounded-lg px-2 py-1 text-sm" value={entryFilters.end} onChange={(e) => setEntryFilters((f) => ({ ...f, end: e.target.value }))} />
-          </div>
-        </div>
-        <div className="grid grid-cols-1 gap-3">
-          {entries.map((en) => (
-            <div key={en.id} className="border rounded-xl p-3 flex justify-between items-start group">
-              <div>
-                <div className="flex justify-between">
-                  <p className="font-semibold text-slate-800">#{en.id} • {en.supplier || '—'} • NF {en.invoice_number || '—'}</p>
-                </div>
-                <p className="text-sm text-slate-600">{new Date(en.created_at).toLocaleString('pt-BR')}</p>
-                <p className="text-sm text-slate-600">Data NF: {en.invoice_date || '—'} • Itens: {en.items?.length ?? 0}</p>
-              </div>
-              {role === 'admin' && (
-                <button 
-                  onClick={() => deleteEntry(en.id)}
-                  className="opacity-0 group-hover:opacity-100 p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
-                  title="Excluir entrada"
-                >
-                  🗑️
-                </button>
-              )}
-            </div>
-          ))}
-          {entries.length === 0 && <div className="text-slate-500">Sem entradas encontradas para os filtros.</div>}
-        </div>
-      </div>
     </div>
   );
 }

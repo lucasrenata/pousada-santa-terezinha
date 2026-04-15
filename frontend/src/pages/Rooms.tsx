@@ -272,6 +272,7 @@ export default function Rooms() {
     grandTotal: number;
   } | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<'pix' | 'credito' | 'debito' | 'dinheiro'>('pix');
+  const [checkoutDiscount, setCheckoutDiscount] = useState<number>(0);
 
 
   
@@ -307,13 +308,17 @@ export default function Rooms() {
   async function confirmCheckout() {
     try {
       if (!checkoutInfo) return;
-      await api.post(`/bookings/checkout/${checkoutInfo.roomId}`, { payment_method: paymentMethod });
+      await api.post(`/bookings/checkout/${checkoutInfo.roomId}`, { 
+        payment_method: paymentMethod,
+        discount: checkoutDiscount
+      });
       toast({ 
         title: "Check-out realizado!", 
         description: `O quarto ${checkoutInfo.roomId} foi liberado e a receita lançada.` 
       });
       setCheckoutOpen(false);
       setCheckoutInfo(null);
+      setCheckoutDiscount(0);
       await loadRooms();
     } catch (err) {
       const axErr = err as AxiosError<{ detail?: string }>;
@@ -773,9 +778,24 @@ export default function Rooms() {
                         <span>Consumo Extra</span>
                         <span className="font-semibold">R$ {checkoutInfo.consumptionTotal.toFixed(2)}</span>
                       </div>
+                      
+                      <div className="pt-2 flex justify-between items-center bg-blue-50/50 p-2 rounded-lg border border-blue-100">
+                        <span className="text-xs font-bold text-blue-700">DESCONTO</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-400">R$</span>
+                          <input 
+                            type="number" 
+                            step="0.01" 
+                            className="w-24 text-right bg-transparent border-b border-blue-300 focus:border-blue-600 outline-none text-blue-700 font-bold"
+                            value={checkoutDiscount || ''}
+                            onChange={(e) => setCheckoutDiscount(parseFloat(e.target.value) || 0)}
+                          />
+                        </div>
+                      </div>
+
                       <div className="pt-3 border-t-2 border-dashed border-slate-200 flex justify-between items-center">
                         <span className="font-bold text-slate-900 border-b-2 border-blue-500 pb-1 uppercase tracking-wider text-xs">Total Geral</span>
-                        <span className="text-2xl font-black text-blue-600">R$ {checkoutInfo.grandTotal.toFixed(2)}</span>
+                        <span className="text-2xl font-black text-blue-600">R$ {(checkoutInfo.grandTotal - checkoutDiscount).toFixed(2)}</span>
                       </div>
                     </div>
 

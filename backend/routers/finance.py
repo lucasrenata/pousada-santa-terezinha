@@ -1,12 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi.responses import FileResponse
 from .auth import get_current_admin
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func, asc, desc, and_
 from datetime import date, datetime, timedelta
 from typing import Optional, List
+import os
+from utils.finance_pdf import generate_financial_report
 import models, schemas
-from database import get_db
+from database import get_db, set_tenant_context
 
 router = APIRouter(prefix="/finance", tags=["Finance"])
 
@@ -17,6 +20,7 @@ router = APIRouter(prefix="/finance", tags=["Finance"])
 # 1. LANÇAR RECEITA (Manual)
 @router.post("/", response_model=schemas.RevenueResponse)
 def add_revenue(revenue: schemas.RevenueCreate, db: Session = Depends(get_db), admin = Depends(get_current_admin)):
+    set_tenant_context(db, admin.tenant_id)
     new_rev = models.Revenue(
         description=revenue.description,
         amount=revenue.amount,
@@ -45,6 +49,7 @@ def get_report(
     db: Session = Depends(get_db),
     admin = Depends(get_current_admin)
 ):
+    set_tenant_context(db, admin.tenant_id)
     query = db.query(models.Revenue)
     if start: query = query.filter(models.Revenue.created_at >= start)
     if end:   query = query.filter(models.Revenue.created_at <= end)
@@ -89,6 +94,7 @@ def get_report(
 # 3. ATUALIZAR RECEITA
 @router.put("/{revenue_id}", response_model=schemas.RevenueResponse)
 def update_revenue(revenue_id: int, payload: schemas.RevenueUpdate, db: Session = Depends(get_db), admin = Depends(get_current_admin)):
+    set_tenant_context(db, admin.tenant_id)
     rev = db.query(models.Revenue).filter(models.Revenue.id == revenue_id).first()
     if not rev:
         raise HTTPException(status_code=404, detail="Receita não encontrada")
@@ -104,6 +110,7 @@ def update_revenue(revenue_id: int, payload: schemas.RevenueUpdate, db: Session 
 # 4. EXCLUIR RECEITA
 @router.delete("/{revenue_id}")
 def delete_revenue(revenue_id: int, db: Session = Depends(get_db), admin = Depends(get_current_admin)):
+    set_tenant_context(db, admin.tenant_id)
     rev = db.query(models.Revenue).filter(models.Revenue.id == revenue_id).first()
     if not rev:
         raise HTTPException(status_code=404, detail="Receita não encontrada")
@@ -123,6 +130,7 @@ def create_expense(
     db: Session = Depends(get_db),
     admin = Depends(get_current_admin)
 ):
+    set_tenant_context(db, admin.tenant_id)
     expense = models.Expense(
         description=data.description,
         amount=data.amount,
@@ -151,6 +159,7 @@ def list_expenses(
     db: Session = Depends(get_db),
     admin = Depends(get_current_admin)
 ):
+    set_tenant_context(db, admin.tenant_id)
     query = db.query(models.Expense)
 
     if start:    query = query.filter(models.Expense.created_at >= start)
@@ -179,6 +188,7 @@ def update_expense(
     db: Session = Depends(get_db),
     admin = Depends(get_current_admin)
 ):
+    set_tenant_context(db, admin.tenant_id)
     expense = db.query(models.Expense).filter(models.Expense.id == expense_id).first()
     if not expense:
         raise HTTPException(status_code=404, detail="Despesa não encontrada")
@@ -206,6 +216,7 @@ def delete_expense(
     db: Session = Depends(get_db),
     admin = Depends(get_current_admin)
 ):
+    set_tenant_context(db, admin.tenant_id)
     expense = db.query(models.Expense).filter(models.Expense.id == expense_id).first()
     if not expense:
         raise HTTPException(status_code=404, detail="Despesa não encontrada")
@@ -224,6 +235,7 @@ def daily_snapshot(
     db: Session = Depends(get_db),
     admin = Depends(get_current_admin)
 ):
+    set_tenant_context(db, admin.tenant_id)
     now   = datetime.now()
     today = now.date()
     start_of_day = datetime.combine(today, datetime.min.time())
@@ -281,10 +293,22 @@ def daily_snapshot(
         models.Expense.due_date.isnot(None)
     ).count()
 
+    # --- Saldo Positivo do Mês (Acumulado) ---
+    month_start = today.replace(day=1)
+    month_revenue = db.query(func.coalesce(func.sum(models.Revenue.amount), 0.0)).filter(
+        models.Revenue.created_at >= datetime.combine(month_start, datetime.min.time())
+    ).scalar() or 0.0
+    
+    month_expense = db.query(func.coalesce(func.sum(models.Expense.amount), 0.0)).filter(
+        models.Expense.is_paid == True,
+        models.Expense.paid_date >= month_start
+    ).scalar() or 0.0
+
     return {
         "revenue_today":    round(revenue_today, 2),
         "expense_today":    round(expense_today, 2),
         "net_today":        round(revenue_today - expense_today, 2),
+        "monthly_net":      round(month_revenue - month_expense, 2),
         "occupancy_pct":    occupancy_pct,
         "total_rooms":      total_rooms,
         "occupied_rooms":   occupied,
@@ -309,6 +333,7 @@ def cash_flow(
     db: Session = Depends(get_db),
     admin = Depends(get_current_admin)
 ):
+    set_tenant_context(db, admin.tenant_id)
     # Default: último 30 dias
     if not end:   end   = date.today()
     if not start: start = end - timedelta(days=29)
@@ -398,9 +423,109 @@ def cash_flow(
 
 
 # =============================================================================
-# COMPARATIVO DE PERÍODOS  (NOVO)
-# =============================================================================
+# 11. EXPORTAÇÃO DE RELATÓRIO PDF (ELITE)
+@router.get("/reports/export")
+def export_financial_pdf(
+    start: Optional[date] = None,
+    end:   Optional[date] = None,
+    mode:  str = Query("full", enum=["full", "summary"]),
+    db: Session = Depends(get_db),
+    admin = Depends(get_current_admin),
+    bg_tasks: BackgroundTasks = None
+):
+    set_tenant_context(db, admin.tenant_id)
+    if not end: end = date.today()
+    if not start: start = end - timedelta(days=29)
 
+    start_dt = datetime.combine(start, datetime.min.time())
+    end_dt   = datetime.combine(end,   datetime.max.time())
+
+    # Coleta de Totais
+    revs = db.query(models.Revenue).filter(
+        models.Revenue.created_at >= start_dt,
+        models.Revenue.created_at <= end_dt
+    ).all()
+    
+    exps = db.query(models.Expense).filter(
+        models.Expense.is_paid == True,
+        models.Expense.paid_date >= start,
+        models.Expense.paid_date <= end
+    ).all()
+
+    total_revenue = sum(r.amount for r in revs)
+    total_expense = sum(e.amount for e in exps)
+    total_discounts = sum(r.discount or 0.0 for r in revs) # Assume descontos registrados na receita
+    
+    # Listas detalhadas
+    incomes_list = [{
+        "data": r.created_at.strftime("%d/%m/%Y"),
+        "desc": r.description,
+        "cat": r.category.value if r.category else "Geral",
+        "valor": r.amount,
+        "desconto": r.discount or 0.0
+    } for r in revs]
+
+    outcomes_list = [{
+        "data": e.paid_date.strftime("%d/%m/%Y") if e.paid_date else "-",
+        "desc": e.description,
+        "cat": e.category.value if e.category else "Geral",
+        "metodo": "Transferência", # Ou buscar do campo se houver
+        "valor": e.amount
+    } for e in exps]
+
+    # Categorização
+    by_category = {}
+    for r in revs:
+        cat = r.category.value if r.category else "Geral"
+        by_category[cat] = by_category.get(cat, 0) + r.amount
+        
+    expense_by_category = {}
+    for e in exps:
+        cat = e.category.value if e.category else "Geral"
+        expense_by_category[cat] = expense_by_category.get(cat, 0) + e.amount
+
+    # Timeline (Reutilizada da lógica de cash-flow)
+    timeline = []
+    cursor = start
+    while cursor <= end:
+        d_start = datetime.combine(cursor, datetime.min.time())
+        d_end = datetime.combine(cursor, datetime.max.time())
+        d_rev = sum(r.amount for r in revs if d_start <= r.created_at <= d_end)
+        d_exp = sum(e.amount for e in exps if e.paid_date == cursor)
+        timeline.append({
+            "date": cursor.strftime("%d/%m/%Y"),
+            "revenue": d_rev,
+            "expense": d_exp,
+            "net": d_rev - d_exp
+        })
+        cursor += timedelta(days=1)
+
+    data = {
+        "start": start.strftime("%d/%m/%Y"),
+        "end": end.strftime("%d/%m/%Y"),
+        "total_revenue": total_revenue,
+        "total_expense": total_expense,
+        "total_discounts": total_discounts,
+        "incomes_list": incomes_list,
+        "outcomes_list": outcomes_list,
+        "by_category": by_category,
+        "expense_by_category": expense_by_category,
+        "timeline": timeline
+    }
+
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f"finance_exec_{ts}.pdf"
+    path = generate_financial_report(data, filename, tenant_id=admin.tenant_id, mode=mode)
+
+    def remove_file(path: str):
+        try:
+            if os.path.exists(path): os.remove(path)
+        except Exception as e: print(f"Erro ao deletar relatório: {e}")
+
+    if bg_tasks:
+        bg_tasks.add_task(remove_file, path)
+    
+    return FileResponse(path, media_type="application/pdf", filename=filename)
 def _period_summary(db: Session, start: date, end: date) -> dict:
     """Helper: calcula receita, despesa e KPIs de ocupação para um período."""
     start_dt = datetime.combine(start, datetime.min.time())
@@ -455,6 +580,7 @@ def compare_periods(
     db: Session = Depends(get_db),
     admin = Depends(get_current_admin)
 ):
+    set_tenant_context(db, admin.tenant_id)
     period_a = _period_summary(db, p1_start, p1_end)
     period_b = _period_summary(db, p2_start, p2_end)
 

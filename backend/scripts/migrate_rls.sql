@@ -1,6 +1,8 @@
 -- SCRIPT DE MIGRAÇÃO E ATIVAÇÃO DE RLS
 -- Adiciona a coluna tenant_id e ativa as políticas de isolamento
 
+SET app.current_tenant = '-1';
+
 -- 1. Garante que existe pelo menos um Tenant padrão
 INSERT INTO tenants (name, is_active, created_at) 
 SELECT 'Pousada Principal', true, now()
@@ -14,7 +16,7 @@ DECLARE
         'users', 'rooms', 'guests', 'products', 'bookings', 
         'companions', 'consumptions', 'revenues', 'business_rules', 
         'chat_messages', 'stock_entries', 'stock_entry_items', 
-        'settings', 'events'
+        'settings', 'events', 'expenses', 'product_categories'
     ];
 BEGIN
     FOREACH t IN ARRAY tables LOOP
@@ -25,8 +27,9 @@ BEGIN
             EXECUTE format('UPDATE %I SET tenant_id = 1 WHERE tenant_id IS NULL', t);
         END IF;
 
-        -- Habilita RLS
+        -- Habilita RLS e força a política mesmo para o proprietário da tabela
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+        EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
 
         -- Recria a política de isolamento
         EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_policy ON %I', t);

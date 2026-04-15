@@ -57,6 +57,7 @@ class ExpenseCategory(str, enum.Enum):
     ALIMENTACAO = "alimentacao"
     MARKETING = "marketing"
     IMPOSTOS = "impostos"
+    ALUGUEL = "aluguel"
     OUTROS = "outros"
 
 # --- TABELAS ---
@@ -166,6 +167,13 @@ class Product(Base, TenantMixin):
     is_active = Column(Boolean, default=True)
     is_quick_access = Column(Boolean, default=False)
 
+class ProductCategory(Base, TenantMixin):
+    """Categorias Customizadas de Produtos"""
+    __tablename__ = "product_categories"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    # tenant_id vem do TenantMixin
+
 class Booking(Base, TenantMixin):
     """Reserva Detalhada"""
     __tablename__ = "bookings"
@@ -183,6 +191,7 @@ class Booking(Base, TenantMixin):
     notes = Column(Text, nullable=True) 
     daily_rate = Column(Float) 
     total_amount = Column(Float, default=0.0)
+    discount = Column(Float, default=0.0)
     deposit_amount = Column(Float, default=0.0)
     payment_status = Column(Enum(PaymentStatus), default=PaymentStatus.PENDENTE)
     status = Column(Enum(BookingStatus), default=BookingStatus.PENDENTE)
@@ -220,6 +229,7 @@ class Revenue(Base, TenantMixin):
     id = Column(Integer, primary_key=True, index=True)
     description = Column(String)
     amount = Column(Float)
+    discount = Column(Float, default=0.0)
     category = Column(Enum(RevenueCategory))
     payment_method = Column(Enum(PaymentMethod))
     created_at = Column(DateTime, default=datetime.now)
@@ -247,7 +257,7 @@ class ChatMessage(Base, TenantMixin):
     session_id = Column(String, index=True) # ID da sessão (UUID) vindo do Front
     role = Column(String)                   # 'user' ou 'assistant'
     content = Column(Text)
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, default=datetime.now, index=True)
     
 class StockEntry(Base, TenantMixin):
     """Entrada de Estoque (Nota Fiscal)"""
@@ -326,7 +336,8 @@ class Expense(Base, TenantMixin):
     id = Column(Integer, primary_key=True, index=True)
     description = Column(String, nullable=False)
     amount = Column(Float, nullable=False)
-    category = Column(Enum(ExpenseCategory), nullable=False, default=ExpenseCategory.OUTROS)
+    # Usamos values_callable para garantir que o SQLAlchemy envie o valor do enum (minúsculo) e não o nome do membro (MAIÚSCULO)
+    category = Column(Enum(ExpenseCategory, values_callable=lambda x: [e.value for e in x]), nullable=False, default=ExpenseCategory.OUTROS)
     due_date = Column(Date, nullable=True)          # Data de vencimento
     paid_date = Column(Date, nullable=True)          # Data efetiva de pagamento
     is_paid = Column(Boolean, default=False)

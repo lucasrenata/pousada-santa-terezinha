@@ -104,6 +104,9 @@ export function useReservations() {
 
   useEffect(() => {
     fetchReservations();
+    // Polling de 30s — mantém os cards do Dashboard atualizados em tempo real
+    const interval = setInterval(() => fetchReservations(), 30_000);
+    return () => clearInterval(interval);
   }, []);
 
   return {

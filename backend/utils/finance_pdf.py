@@ -1,0 +1,98 @@
+from utils.pdf_engine import ProfessionalReport
+from reportlab.lib.units import cm
+from reportlab.platypus import Paragraph, Spacer, PageBreak
+
+def generate_financial_report(data, filename="relatorio_financeiro.pdf", tenant_id=None, mode="full"):
+    """
+    Gera um relatório financeiro de alto nível.
+    mode: 'full' (completo com extrato) ou 'summary' (apenas visão geral)
+    """
+    title = "Relatório Financeiro Completo" if mode == "full" else "Demonstrativo Financeiro Resumido"
+    report = ProfessionalReport(filename, title, tenant_id=tenant_id)
+    
+    # 1. Cabeçalho e Sumário
+    periodo = f"{data.get('start', '')} até {data.get('end', '')}"
+    report.add_header(subtitle=f"Período de Referência: {periodo}")
+    
+    toc_items = [("Visão Geral do Período", "OVERVIEW")]
+    if mode == "full":
+        toc_items.extend([
+            ("Detalhamento de Entradas (Receitas)", "INCOMES"),
+            ("Detalhamento de Saídas (Despesas)", "OUTCOMES"),
+            ("Evolução do Fluxo de Caixa Diário", "FLOW")
+        ])
+    report.add_toc(toc_items)
+
+    # 2. Seção: Visão Geral
+    report.add_section_header("Visão Geral do Período", anchor="OVERVIEW")
+    
+    # KPIs Principais
+    total_rev = data.get('total_revenue', 0)
+    total_exp = data.get('total_expense', 0)
+    total_disc = data.get('total_discounts', 0)
+    net = total_rev - total_exp
+    
+    kpis = [
+        {"label": "Receita Bruta", "value": f"R$ {total_rev:.2f}"},
+        {"label": "Despesas Pagas", "value": f"R$ {total_exp:.2f}"},
+        {"label": "Total Descontos", "value": f"R$ {total_disc:.2f}"},
+        {"label": "Saldo Líquido", "value": f"R$ {net:.2f}"}
+    ]
+    report.add_kpi_cards(kpis)
+    
+    # Mini Tabelas de Distribuição
+    report.story.append(Paragraph("Distribuição por Categoria", report.styles['Heading4']))
+    cat_data = [["Categoria", "Receita", "Despesa"]]
+    # Agrupar categorias únicas
+    all_cats = set(list(data.get("by_category", {}).keys()) + list(data.get("expense_by_category", {}).keys()))
+    for cat in sorted(all_cats):
+        rv = data.get("by_category", {}).get(cat, 0)
+        ex = data.get("expense_by_category", {}).get(cat, 0)
+        cat_data.append([cat.title(), f"R$ {rv:.2f}", f"R$ {ex:.2f}"])
+    
+    report.add_table(cat_data, col_widths=[6*cm, 4*cm, 4*cm])
+    report.story.append(Spacer(1, 1*cm))
+
+    if mode == "full":
+        # 3. Seção: Entradas
+        report.story.append(PageBreak())
+        report.add_section_header("Detalhamento de Entradas (Receitas)", anchor="INCOMES")
+        hist_in = [["Data", "Descrição", "Categoria", "Valor", "Desc."]]
+        for tx in data.get("incomes_list", []):
+            hist_in.append([
+                tx["data"],
+                tx["desc"][:25] + ".." if len(tx["desc"]) > 25 else tx["desc"],
+                tx["cat"],
+                f"R$ {tx['valor']:.2f}",
+                f"R$ {tx.get('desconto', 0):.2f}"
+            ])
+        if len(hist_in) == 1: hist_in.append(["-", "Nenhuma entrada", "-", "-", "-"])
+        report.add_table(hist_in, col_widths=[2.5*cm, 6*cm, 3*cm, 3.2*cm, 2.5*cm])
+
+        # 4. Seção: Saídas
+        report.story.append(Spacer(1, 1*cm))
+        report.add_section_header("Detalhamento de Saídas (Despesas)", anchor="OUTCOMES")
+        hist_out = [["Data", "Descrição", "Categoria", "Método", "Valor"]]
+        for tx in data.get("outcomes_list", []):
+            hist_out.append([
+                tx["data"],
+                tx["desc"][:25] + ".." if len(tx["desc"]) > 25 else tx["desc"],
+                tx["cat"],
+                tx["metodo"],
+                f"R$ {tx['valor']:.2f}"
+            ])
+        if len(hist_out) == 1: hist_out.append(["-", "Nenhuma saída", "-", "-", "-"])
+        report.add_table(hist_out, col_widths=[2.5*cm, 6*cm, 3*cm, 2.5*cm, 3.2*cm])
+
+        # 5. Seção: Fluxo Diário
+        report.story.append(PageBreak())
+        report.add_section_header("Evolução do Fluxo de Caixa Diário", anchor="FLOW")
+        flow_data = [["Data", "Entradas", "Saídas", "Saldo do Dia"]]
+        for d in data.get("timeline", []):
+            flow_data.append([
+                d["date"], f"R$ {d['revenue']:.2f}", f"R$ {d['expense']:.2f}", 
+                Paragraph(f"<font color='{'#16a34a' if d['net']>=0 else '#dc2626'}'>R$ {d['net']:.2f}</font>", report.styles['Normal'])
+            ])
+        report.add_table(flow_data, col_widths=[4*cm, 4*cm, 4*cm, 4*cm])
+
+    return report.build()

@@ -16,6 +16,7 @@ router = APIRouter(prefix="/bookings", tags=["Bookings"])
 # 1. CRIAR RESERVA (Vem do Formulário Web)
 @router.post("/")
 async def create_booking(data: schemas.BookingCreate, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
+    set_tenant_context(db, current_user.tenant_id)
     try:
         # --- VALIDAÇÃO DE CAPACIDADE MÁXIMA ---
         if data.room_id:
@@ -122,6 +123,7 @@ async def create_booking(data: schemas.BookingCreate, db: Session = Depends(get_
 # 2. CHECK-IN (Transforma reserva pendente em ativa)
 @router.post("/checkin")
 def check_in(data: schemas.CheckInRequest, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
+    set_tenant_context(db, current_user.tenant_id)
     booking = db.query(models.Booking).with_for_update().filter(models.Booking.id == data.booking_id).first()
     if not booking: 
         raise HTTPException(status_code=404, detail="Reserva não encontrada")
@@ -155,6 +157,7 @@ def check_in(data: schemas.CheckInRequest, db: Session = Depends(get_db), curren
 # 3. CHECK-OUT (Com lançamento no Financeiro)
 @router.post("/checkout/{room_id}")
 def check_out(room_id: str, data: schemas.CheckoutPaymentRequest, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
+    set_tenant_context(db, current_user.tenant_id)
     booking = db.query(models.Booking).with_for_update().filter(
         models.Booking.room_id == room_id, 
         models.Booking.status == models.BookingStatus.ATIVO
@@ -195,12 +198,16 @@ def check_out(room_id: str, data: schemas.CheckoutPaymentRequest, db: Session = 
     pricing = calculate_reservation_total(booking.daily_rate, days, ages, settings=settings_dict)
     
     consumption_total = sum([c.quantity * c.unit_price for c in booking.consumptions])
-    final_total = pricing["total"] + consumption_total
+    
+    # Aplicação de Desconto (Novo)
+    discount = data.discount or 0.0
+    final_total = (pricing["total"] + consumption_total) - discount
 
     # Atualiza Status da Reserva
     booking.status = models.BookingStatus.CONCLUIDO
     booking.real_check_out = datetime.now()
     booking.total_amount = final_total
+    booking.discount = discount # Salva o desconto na reserva
     
     # Atualiza Status do Quarto
     room.status = models.RoomStatus.LIMPEZA
@@ -209,12 +216,26 @@ def check_out(room_id: str, data: schemas.CheckoutPaymentRequest, db: Session = 
     revenue_entry = models.Revenue(
         description=f"Check-out Quarto {room.id} - Reserva #{booking.id}",
         amount=final_total,
+        discount=discount, # Salva o desconto na receita para o relatório
         category=models.RevenueCategory.HOSPEDAGEM,
         payment_method=data.payment_method,
         booking_id=booking.id,
         created_at=datetime.now()
     )
     db.add(revenue_entry)
+
+    # --- LIMPEZA DE ARQUIVOS (TRIGGER MANUAL) ---
+    # Deleta a foto do comprovante se houver, para evitar acúmulo de lixo
+    if booking.payment_receipt_url:
+        try:
+            # A URL é /static/uploads/receipts/filename.ext
+            # O caminho físico é static/uploads/receipts/filename.ext
+            file_path = booking.payment_receipt_url.lstrip("/")
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            booking.payment_receipt_url = None # Limpa o campo após deletar o arquivo
+        except Exception as e:
+            print(f"⚠️ Erro ao deletar comprovante: {e}")
 
     db.commit()
 
@@ -223,6 +244,7 @@ def check_out(room_id: str, data: schemas.CheckoutPaymentRequest, db: Session = 
 # 3.1. RESUMO PARA CHECK-OUT (diárias x consumos)
 @router.get("/summary/{room_id}")
 def checkout_summary(room_id: str, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
+    set_tenant_context(db, current_user.tenant_id)
     booking = db.query(models.Booking).filter(
         models.Booking.room_id == room_id, 
         models.Booking.status == models.BookingStatus.ATIVO
@@ -283,6 +305,7 @@ def checkout_summary(room_id: str, db: Session = Depends(get_db), current_user =
 
 @router.get("/stats/today")
 def stats_today(db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
+    set_tenant_context(db, current_user.tenant_id)
     start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=1)
     checkins = db.query(models.Booking).filter(
@@ -299,6 +322,7 @@ def stats_today(db: Session = Depends(get_db), current_user = Depends(get_curren
 
 @router.get("/stats/stream")
 async def stats_stream(db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
+    set_tenant_context(db, current_user.tenant_id)
     async def event_gen():
         while True:
             try:
@@ -325,6 +349,7 @@ async def stats_stream(db: Session = Depends(get_db), current_user = Depends(get
 # 4. LISTAR RESERVAS POR PERÍODO (para Calendário)
 @router.get("/", response_model=List[schemas.BookingResponse])
 def list_bookings(start: Optional[date] = None, end: Optional[date] = None, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
+    set_tenant_context(db, current_user.tenant_id)
     query = db.query(models.Booking)
     if start and end:
         query = query.filter(models.Booking.check_in_date <= end, models.Booking.check_out_date >= start)
@@ -363,6 +388,7 @@ def list_bookings(start: Optional[date] = None, end: Optional[date] = None, db: 
 # 5. BUSCAR RESERVA ATIVA POR QUARTO (para mostrar no modal de quarto)
 @router.get("/active/{room_id}")
 def get_active_booking(room_id: str, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
+    set_tenant_context(db, current_user.tenant_id)
     booking = db.query(models.Booking).filter(
         models.Booking.room_id == room_id,
         models.Booking.status == models.BookingStatus.ATIVO
