@@ -17,14 +17,14 @@ echo "📦 Aplicando migrações do Alembic (head)..."
 alembic upgrade head
 
 # 3. Aplicar Scripts SQL Customizados (Triggers, RLS, etc.)
-# Note: Usamos o psql ou rodamos via python se preferir. 
-# Como temos o backend rodando, vamos usar o script python de execução de SQL.
 echo "🛠️ Aplicando scripts SQL customizados de backend/sql/..."
 python -c "
 import os
-import sqlalchemy
-from sqlalchemy import text
-from database import engine
+from sqlalchemy import text, create_engine
+
+# Usamos a conexão de ADMIN para garantir privilégios de ALTER TABLE e TRIGGER
+admin_url = 'postgresql://admin:admin_password_123@pousada_db:5432/pousada_db'
+engine = create_engine(admin_url)
 
 sql_dir = 'sql'
 if os.path.exists(sql_dir):
@@ -33,11 +33,14 @@ if os.path.exists(sql_dir):
         print(f'   -> Executando: {filename}')
         with open(os.path.join(sql_dir, filename), 'r') as f:
             sql = f.read()
-            with engine.connect() as conn:
-                # Bypassa RLS para configurar as partes do sistema (Usando admin context)
-                conn.execute(text(\"SET app.current_tenant = '-1'\"))
-                conn.execute(text(sql))
-                conn.commit()
+            try:
+                with engine.connect() as conn:
+                    # Bypassa RLS para configuração global
+                    conn.execute(text(\"SET app.current_tenant = '-1'\"))
+                    conn.execute(text(sql))
+                    conn.commit()
+            except Exception as e:
+                print(f'      ❌ Erro em {filename}: {e}')
 else:
     print('   ! Canal SQL não encontrado, pulando.')
 "
