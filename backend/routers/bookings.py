@@ -570,53 +570,62 @@ def update_booking(booking_id: int, data: schemas.BookingUpdate, db: Session = D
     booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
     if not booking:
         raise HTTPException(status_code=404, detail="Reserva não encontrada")
-    
-    update_data = data.model_dump(exclude_unset=True)
-    
-    # Previne que o frontend sobrescreva os hóspedes calculados
-    if "total_guests" in update_data:
-        update_data.pop("total_guests")
-        
-    if "companions" in update_data:
-        comps = update_data.pop("companions")
-        # Remove acompanhantes antigos
-        db.query(models.Companion).filter(models.Companion.booking_id == booking_id).delete()
-        # Adiciona novos
-        for c in comps:
-            db.add(models.Companion(booking_id=booking.id, name=c['name'], age=c['age']))
-            
-        booking.total_guests = 1 + len(comps)
 
-    for key, value in update_data.items():
-        setattr(booking, key, value)
-        
-    db.commit()
-    db.refresh(booking)
-    
-    # Recalcula o valor total da reserva após a atualização dos dados
-    settings_rows = db.query(models.SystemSetting).all()
-    settings_dict = {s.key: s.value for s in settings_rows}
-    
-    days = calculate_daily_rates_count(
-        booking.check_in_date, 
-        booking.check_out_date, 
-        booking.check_in_time, 
-        booking.check_out_time
-    )
-    
-    guest_age = 18
-    if booking.guest and booking.guest.birth_date:
-        today = date.today()
-        bday = booking.guest.birth_date
-        guest_age = today.year - bday.year - ((today.month, today.day) < (bday.month, bday.day))
-        
-    ages = [guest_age] + [c.age for c in booking.companions]
-    pricing = calculate_reservation_total(booking.daily_rate, days, ages, settings=settings_dict)
-    booking.total_amount = pricing["total"]
-    
-    db.commit()
-    db.refresh(booking)
-    return {"message": "Reserva atualizada com sucesso"}
+    try:
+        update_data = data.model_dump(exclude_unset=True)
+
+        # Previne que o frontend sobrescreva os hóspedes calculados
+        if "total_guests" in update_data:
+            update_data.pop("total_guests")
+
+        if "companions" in update_data:
+            comps = update_data.pop("companions")
+            # Remove acompanhantes antigos e adiciona novos
+            db.query(models.Companion).filter(models.Companion.booking_id == booking_id).delete()
+            for c in comps:
+                db.add(models.Companion(booking_id=booking.id, name=c['name'], age=c['age']))
+            booking.total_guests = 1 + len(comps)
+
+        for key, value in update_data.items():
+            setattr(booking, key, value)
+
+        db.flush()   # Valida restrições ANTES do commit — detecta erros cedo
+        db.refresh(booking)
+
+        # Recalcula o valor total da reserva após a atualização dos dados
+        settings_rows = db.query(models.SystemSetting).all()
+        settings_dict = {s.key: s.value for s in settings_rows}
+
+        days = calculate_daily_rates_count(
+            booking.check_in_date,
+            booking.check_out_date,
+            booking.check_in_time,
+            booking.check_out_time
+        )
+
+        guest_age = 18
+        if booking.guest and booking.guest.birth_date:
+            today = date.today()
+            bday = booking.guest.birth_date
+            guest_age = today.year - bday.year - ((today.month, today.day) < (bday.month, bday.day))
+
+        ages = [guest_age] + [c.age for c in booking.companions]
+        pricing = calculate_reservation_total(booking.daily_rate, days, ages, settings=settings_dict)
+        booking.total_amount = pricing["total"]
+
+        db.commit()
+        db.refresh(booking)
+        return {"message": "Reserva atualizada com sucesso"}
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao atualizar reserva: {str(e)}"
+        )
 
 # 9. DELETAR RESERVA
 @router.delete("/{booking_id}")
