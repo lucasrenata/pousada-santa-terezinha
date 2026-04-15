@@ -338,3 +338,37 @@ class BusinessRuleResponse(BusinessRuleBase):
     id: int
     created_at: datetime
     class Config: from_attributes = True
+
+# --- DESPESAS (CONTAS A PAGAR) ---
+class ExpenseCreate(BaseModel):
+    description: str
+    amount: float
+    category: models.ExpenseCategory
+    due_date: Optional[date] = None
+    notes: Optional[str] = None
+
+class ExpenseUpdate(BaseModel):
+    description: Optional[str] = None
+    amount: Optional[float] = None
+    category: Optional[models.ExpenseCategory] = None
+    due_date: Optional[date] = None
+    paid_date: Optional[date] = None
+    is_paid: Optional[bool] = None
+    payment_method: Optional[models.PaymentMethod] = None
+    notes: Optional[str] = None
+
+class ExpenseResponse(BaseModel):
+    id: int
+    description: str
+    amount: float
+    category: models.ExpenseCategory
+    due_date: Optional[date] = None
+    paid_date: Optional[date] = None
+    is_paid: bool
+    payment_method: Optional[models.PaymentMethod] = None
+    notes: Optional[str] = None
+    created_at: datetime
+    created_by: Optional[str] = None
+    tenant_id: Optional[int] = None
+    class Config: from_attributes = True
+

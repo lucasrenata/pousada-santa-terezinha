@@ -46,6 +46,19 @@ class RevenueCategory(str, enum.Enum):
     CONSUMO = "consumo"
     OUTROS = "outros"
 
+class ExpenseCategory(str, enum.Enum):
+    AGUA = "agua"
+    ENERGIA = "energia"
+    INTERNET = "internet"
+    MANUTENCAO = "manutencao"
+    FORNECEDOR = "fornecedor"
+    SALARIOS = "salarios"
+    LIMPEZA = "limpeza"
+    ALIMENTACAO = "alimentacao"
+    MARKETING = "marketing"
+    IMPOSTOS = "impostos"
+    OUTROS = "outros"
+
 # --- TABELAS ---
 
 class Tenant(Base):
@@ -306,3 +319,19 @@ class TenantMemory(Base):
     is_active = Column(Boolean, default=True)
 
     guest = relationship("Guest")
+
+class Expense(Base, TenantMixin):
+    """Contas a Pagar / Despesas Operacionais"""
+    __tablename__ = "expenses"
+    id = Column(Integer, primary_key=True, index=True)
+    description = Column(String, nullable=False)
+    amount = Column(Float, nullable=False)
+    category = Column(Enum(ExpenseCategory), nullable=False, default=ExpenseCategory.OUTROS)
+    due_date = Column(Date, nullable=True)          # Data de vencimento
+    paid_date = Column(Date, nullable=True)          # Data efetiva de pagamento
+    is_paid = Column(Boolean, default=False)
+    payment_method = Column(Enum(PaymentMethod), nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    created_by = Column(String, nullable=True)       # username do funcionário
+
