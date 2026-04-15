@@ -26,13 +26,21 @@ import models
 # Set up target metadata
 target_metadata = models.Base.metadata
 
-# Set sqlalchemy.url from .env or environment variable
+# Carrega variáveis de ambiente
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"))
-alembic_db_url = os.getenv("DATABASE_URL")
-if alembic_db_url:
-    # Escape % for configparser interpolation
-    alembic_db_url = alembic_db_url.replace("%", "%%")
-    config.set_main_option("sqlalchemy.url", alembic_db_url)
+
+# ALEMBIC_DATABASE_URL → usado para migrations (usuário admin com privilégio DDL)
+# DATABASE_URL         → usado pelo app em runtime (usuário pousada_app, só DML)
+# Isso mantém a arquitetura de segurança: app não tem acesso DDL ao banco.
+alembic_db_url = os.getenv("ALEMBIC_DATABASE_URL") or os.getenv("DATABASE_URL")
+if not alembic_db_url:
+    raise RuntimeError(
+        "Nenhuma DATABASE_URL ou ALEMBIC_DATABASE_URL definida. "
+        "Configure o arquivo .env do backend."
+    )
+# Escape % para compatibilidade com configparser
+alembic_db_url = alembic_db_url.replace("%", "%%")
+config.set_main_option("sqlalchemy.url", alembic_db_url)
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
