@@ -18,25 +18,23 @@ docker compose up -d
 echo "⏳ Aguardando os serviços iniciarem (15s)..."
 sleep 15
 
-# 5. Re-provisiona permissões do banco (necessário após recriação de tabelas)
-# Garante que pousada_app seja dono de TODAS as tabelas e sequences existentes.
-# Isso evita erros "InsufficientPrivilege" no Alembic.
+# 5. Re-provisiona permissões do banco via peer auth (usuário interno do container)
+# Usa '-u postgres' para autenticar via peer auth sem precisar de senha.
+# Isso garante acesso de superuser independente de quem criou as tabelas.
 echo "🔑 Provisionando permissões do banco de dados..."
-docker compose exec -T db psql -U postgres -d pousada_db -c "
+docker exec -u postgres pousada_db psql -d pousada_db -c "
+  -- Transfere ownership de todas as tabelas existentes para pousada_app
   DO \$\$
-  DECLARE
-    r RECORD;
+  DECLARE r RECORD;
   BEGIN
-    -- Transfere ownership de todas as tabelas para pousada_app
     FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
       EXECUTE 'ALTER TABLE public.' || quote_ident(r.tablename) || ' OWNER TO pousada_app';
     END LOOP;
-    -- Transfere ownership de todas as sequences para pousada_app
     FOR r IN SELECT sequencename FROM pg_sequences WHERE schemaname = 'public' LOOP
       EXECUTE 'ALTER SEQUENCE public.' || quote_ident(r.sequencename) || ' OWNER TO pousada_app';
     END LOOP;
   END \$\$;
-  -- Garante privileges padrão para tabelas futuras criadas pelo postgres
+  -- Garante privileges padrão para objetos futuros criados pelo postgres
   ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO pousada_app;
   ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
