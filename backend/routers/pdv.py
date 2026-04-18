@@ -309,13 +309,36 @@ def _process_comanda_finalization(comanda: models.Comanda, request: schemas.Clos
             )
             db.add(consumo)
     
-    # 3. Finalização de Status e Registros Financeiros (Venda Direta)
+    # 3. Criar Registro Histórico (Snapshot) da Venda
+    final_amount = max(0.0, comanda.total - getattr(request, 'discount', 0.0))
+    
+    registro_venda = models.PDVSale(
+        comanda_identificador=comanda.identificador,
+        total_amount=final_amount,
+        discount=getattr(request, 'discount', 0.0),
+        payment_method=request.payment_method, # Pode ser None se for lançamento no quarto
+        user_id=current_user.id,
+        session_id=comanda.session_id,
+        tenant_id=current_user.tenant_id
+    )
+    db.add(registro_venda)
+    db.flush() # Para gerar o ID da venda antes de criar os itens
+
+    for item in comanda.items:
+        snapshot_item = models.PDVSaleItem(
+            sale_id=registro_venda.id,
+            product_name=item.product.name if item.product else item.description or "Produto Manual",
+            quantity=item.quantity,
+            unit_price=item.unit_price,
+            total_item=item.unit_price * item.quantity,
+            tenant_id=current_user.tenant_id
+        )
+        db.add(snapshot_item)
+
+    # 4. Finalização de Status e Registros Financeiros (Venda Direta)
     if request.lancada_no_quarto:
         comanda.status = models.ComandaStatus.LANCADA_NO_QUARTO
     else:
-        # Calcula valor final com desconto
-        final_amount = max(0.0, comanda.total - getattr(request, 'discount', 0.0))
-            
         receita = models.Revenue(
             description=f"PDV: Comanda #{comanda.identificador}",
             amount=final_amount,

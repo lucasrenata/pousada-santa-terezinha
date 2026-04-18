@@ -85,6 +85,24 @@ interface CaixaSession {
   };
 }
 
+interface PDVSaleItem {
+  id: number;
+  product_name: string;
+  quantity: number;
+  unit_price: number;
+  total_item: number;
+}
+
+interface PDVSale {
+  id: number;
+  comanda_identificador: string;
+  total_amount: number;
+  discount: number;
+  payment_method: PaymentMethod;
+  created_at: string;
+  items?: PDVSaleItem[];
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const fmtCurrency = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -174,10 +192,11 @@ function Delta({ pct, inverted = false }: { pct: number; inverted?: boolean }) {
 }
 
 // ─── Tab navigation ───────────────────────────────────────────────────────────
-type Tab = 'receitas' | 'despesas' | 'fluxo' | 'fechamentos' | 'comparativo' | 'relatorios';
+type Tab = 'receitas' | 'despesas' | 'fluxo' | 'fechamentos' | 'pdv' | 'comparativo' | 'relatorios';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'receitas', label: '💰 Receitas' },
   { id: 'despesas', label: '📋 Despesas' },
+  { id: 'pdv', label: '🛒 Vendas PDV' },
   { id: 'fechamentos', label: '⚖️ Fechamentos' },
   { id: 'fluxo', label: '📊 Fluxo de Caixa' },
   { id: 'comparativo', label: '🔀 Comparativo' },
@@ -470,6 +489,43 @@ export default function Finance() {
   useEffect(() => {
     if (activeTab === 'fechamentos') loadClosings();
   }, [activeTab, loadClosings]);
+
+  // ════════════════════════════════════════════════════════════════
+  // ABA 6 — HISTÓRICO DE VENDAS PDV
+  // ════════════════════════════════════════════════════════════════
+  const [pdvSales, setPdvSales] = useState<PDVSale[]>([]);
+  const [pdvLoading, setPdvLoading] = useState(false);
+  const [pdvStart, setPdvStart] = useState('');
+  const [pdvEnd, setPdvEnd] = useState('');
+  const [selectedSale, setSelectedSale] = useState<PDVSale | null>(null);
+
+  const loadPdvSales = useCallback(async () => {
+    setPdvLoading(true);
+    try {
+      const params: any = {};
+      if (pdvStart) params.start = pdvStart;
+      if (pdvEnd) params.end = pdvEnd;
+      const res = await api.get('/finance/pdv-sales', { params });
+      setPdvSales(res.data);
+    } catch {
+      setError('Falha ao carregar histórico de vendas do PDV');
+    } finally {
+      setPdvLoading(false);
+    }
+  }, [pdvStart, pdvEnd]);
+
+  const viewSaleDetail = async (sale: PDVSale) => {
+    try {
+      const res = await api.get(`/finance/pdv-sales/${sale.id}`);
+      setSelectedSale(res.data);
+    } catch {
+      setError('Falha ao carregar detalhes da venda');
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'pdv') loadPdvSales();
+  }, [activeTab, loadPdvSales]);
 
   // ════════════════════════════════════════════════════════════════
   // INPUT / SELECT helpers
@@ -948,6 +1004,97 @@ export default function Finance() {
           </div>
         )}
 
+        {/* ══════════════════════════════════ ABA VENDAS PDV (NOVO) ══════════════════════════════════ */}
+        {activeTab === 'pdv' && (
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="flex justify-between items-end gap-4">
+              <div>
+                <h3 className="text-2xl font-bold text-slate-800 tracking-tight">Histórico de Vendas PDV</h3>
+                <p className="text-slate-500 text-sm">Registro permanente de todas as comandas finalizadas.</p>
+              </div>
+              <div className="flex gap-2 bg-white p-1 rounded-2xl border border-slate-200 shadow-sm">
+                 <div className="flex items-center px-3 border-r border-slate-100">
+                   <label className="text-[10px] font-bold text-slate-400 uppercase mr-2">De</label>
+                   <input type="date" className="text-xs font-semibold focus:outline-none bg-transparent" value={pdvStart} onChange={e => setPdvStart(e.target.value)} />
+                 </div>
+                 <div className="flex items-center px-3">
+                   <label className="text-[10px] font-bold text-slate-400 uppercase mr-2">Até</label>
+                   <input type="date" className="text-xs font-semibold focus:outline-none bg-transparent" value={pdvEnd} onChange={e => setPdvEnd(e.target.value)} />
+                 </div>
+                 <button onClick={loadPdvSales} className="bg-blue-600 text-white p-2 rounded-xl hover:bg-blue-700 transition">
+                   <Plus size={16} className="rotate-45" />
+                 </button>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-slate-600 text-[10px] uppercase font-bold tracking-wider">
+                    <tr>
+                      <th className="px-5 py-4 text-left">Horário</th>
+                      <th className="px-5 py-4 text-left">Comanda/Mesa</th>
+                      <th className="px-5 py-4 text-right">Subtotal</th>
+                      <th className="px-5 py-4 text-right">Desconto</th>
+                      <th className="px-5 py-4 text-right">Total Final</th>
+                      <th className="px-5 py-4 text-center">Forma Pagto</th>
+                      <th className="px-5 py-4 text-center">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {pdvLoading && <tr><td colSpan={7} className="px-5 py-12 text-center text-slate-400">Carregando histórico de vendas...</td></tr>}
+                    {!pdvLoading && pdvSales.map(sale => (
+                      <tr key={sale.id} className="hover:bg-slate-50/80 transition-colors cursor-pointer" onClick={() => viewSaleDetail(sale)}>
+                        <td className="px-5 py-4">
+                          <p className="font-bold text-slate-800">{new Date(sale.created_at).toLocaleDateString('pt-BR')}</p>
+                          <p className="text-[10px] text-slate-400 font-mono uppercase">{new Date(sale.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</p>
+                        </td>
+                        <td className="px-5 py-4">
+                          <span className="text-xs font-bold text-blue-700 bg-blue-50 px-2 py-1 rounded-lg">
+                            {sale.comanda_identificador}
+                          </span>
+                        </td>
+                        <td className="px-5 py-4 text-right text-slate-500 line-through decoration-slate-300">
+                          {fmtCurrency(sale.total_amount + (sale.discount || 0))}
+                        </td>
+                        <td className="px-5 py-4 text-right text-red-500 font-medium">
+                          -{fmtCurrency(sale.discount || 0)}
+                        </td>
+                        <td className="px-5 py-4 text-right">
+                          <span className="text-sm font-black text-slate-900">{fmtCurrency(sale.total_amount)}</span>
+                        </td>
+                        <td className="px-5 py-4 text-center">
+                          {sale.payment_method ? (
+                            <span className="text-[10px] font-black uppercase px-2 py-1 bg-emerald-50 text-emerald-700 rounded-md border border-emerald-100">
+                              {sale.payment_method}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold uppercase px-2 py-1 bg-amber-50 text-amber-600 rounded-md">
+                              LANÇ. QUARTO
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-5 py-4 text-center">
+                           <button 
+                             onClick={(e) => { e.stopPropagation(); viewSaleDetail(sale); }}
+                             className="p-2 rounded-xl hover:bg-blue-50 text-blue-600 transition border border-transparent hover:border-blue-100"
+                             title="Ver Detalhes do Consumo"
+                           >
+                              <FileText size={16} />
+                           </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!pdvLoading && pdvSales.length === 0 && (
+                      <tr><td colSpan={7} className="px-5 py-16 text-center text-slate-400 italic">Nenhuma venda registrada para este período.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ══════════════════════════════════ ABA RELATÓRIOS ══════════════════════════════════ */}
         {activeTab === 'relatorios' && (
           <div className="space-y-6 animate-in fade-in duration-500 max-w-2xl">
@@ -1297,6 +1444,93 @@ export default function Finance() {
                   Download PDF
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Detalhes da Venda PDV */}
+      {selectedSale && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2.5rem] w-full max-w-2xl shadow-2xl overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+            <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+              <div>
+                <h3 className="text-2xl font-black text-slate-800 tracking-tight flex items-center gap-3">
+                  <div className="bg-blue-600 text-white p-2 rounded-2xl">
+                    <FileText size={20} />
+                  </div>
+                  Detalhes da Comanda
+                </h3>
+                <p className="text-xs text-slate-400 mt-1 uppercase font-bold tracking-widest">{selectedSale.comanda_identificador} · Registro #{selectedSale.id}</p>
+              </div>
+              <button onClick={() => setSelectedSale(null)} className="text-slate-400 hover:text-slate-600 p-3 hover:bg-slate-100 rounded-2xl transition-all">
+                <Plus size={24} className="rotate-45" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-8">
+               <div className="bg-slate-50 rounded-3xl p-6 mb-8 border border-slate-200/60 flex justify-between items-center">
+                  <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Data do Consumo</p>
+                    <p className="text-sm font-bold text-slate-700">{new Date(selectedSale.created_at).toLocaleString('pt-BR')}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Método de Pagamento</p>
+                    <p className="text-sm font-bold text-emerald-600 uppercase">{selectedSale.payment_method || 'Lançado no Quarto'}</p>
+                  </div>
+               </div>
+
+               <div className="space-y-4">
+                  <p className="text-[10px] font-black text-slate-400 uppercase px-1 tracking-widest">Itens Consumidos/Serviços</p>
+                  <div className="rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50/50 text-slate-500 text-[10px] uppercase font-bold border-b border-slate-100">
+                        <tr>
+                          <th className="px-4 py-3 text-left">Item Descrição</th>
+                          <th className="px-4 py-3 text-center">Qtd</th>
+                          <th className="px-4 py-3 text-right">Unitário</th>
+                          <th className="px-4 py-3 text-right">Subtotal</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 bg-white">
+                        {selectedSale.items?.map(item => (
+                          <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="px-4 py-3 font-semibold text-slate-700">{item.product_name}</td>
+                            <td className="px-4 py-3 text-center text-slate-500 font-medium">{item.quantity}</td>
+                            <td className="px-4 py-3 text-right text-slate-500 font-mono">{fmtCurrency(item.unit_price)}</td>
+                            <td className="px-4 py-3 text-right font-bold text-slate-800">{fmtCurrency(item.total_item)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+               </div>
+            </div>
+
+            <div className="p-8 bg-slate-900 text-white rounded-t-[3rem] shadow-[0_-20px_50px_rgba(0,0,0,0.1)]">
+               <div className="space-y-3">
+                  <div className="flex justify-between items-center opacity-60">
+                    <span className="text-xs font-bold uppercase tracking-widest">Subtotal Acumulado</span>
+                    <span className="font-mono text-sm">{fmtCurrency(selectedSale.total_amount + selectedSale.discount)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-red-400">
+                    <span className="text-xs font-bold uppercase tracking-widest">Desconto Aplicado</span>
+                    <span className="font-mono text-sm">-{fmtCurrency(selectedSale.discount)}</span>
+                  </div>
+                  <div className="h-px bg-white/10 my-4" />
+                  <div className="flex justify-between items-end">
+                    <div>
+                      <p className="text-[10px] font-black text-blue-400 uppercase tracking-[0.2em] mb-1">Total da Venda</p>
+                      <h4 className="text-4xl font-black">{fmtCurrency(selectedSale.total_amount)}</h4>
+                    </div>
+                    <button 
+                      onClick={() => setSelectedSale(null)}
+                      className="bg-white text-slate-900 px-8 py-3 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-blue-400 hover:text-white transition-all shadow-xl shadow-black/20 active:scale-95"
+                    >
+                      Fechar Recibo
+                    </button>
+                  </div>
+               </div>
             </div>
           </div>
         </div>

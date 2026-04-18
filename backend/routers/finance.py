@@ -631,3 +631,38 @@ def list_caixa_closings(
         c.user_full_name = c.user.full_name or c.user.username if c.user else "N/A"
         
     return closings
+
+# =============================================================================
+# HISTÓRICO DE VENDAS (PDV)
+# =============================================================================
+
+@router.get("/pdv-sales", response_model=List[schemas.PDVSaleResponse])
+def list_pdv_sales(
+    start: Optional[date] = None,
+    end:   Optional[date] = None,
+    db: Session = Depends(get_db),
+    admin = Depends(get_current_admin)
+):
+    """Lista o histórico imutável de vendas do PDV"""
+    set_tenant_context(db, admin.tenant_id)
+    query = db.query(models.PDVSale)
+    
+    if start:
+        query = query.filter(models.PDVSale.created_at >= datetime.combine(start, datetime.min.time()))
+    if end:
+        query = query.filter(models.PDVSale.created_at <= datetime.combine(end, datetime.max.time()))
+        
+    return query.order_by(desc(models.PDVSale.created_at)).all()
+
+@router.get("/pdv-sales/{sale_id}", response_model=schemas.PDVSaleResponse)
+def get_pdv_sale_detail(
+    sale_id: int,
+    db: Session = Depends(get_db),
+    admin = Depends(get_current_admin)
+):
+    """Retorna os detalhes de uma venda específica (incluindo snapshot dos itens)"""
+    set_tenant_context(db, admin.tenant_id)
+    sale = db.query(models.PDVSale).filter(models.PDVSale.id == sale_id).first()
+    if not sale:
+        raise HTTPException(status_code=404, detail="Venda não encontrada")
+    return sale

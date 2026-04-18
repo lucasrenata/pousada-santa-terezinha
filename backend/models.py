@@ -457,3 +457,32 @@ class ComandaItem(Base, TenantMixin):
     
     comanda = relationship("Comanda", back_populates="items")
     product = relationship("Product")
+
+class PDVSale(Base, TenantMixin):
+    """Registro Histórico de Venda (Imutável)"""
+    __tablename__ = "pdv_sales"
+    id = Column(Integer, primary_key=True, index=True)
+    comanda_identificador = Column(String, index=True) # Nome da comanda no fechamento
+    total_amount = Column(Float)
+    discount = Column(Float, default=0.0)
+    payment_method = Column(Enum(PaymentMethod))
+    
+    user_id = Column(Integer, ForeignKey("users.id"))
+    session_id = Column(Integer, ForeignKey("caixa_sessions.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    
+    user = relationship("User")
+    items = relationship("PDVSaleItem", back_populates="sale", cascade="all, delete-orphan")
+
+class PDVSaleItem(Base, TenantMixin):
+    """Itens do Registro de Venda (Snapshot)"""
+    __tablename__ = "pdv_sale_items"
+    id = Column(Integer, primary_key=True, index=True)
+    sale_id = Column(Integer, ForeignKey("pdv_sales.id"))
+    
+    product_name = Column(String) # Nome do produto no momento da venda
+    quantity = Column(Float)
+    unit_price = Column(Float)
+    total_item = Column(Float)
+    
+    sale = relationship("PDVSale", back_populates="items")

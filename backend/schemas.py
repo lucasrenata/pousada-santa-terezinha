@@ -477,3 +477,24 @@ class CaixaSummaryResponse(BaseModel):
     movements: List[CaixaMovementResponse] = []
     class Config: from_attributes = True
 
+# --- HISTÓRICO PDV ---
+class PDVSaleItemResponse(BaseModel):
+    id: int
+    product_name: str
+    quantity: float
+    unit_price: float
+    total_item: float
+    class Config: from_attributes = True
+
+class PDVSaleResponse(BaseModel):
+    id: int
+    comanda_identificador: str
+    total_amount: float
+    discount: float
+    payment_method: models.PaymentMethod
+    user_id: int
+    session_id: Optional[int] = None
+    created_at: datetime
+    items: List[PDVSaleItemResponse] = []
+    class Config: from_attributes = True
+
