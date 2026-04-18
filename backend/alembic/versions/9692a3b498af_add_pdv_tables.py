@@ -46,7 +46,7 @@ def upgrade() -> None:
         sa.Column('type', sa.Enum('SUPRIMENTO', 'SANGRIA', 'VENDA', 'RETIRADA', name='caixamovementtype'), nullable=True),
         sa.Column('amount', sa.Float(), nullable=True),
         sa.Column('description', sa.String(), nullable=True),
-        sa.Column('payment_method', sa.Enum('PIX', 'CREDITO', 'DEBITO', 'DINHEIRO', name='paymentmethod'), nullable=True),
+        sa.Column('payment_method', sa.Enum('PIX', 'CREDITO', 'DEBITO', 'DINHEIRO', name='paymentmethod', create_type=False), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=True),
         sa.ForeignKeyConstraint(['session_id'], ['caixa_sessions.id'], ),
         sa.ForeignKeyConstraint(['tenant_id'], ['tenants.id'], ),
