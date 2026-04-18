@@ -20,6 +20,13 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     # ### Comandos para Criar Tabelas PDV ###
     
+    # Garantir que os tipos ENUM existam antes de criar as tabelas
+    # O tipo 'paymentmethod' já existe de outras migrações, os outros são novos
+    op.execute("DO $$ BEGIN CREATE TYPE caixastatus AS ENUM ('ABERTO', 'FECHADO'); EXCEPTION WHEN duplicate_object THEN null; END $$")
+    op.execute("DO $$ BEGIN CREATE TYPE caixamovementtype AS ENUM ('SUPRIMENTO', 'SANGRIA', 'VENDA', 'RETIRADA'); EXCEPTION WHEN duplicate_object THEN null; END $$")
+    op.execute("DO $$ BEGIN CREATE TYPE comandastatus AS ENUM ('ABERTA', 'PAGA', 'CANCELADA', 'LANCADA_NO_QUARTO'); EXCEPTION WHEN duplicate_object THEN null; END $$")
+    op.execute("DO $$ BEGIN CREATE TYPE comandaitemtype AS ENUM ('PRODUTO', 'PESO', 'MARMITEX'); EXCEPTION WHEN duplicate_object THEN null; END $$")
+
     # 1. CaixaSession
     op.create_table('caixa_sessions',
         sa.Column('id', sa.Integer(), nullable=False),
@@ -27,7 +34,7 @@ def upgrade() -> None:
         sa.Column('user_id', sa.Integer(), nullable=True),
         sa.Column('opening_balance', sa.Float(), nullable=True),
         sa.Column('closing_balance', sa.Float(), nullable=True),
-        sa.Column('status', sa.Enum('ABERTO', 'FECHADO', name='caixastatus'), nullable=True),
+        sa.Column('status', postgresql.ENUM('ABERTO', 'FECHADO', name='caixastatus', create_type=False), nullable=True),
         sa.Column('opened_at', sa.DateTime(), nullable=True),
         sa.Column('closed_at', sa.DateTime(), nullable=True),
         sa.Column('summary_json', sa.JSON(), nullable=True),
@@ -43,10 +50,10 @@ def upgrade() -> None:
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('tenant_id', sa.Integer(), nullable=True),
         sa.Column('session_id', sa.Integer(), nullable=True),
-        sa.Column('type', sa.Enum('SUPRIMENTO', 'SANGRIA', 'VENDA', 'RETIRADA', name='caixamovementtype'), nullable=True),
+        sa.Column('type', postgresql.ENUM('SUPRIMENTO', 'SANGRIA', 'VENDA', 'RETIRADA', name='caixamovementtype', create_type=False), nullable=True),
         sa.Column('amount', sa.Float(), nullable=True),
         sa.Column('description', sa.String(), nullable=True),
-        sa.Column('payment_method', sa.Enum('PIX', 'CREDITO', 'DEBITO', 'DINHEIRO', name='paymentmethod', create_type=False), nullable=True),
+        sa.Column('payment_method', postgresql.ENUM('PIX', 'CREDITO', 'DEBITO', 'DINHEIRO', name='paymentmethod', create_type=False), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=True),
         sa.ForeignKeyConstraint(['session_id'], ['caixa_sessions.id'], ),
         sa.ForeignKeyConstraint(['tenant_id'], ['tenants.id'], ),
@@ -60,7 +67,7 @@ def upgrade() -> None:
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('tenant_id', sa.Integer(), nullable=True),
         sa.Column('identificador', sa.String(), nullable=True),
-        sa.Column('status', sa.Enum('ABERTA', 'PAGA', 'CANCELADA', 'LANCADA_NO_QUARTO', name='comandastatus'), nullable=True),
+        sa.Column('status', postgresql.ENUM('ABERTA', 'PAGA', 'CANCELADA', 'LANCADA_NO_QUARTO', name='comandastatus', create_type=False), nullable=True),
         sa.Column('total', sa.Float(), nullable=True),
         sa.Column('booking_id', sa.Integer(), nullable=True),
         sa.Column('session_id', sa.Integer(), nullable=True),
@@ -84,7 +91,7 @@ def upgrade() -> None:
         sa.Column('quantity', sa.Float(), nullable=True),
         sa.Column('unit_price', sa.Float(), nullable=True),
         sa.Column('description', sa.String(), nullable=True),
-        sa.Column('type', sa.Enum('PRODUTO', 'PESO', 'MARMITEX', name='comandaitemtype'), nullable=True),
+        sa.Column('type', postgresql.ENUM('PRODUTO', 'PESO', 'MARMITEX', name='comandaitemtype', create_type=False), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=True),
         sa.ForeignKeyConstraint(['comanda_id'], ['comandas.id'], ),
         sa.ForeignKeyConstraint(['product_id'], ['products.id'], ),
