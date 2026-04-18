@@ -165,7 +165,8 @@ export default function Inventory() {
     if (!editForm.price || isNaN(parseFloat(editForm.price))) return setError('Preço de venda deve ser numérico');
 
     try {
-      await api.put(`/products/${editing.id}`, {
+      const cleanId = String(editing.id).includes(':') ? editing.id.split(':').pop() : editing.id;
+      await api.put(`/products/${cleanId}`, {
         ...editForm,
         price: parseFloat(editForm.price),
         stock_quantity: parseInt(editForm.stock_quantity) || 0,
@@ -189,9 +190,14 @@ export default function Inventory() {
     } catch { setError('Erro ao adicionar categoria'); }
   }
 
-  async function archiveProduct(id: number) {
+  async function archiveProduct(id: any) {
     if (!confirm('Deseja arquivar este produto?')) return;
-    try { await api.put(`/products/${id}`, { is_active: false }); await load(); setMessage('Produto arquivado'); }
+    try { 
+      const cleanId = String(id).includes(':') ? id.split(':').pop() : id;
+      await api.put(`/products/${cleanId}`, { is_active: false }); 
+      await load(); 
+      setMessage('Produto arquivado'); 
+    }
     catch { setError('Erro ao arquivar'); }
   }
 

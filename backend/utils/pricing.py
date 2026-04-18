@@ -31,12 +31,15 @@ def calculate_daily_rates_count(
     co_hour = parse_time(check_out_time_str)
 
     # Ajuste de datas para o cálculo base
-    # Se for um objeto datetime, extraímos a data. Se for date, usamos diretamente.
-    base_check_in = check_in_date.date() if hasattr(check_in_date, "date") and not isinstance(check_in_date, date) else check_in_date
+    # IMPORTANTE: No Python, datetime é subclasse de date. 
+    # Usamos hasattr(obj, "date") para detectar datetimes (que possuem o método .date()) 
+    # e converter para data pura, garantindo que o cálculo seja por dia do calendário 
+    # e não por período de 24h (que sofreria truncamento).
+    base_check_in = check_in_date.date() if hasattr(check_in_date, "date") else check_in_date
     if ci_hour < STANDARD_HOUR:
         base_check_in -= timedelta(days=1)
         
-    base_check_out = check_out_date.date() if hasattr(check_out_date, "date") and not isinstance(check_out_date, date) else check_out_date
+    base_check_out = check_out_date.date() if hasattr(check_out_date, "date") else check_out_date
     
     # Diferença básica em dias
     diff = (base_check_out - base_check_in).days

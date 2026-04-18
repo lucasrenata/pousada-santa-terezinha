@@ -179,9 +179,9 @@ export default function GuestChatPage() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto h-screen flex flex-col p-2 sm:p-4 lg:p-6 animate-in fade-in duration-700">
+    <div className="max-w-6xl mx-auto h-screen h-[100dvh] flex flex-col p-2 sm:p-4 lg:p-6 animate-in fade-in duration-700">
       {/* Header Compacto - Top Left */}
-      <header className="flex items-center gap-4 mb-4 mt-2 px-4 self-start">
+      <header className="flex items-center gap-4 mb-4 mt-2 px-2 sm:px-4 self-start">
         <div className="w-12 h-12 bg-white rounded-2xl shadow-lg shadow-indigo-100 flex items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-default overflow-hidden border border-slate-100">
            <img src="/ai-avatar.jpg" alt="AI Assistant" className="w-full h-full object-cover" />
         </div>
@@ -195,12 +195,12 @@ export default function GuestChatPage() {
       </header>
 
       {/* Chat Container - Full Height */}
-      <div className="flex-1 bg-white/40 backdrop-blur-xl border border-white/60 shadow-2xl rounded-[2.5rem] flex flex-col overflow-hidden relative">
+      <div className="flex-1 bg-white/40 backdrop-blur-xl border border-white/60 shadow-2xl rounded-[1.5rem] sm:rounded-[2.5rem] flex flex-col overflow-hidden relative">
 
         {/* Messages Area */}
         <div 
           ref={scrollRef}
-          className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-hide"
+          className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 scrollbar-hide"
         >
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
@@ -216,7 +216,7 @@ export default function GuestChatPage() {
               key={m.id} 
               className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-4 duration-500`}
             >
-              <div className={`flex gap-3 max-w-[90%] ${m.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+              <div className={`flex gap-3 max-w-[95%] sm:max-w-[90%] ${m.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm overflow-hidden ${
                   m.role === 'user' ? 'bg-slate-800 text-white' : 'bg-white border border-slate-100'
                 }`}>
@@ -281,7 +281,7 @@ export default function GuestChatPage() {
         </div>
 
         {/* Action Input Area */}
-        <div className="p-4 sm:p-6 bg-white/50 border-t border-white/60 backdrop-blur-md">
+        <div className="p-3 sm:p-6 bg-white/50 border-t border-white/60 backdrop-blur-md">
           <form onSubmit={handleSend} className="relative group flex gap-2">
             <div className="relative flex-1">
               <input
@@ -304,7 +304,7 @@ export default function GuestChatPage() {
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={uploading}
-              className="w-14 h-14 flex-shrink-0 bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center rounded-2xl transition-all active:scale-90 border-2 border-slate-200/50"
+              className="w-12 h-12 sm:w-14 sm:h-14 flex-shrink-0 bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center rounded-2xl transition-all active:scale-90 border-2 border-slate-200/50"
               title="Anexar Comprovante PIX"
             >
               {uploading ? <Loader2 size={20} className="animate-spin" /> : <Paperclip size={20} />}
@@ -317,7 +317,7 @@ export default function GuestChatPage() {
               onChange={handleFileUpload}
             />
           </form>
-          <div className="flex justify-between items-center mt-4 px-2">
+          <div className="flex flex-col sm:flex-row justify-between items-center mt-4 px-2 gap-2 sm:gap-0">
             <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-bold uppercase">
                <ShieldCheck size={12} className="text-indigo-400" /> Criptografia Ponta-a-Ponta
             </div>

@@ -16,10 +16,10 @@ def create_guest(guest: schemas.GuestCreate, db: Session = Depends(get_db), curr
     if guest.email and db.query(models.Guest).filter(models.Guest.email == guest.email).first():
         raise HTTPException(status_code=400, detail="Este e-mail já está sendo utilizado por outro hóspede.")
     
-    new_guest = models.Guest(**guest.model_dump())
+    new_guest = models.Guest(**guest.model_dump(), tenant_id=current_user.tenant_id)
     db.add(new_guest)
     db.commit()
-    db.refresh(new_guest)
+    # db.refresh(new_guest)
     return new_guest
 
 @router.post("/public", response_model=schemas.GuestResponse)
@@ -35,7 +35,7 @@ def create_guest_public(guest_data: schemas.GuestPublicCreate, db: Session = Dep
         for key, value in update_dict.items():
             setattr(existing, key, value)
         db.commit()
-        db.refresh(existing)
+        # db.refresh(existing)
         return existing
     
     # Como o RLS já ativa o before_flush, não precisa injetar o tenant explicitamente
@@ -44,10 +44,10 @@ def create_guest_public(guest_data: schemas.GuestPublicCreate, db: Session = Dep
         raise HTTPException(status_code=400, detail="O e-mail informado já está sendo utilizado por outro cadastro.")
 
     new_guest_dict = guest_data.model_dump(exclude={'tenant_id'})
-    new_guest = models.Guest(**new_guest_dict)
+    new_guest = models.Guest(**new_guest_dict, tenant_id=guest_data.tenant_id)
     db.add(new_guest)
     db.commit()
-    db.refresh(new_guest)
+    # db.refresh(new_guest)
     return new_guest
 
 @router.get("/", response_model=List[schemas.GuestResponse])
@@ -81,7 +81,7 @@ def update_guest(guest_id: int, data: schemas.GuestUpdate, db: Session = Depends
         setattr(guest, key, value)
     
     db.commit()
-    db.refresh(guest)
+    # db.refresh(guest)
     return guest
 
 @router.delete("/{guest_id}")

@@ -95,16 +95,16 @@ class RoomResponse(RoomBase):
 class GuestBase(BaseModel):
     name: str
     email: str
-    phone: str
+    phone: Optional[str] = None
     document: str
-    birth_date: date
+    birth_date: Optional[date] = None
     profession: Optional[str] = None
-    address_zip: str
-    address_street: str
-    address_number: str
-    address_neighborhood: str
-    address_city: str
-    address_state: str
+    address_zip: Optional[str] = None
+    address_street: Optional[str] = None
+    address_number: Optional[str] = None
+    address_neighborhood: Optional[str] = None
+    address_city: Optional[str] = None
+    address_state: Optional[str] = None
 
 class GuestCreate(GuestBase): pass
 
@@ -185,6 +185,9 @@ class StockDashboard(BaseModel):
     potential_profit: float # Lucro Potencial
     low_stock_count: int
     low_stock_items: List[ProductResponse]
+
+class QuickAccessUpdateRequest(BaseModel):
+    product_ids: List[int]
  
 class StockEntryItemResponse(BaseModel):
     id: int
@@ -272,11 +275,11 @@ class BookingResponse(BaseModel):
     guest_name: str
     guest_age: Optional[int] = None
     mode: models.BookingMode
-    daily_rate: float
+    daily_rate: Optional[float] = None
     status: models.BookingStatus
     total_guests: int
-    total_amount: float
-    deposit_amount: float
+    total_amount: Optional[float] = None
+    deposit_amount: Optional[float] = None
     payment_status: models.PaymentStatus
     check_in_date: datetime
     check_out_date: datetime
@@ -381,5 +384,96 @@ class ExpenseResponse(BaseModel):
     created_at: datetime
     created_by: Optional[str] = None
     tenant_id: Optional[int] = None
+    class Config: from_attributes = True
+
+# --- PDV & COMANDAS ---
+class CaixaSessionBase(BaseModel):
+    opening_balance: float = 0.0
+
+class CaixaSessionCreate(CaixaSessionBase):
+    pass
+
+class CaixaSessionResponse(CaixaSessionBase):
+    id: int
+    user_id: int
+    status: models.CaixaStatus
+    opened_at: datetime
+    closed_at: Optional[datetime] = None
+    closing_balance: Optional[float] = None
+    summary_json: Optional[dict] = None
+    user_full_name: Optional[str] = None
+    class Config: from_attributes = True
+
+class CaixaMovementCreate(BaseModel):
+    type: models.CaixaMovementType
+    amount: float
+    description: Optional[str] = None
+
+class CaixaMovementResponse(CaixaMovementCreate):
+    id: int
+    session_id: int
+    created_at: datetime
+    class Config: from_attributes = True
+
+class ComandaItemBase(BaseModel):
+    product_id: Optional[int] = None
+    quantity: float = 1.0
+    unit_price: float
+    description: Optional[str] = None
+    type: models.ComandaItemType = models.ComandaItemType.PRODUTO
+
+class ComandaItemCreate(ComandaItemBase):
+    pass
+
+class ComandaItemUpdate(BaseModel):
+    quantity: float
+
+class ComandaItemResponse(ComandaItemBase):
+    id: int
+    comanda_id: int
+    created_at: datetime
+    class Config: from_attributes = True
+
+class ComandaBase(BaseModel):
+    identificador: str
+    booking_id: Optional[int] = None
+
+class ComandaCreate(ComandaBase):
+    pass
+
+class ComandaResponse(ComandaBase):
+    id: int
+    status: models.ComandaStatus
+    total: float
+    created_at: datetime
+    updated_at: datetime
+    items: List[ComandaItemResponse] = []
+    class Config: from_attributes = True
+
+class CloseComandaRequest(BaseModel):
+    payment_method: Optional[models.PaymentMethod] = None
+    lancada_no_quarto: bool = False # Se True, vincula ao booking_id da comanda
+    booking_id: Optional[int] = None # Vínculo opcional no checkout
+    discount: float = 0.0
+
+class BatchCloseComandaRequest(BaseModel):
+    comanda_ids: List[int]
+    payment_method: Optional[models.PaymentMethod] = None
+    lancada_no_quarto: bool = False
+    booking_id: Optional[int] = None # Vínculo opcional no checkout
+    discount: float = 0.0
+
+class CaixaSummaryResponse(BaseModel):
+    opening_balance: float
+    vendas_dinheiro: float
+    vendas_pix: float
+    vendas_debito: float
+    vendas_credito: float
+    entradas_total: float
+    retiradas_total: float
+    saldo_dinheiro: float
+    saldo_geral: float
+    comandas_processadas: int
+    movements: List[CaixaMovementResponse] = []
     class Config: from_attributes = True
 

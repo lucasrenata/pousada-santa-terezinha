@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -69,8 +69,17 @@ export function CustomerSearchModal({ open, onOpenChange }: CustomerSearchModalP
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto border-none p-0 bg-slate-50/50 shadow-2xl">
-        <div className="bg-slate-900 p-6 text-white flex items-center justify-between">
+      <DialogContent 
+        className="max-w-4xl max-h-[90vh] overflow-y-auto border-none p-0 bg-slate-50 shadow-2xl"
+        onPointerDownOutside={(e) => (isCreating || isEditing) && e.preventDefault()}
+        onEscapeKeyDown={(e) => (isCreating || isEditing) && e.preventDefault()}
+      >
+        <DialogHeader className="sr-only">
+          <DialogTitle>Gestão de Hóspedes</DialogTitle>
+          <DialogDescription>Central de busca e cadastro de hóspedes da pousada.</DialogDescription>
+        </DialogHeader>
+
+        <div className="bg-slate-900 p-6 text-white flex items-center justify-between sticky top-0 z-10">
           <div>
             <h2 className="text-xl font-black flex items-center gap-2">
               <User size={24} className="text-blue-400" />

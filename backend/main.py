@@ -12,7 +12,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from database import engine
 import models
-from routers import auth, guests, rooms, bookings, products, finance, settings, payments, admin, chat, events, webhook_whatsapp, business_rules, superadmin
+from routers import auth, guests, rooms, bookings, products, finance, settings, payments, admin, chat, events, webhook_whatsapp, business_rules, superadmin, pdv
+from routes.chat import router as chat_v1_router
+from routes.webhooks import router as webhooks_router
 import sys
 
 # Tabelas no banco agora são gerenciadas via Alembic Migrations.
@@ -52,9 +54,12 @@ app.include_router(business_rules.router)
 app.include_router(payments.router)
 app.include_router(admin.router)
 app.include_router(chat.router)
+app.include_router(chat_v1_router)
 app.include_router(events.router)
 app.include_router(webhook_whatsapp.router)
+app.include_router(webhooks_router)
 app.include_router(superadmin.router)
+app.include_router(pdv.router)
 
 # Serve arquivos estáticos (Uploads de comprovantes, etc)
 os.makedirs("static/uploads/receipts", exist_ok=True)

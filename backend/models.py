@@ -60,6 +60,27 @@ class ExpenseCategory(str, enum.Enum):
     ALUGUEL = "aluguel"
     OUTROS = "outros"
 
+class ComandaStatus(str, enum.Enum):
+    ABERTA = "aberta"
+    PAGA = "paga"
+    CANCELADA = "cancelada"
+    LANCADA_NO_QUARTO = "lancada_no_quarto"
+
+class CaixaStatus(str, enum.Enum):
+    ABERTO = "aberto"
+    FECHADO = "fechado"
+
+class CaixaMovementType(str, enum.Enum):
+    SUPRIMENTO = "suprimento"
+    SANGRIA = "sangria"
+    VENDA = "venda"
+    RETIRADA = "retirada"
+
+class ComandaItemType(str, enum.Enum):
+    PRODUTO = "produto"
+    PESO = "peso"
+    MARMITEX = "marmitex"
+
 # --- TABELAS ---
 
 class Tenant(Base):
@@ -119,6 +140,7 @@ class Room(Base, TenantMixin):
     maintenance_note = Column(Text, nullable=True)
     
     bookings = relationship("Booking", back_populates="room")
+    booking_associations = relationship("BookingRoom", back_populates="room")
 
 
 class Guest(Base, TenantMixin):
@@ -202,6 +224,19 @@ class Booking(Base, TenantMixin):
     companions = relationship("Companion", back_populates="booking")
     # Relacionamento com Revenue (opcional, se quiser linkar pagamentos)
     revenues = relationship("Revenue", back_populates="booking")
+    
+    # NOVAS ASSOCIAÇÕES (Suporte a Multi-Quartos)
+    room_associations = relationship("BookingRoom", back_populates="booking", cascade="all, delete-orphan")
+
+class BookingRoom(Base, TenantMixin):
+    """Associação de Quartos a uma Reserva (Múltiplos Quartos por Reserva)"""
+    __tablename__ = "booking_rooms"
+    id = Column(Integer, primary_key=True, index=True)
+    booking_id = Column(Integer, ForeignKey("bookings.id"), nullable=False)
+    room_id = Column(String, ForeignKey("rooms.id"), nullable=False)
+    
+    booking = relationship("Booking", back_populates="room_associations")
+    room = relationship("Room", back_populates="booking_associations")
 
 class Companion(Base, TenantMixin):
     """Acompanhantes"""
@@ -346,3 +381,79 @@ class Expense(Base, TenantMixin):
     created_at = Column(DateTime, default=datetime.now)
     created_by = Column(String, nullable=True)       # username do funcionário
 
+class SessionState(Base, TenantMixin):
+    """Estado persistente das sessões dos agentes de IA (LangGraph State)"""
+    __tablename__ = 'session_state'
+    
+    session_id = Column(String(255), primary_key=True)
+    current_state = Column(String(50), default='DISCOVERY')
+    context_json = Column(Text, default='{}') # Armazena o Pydantic model serializado
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+# --- NOVAS TABELAS PDV ---
+
+class CaixaSession(Base, TenantMixin):
+    """Sessão de Caixa (Turno) por Usuário"""
+    __tablename__ = "caixa_sessions"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    opening_balance = Column(Float, default=0.0)
+    closing_balance = Column(Float, nullable=True)
+    status = Column(Enum(CaixaStatus), default=CaixaStatus.ABERTO)
+    opened_at = Column(DateTime, default=datetime.now)
+    closed_at = Column(DateTime, nullable=True)
+    summary_json = Column(JSON, nullable=True)
+    
+    user = relationship("User")
+    movements = relationship("CaixaMovement", back_populates="session")
+    comandas = relationship("Comanda", back_populates="session")
+
+class CaixaMovement(Base, TenantMixin):
+    """Movimentações de Dinheiro no Caixa (Suprimento, Sangria, etc.)"""
+    __tablename__ = "caixa_movements"
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("caixa_sessions.id"))
+    type = Column(Enum(CaixaMovementType))
+    amount = Column(Float)
+    description = Column(String, nullable=True)
+    payment_method = Column(Enum(PaymentMethod), nullable=True) # Pix, Dinheiro, etc.
+    created_at = Column(DateTime, default=datetime.now)
+    
+    session = relationship("CaixaSession", back_populates="movements")
+
+class Comanda(Base, TenantMixin):
+    """Comanda de Pedidos (PDV)"""
+    __tablename__ = "comandas"
+    id = Column(Integer, primary_key=True, index=True)
+    identificador = Column(String, index=True) # Ex: "Mesa 10", "Balcão", etc.
+    status = Column(Enum(ComandaStatus), default=ComandaStatus.ABERTA)
+    total = Column(Float, default=0.0)
+    
+    booking_id = Column(Integer, ForeignKey("bookings.id"), nullable=True)
+    session_id = Column(Integer, ForeignKey("caixa_sessions.id"), nullable=True)
+    
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    booking = relationship("Booking")
+    session = relationship("CaixaSession", back_populates="comandas")
+    items = relationship("ComandaItem", back_populates="comanda", cascade="all, delete-orphan")
+
+class ComandaItem(Base, TenantMixin):
+    """Itens da Comanda"""
+    __tablename__ = "comanda_items"
+    id = Column(Integer, primary_key=True, index=True)
+    comanda_id = Column(Integer, ForeignKey("comandas.id"))
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
+    
+    quantity = Column(Float, default=1.0)
+    unit_price = Column(Float)
+    description = Column(String, nullable=True) # Usado para itens manuais (Peso/Marmitex)
+    type = Column(Enum(ComandaItemType), default=ComandaItemType.PRODUTO)
+    
+    created_at = Column(DateTime, default=datetime.now)
+    
+    comanda = relationship("Comanda", back_populates="items")
+    product = relationship("Product")

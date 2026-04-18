@@ -31,12 +31,64 @@ def migrate():
             
             conn.execute(text("ALTER TABLE tenant_configs ADD COLUMN IF NOT EXISTS manual_pix_key VARCHAR"))
 
-            # 5. Multi-tenancy (tenant_id em todas as tabelas)
+            # 5. PDV e Comandas
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS caixa_sessions (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id),
+                    opening_balance FLOAT DEFAULT 0.0,
+                    closing_balance FLOAT,
+                    status VARCHAR DEFAULT 'aberto',
+                    opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    closed_at TIMESTAMP,
+                    tenant_id INTEGER REFERENCES tenants(id)
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS caixa_movements (
+                    id SERIAL PRIMARY KEY,
+                    session_id INTEGER REFERENCES caixa_sessions(id),
+                    type VARCHAR,
+                    amount FLOAT,
+                    description VARCHAR,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    tenant_id INTEGER REFERENCES tenants(id)
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS comandas (
+                    id SERIAL PRIMARY KEY,
+                    identificador VARCHAR,
+                    status VARCHAR DEFAULT 'aberta',
+                    total FLOAT DEFAULT 0.0,
+                    booking_id INTEGER REFERENCES bookings(id),
+                    session_id INTEGER REFERENCES caixa_sessions(id),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    tenant_id INTEGER REFERENCES tenants(id)
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS comanda_items (
+                    id SERIAL PRIMARY KEY,
+                    comanda_id INTEGER REFERENCES comandas(id),
+                    product_id INTEGER REFERENCES products(id),
+                    quantity FLOAT DEFAULT 1.0,
+                    unit_price FLOAT,
+                    description VARCHAR,
+                    type VARCHAR DEFAULT 'produto',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    tenant_id INTEGER REFERENCES tenants(id)
+                )
+            """))
+
+            # 6. Multi-tenancy (tenant_id em todas as tabelas)
             tables = [
                 "users", "rooms", "guests", "products", "bookings", 
                 "companions", "consumptions", "revenues", "business_rules", 
                 "chat_messages", "stock_entries", "stock_entry_items", 
-                "settings", "events", "tenant_configs"
+                "settings", "events", "tenant_configs",
+                "caixa_sessions", "caixa_movements", "comandas", "comanda_items"
             ]
             for table in tables:
                 if table == "tenant_configs":

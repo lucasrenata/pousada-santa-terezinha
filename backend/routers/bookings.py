@@ -83,15 +83,21 @@ async def create_booking(data: schemas.BookingCreate, db: Session = Depends(get_
             daily_rate=data.daily_rate,
             total_amount=total_val,
             notes=data.notes,
-            status=models.BookingStatus.PENDENTE
+            status=models.BookingStatus.PENDENTE,
+            tenant_id=current_user.tenant_id
         )
         db.add(booking)
         db.commit()
-        db.refresh(booking)
+        # db.refresh(booking) <-- Removido para evitar erro de visibilidade (InvalidRequestError)
 
         # Adiciona Acompanhantes
         for comp in data.companions:
-            new_comp = models.Companion(booking_id=booking.id, name=comp.name, age=comp.age)
+            new_comp = models.Companion(
+                booking_id=booking.id, 
+                name=comp.name, 
+                age=comp.age,
+                tenant_id=current_user.tenant_id
+            )
             db.add(new_comp)
         
         db.commit()
@@ -501,7 +507,7 @@ async def create_public_booking(data: schemas.BookingPublicCreate, db: Session =
         )
         db.add(guest)
         db.commit()
-        db.refresh(guest)
+        # db.refresh(guest)
     else:
         # Atualiza dados se já existir
         guest.name = g.name
@@ -552,7 +558,7 @@ async def create_public_booking(data: schemas.BookingPublicCreate, db: Session =
     )
     db.add(booking)
     db.commit()
-    db.refresh(booking)
+    # db.refresh(booking)
 
     for comp in data.companions:
         db.add(models.Companion(booking_id=booking.id, name=comp.name, age=comp.age))
@@ -606,17 +612,21 @@ def update_booking(booking_id: int, data: schemas.BookingUpdate, db: Session = D
 
         if "companions" in update_data:
             comps = update_data.pop("companions")
-            # Remove acompanhantes antigos e adiciona novos
-            db.query(models.Companion).filter(models.Companion.booking_id == booking_id).delete()
-            for c in comps:
-                db.add(models.Companion(booking_id=booking.id, name=c['name'], age=c['age']))
+            # Usa o gerenciamento de relacionamento do SQLAlchemy para sincronizar os acompanhantes de forma limpa
+            booking.companions = [
+                models.Companion(
+                    name=c['name'], 
+                    age=c['age'], 
+                    tenant_id=booking.tenant_id
+                ) for c in comps
+            ]
             booking.total_guests = 1 + len(comps)
 
         for key, value in update_data.items():
             setattr(booking, key, value)
 
         db.flush()   # Valida restrições ANTES do commit — detecta erros cedo
-        db.refresh(booking)
+        # db.refresh(booking) <-- Removido para estabilidade
 
         # Recalcula o valor total da reserva após a atualização dos dados
         settings_rows = db.query(models.SystemSetting).all()
@@ -640,7 +650,7 @@ def update_booking(booking_id: int, data: schemas.BookingUpdate, db: Session = D
         booking.total_amount = pricing["total"]
 
         db.commit()
-        db.refresh(booking)
+        # db.refresh(booking) <-- Removido para estabilidade
         return {"message": "Reserva atualizada com sucesso"}
 
     except HTTPException:

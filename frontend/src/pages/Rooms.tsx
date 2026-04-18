@@ -71,12 +71,18 @@ export default function Rooms() {
   const [paymentLink, setPaymentLink] = useState<string | null>(null);
   const [isGeneratingPayment, setIsGeneratingPayment] = useState(false);
   const [isPolling, setIsPolling] = useState(false);
+  const [pricingModel, setPricingModel] = useState<'per_person' | 'per_room'>('per_person');
 
   async function loadRooms() {
     try {
       setLoading(true);
-      const response = await api.get('/rooms/');
-      setRooms(response.data);
+      const roomsRes = await api.get('/rooms/');
+      setRooms(roomsRes.data);
+      
+      const settingsRes = await api.get('/settings/');
+      const model = settingsRes.data.find((s: any) => s.key === 'pousada_pricing_model')?.value;
+      if (model) setPricingModel(model as any);
+      
       setError(null);
     } catch {
       setError('Erro ao carregar quartos');
@@ -655,8 +661,8 @@ export default function Rooms() {
                 <p className="font-medium">{detailsRoom.max_capacity}</p>
               </div>
               <div>
-                <p className="text-slate-500">Diária</p>
-                <p className="font-medium">R$ {detailsRoom.price_per_night?.toFixed(2)}</p>
+                <p className="text-slate-500">Diária ({pricingModel === 'per_person' ? 'por pessoa' : 'por quarto'})</p>
+                <p className="font-medium text-blue-600">R$ {detailsRoom.price_per_night?.toFixed(2)} <span className="text-[10px] text-slate-400 capitalize">{pricingModel === 'per_person' ? '/ pessoa' : '/ quarto'}</span></p>
               </div>
               <div>
                 <p className="text-slate-500">Andar</p>

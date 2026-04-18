@@ -3,16 +3,22 @@ import json
 import models
 from sqlalchemy.orm import Session
 from database import SessionLocal, set_tenant_context
+from agents.state_manager import StateManager
 from utils.pricing import calculate_daily_rates_count, calculate_reservation_total
 from datetime import datetime, date, timedelta
-from typing import Optional, List
-from utils.payment_helpers import prepare_payer_data, process_mp_response
+from typing import Optional, List, Any
+from utils.payment_helpers import prepare_payer_data, process_mp_response, _cpf_valid
 
 # --- UTILS DE DATA (UNIVERSAL) ---
-def universal_date_parser(date_str):
-    """Interpreta datas em formato DD/MM, DD/MM/YYYY ou YYYY-MM-DD."""
-    if not date_str: return None
-    date_str = date_str.strip()
+def universal_date_parser(date_val):
+    """Interpreta datas em formato DD/MM, DD/MM/YYYY ou YYYY-MM-DD. Aceita date/datetime nativo."""
+    if not date_val: return None
+    
+    # Camada 1: Robustez de Tipos (Mente Central)
+    if isinstance(date_val, (date, datetime)):
+        return date_val.date() if isinstance(date_val, datetime) else date_val
+
+    date_str = str(date_val).strip()
     now = datetime.now()
     try:
         if "/" in date_str:
@@ -80,14 +86,25 @@ def calculate_booking_quote(db, tenant_id, room_id, check_in_date, check_out_dat
 def find_guest_logic(tenant_id: int, cpf: str = "", name: str = "", base_url: str = "") -> dict:
     with SessionLocal() as db:
         set_tenant_context(db, tenant_id)
-        if cpf:
-            clean_cpf = "".join(filter(str.isdigit, cpf))
+        clean_cpf = "".join(filter(str.isdigit, cpf)) if cpf else ""
+        if clean_cpf:
             g = db.query(models.Guest).filter(models.Guest.document == clean_cpf).first()
-            if g: return {"id": g.id, "name": g.name, "cpf": g.document}
+            if g: 
+                return {
+                    "found": True, 
+                    "id": g.id, 
+                    "name": g.name, 
+                    "cpf": g.document, 
+                    "age": g.age
+                }
         
         prefix = base_url.rstrip("/") if base_url else ""
-        link = f"{prefix}/{tenant_id}/registrar?cpf={''.join(filter(str.isdigit, cpf)) if cpf else ''}"
-        return {"error": "Hóspede não encontrado.", "registration_link": link}
+        link = f"{prefix}/{tenant_id}/registrar?cpf={clean_cpf}"
+        return {
+            "found": False, 
+            "error": "Hóspede não encontrado.", 
+            "registration_link": link
+        }
 
 def availability_check_logic(tenant_id: int, check_in: str, check_out: str, group_size: int = 1, ages: List[int] = []) -> dict:
     try:
@@ -110,13 +127,71 @@ def availability_check_logic(tenant_id: int, check_in: str, check_out: str, grou
             ).all()]
             rooms = db.query(models.Room).filter(models.Room.id.notin_(occupied), models.Room.status != models.RoomStatus.MANUTENCAO).all()
             
+            # 1. Busca por Quartos Individuais (Solução Direta)
             final_rooms = []
+            pricing_model = settings.get('pousada_pricing_model', 'per_person')
+            suffix = "/pessoa" if pricing_model == "per_person" else "/quarto"
+            
             for r in rooms:
                 if r.max_capacity >= group_size:
                     quote = calculate_booking_quote(db, tenant_id, r.id, ci, co, group_size, ages)
-                    final_rooms.append({"room_number": r.id, "type": r.type or "Quarto", "total_quote": quote["total"], "notes": quote["notes"]})
+                    final_rooms.append({
+                        "room_number": r.id, 
+                        "type": r.type or "Quarto", 
+                        "capacity": r.max_capacity,
+                        "total_quote": quote["total"], 
+                        "pricing_description": f"R$ {quote['total']:.2f} total ({quote['days']} diárias {suffix})",
+                        "notes": quote["notes"]
+                    })
 
-            return {"available_options": final_rooms, "summary": f"Encontrei {len(final_rooms)} quartos."}
+            # 2. Busca por Combinações (Smart Split) - Inteligência Proativa
+            suggested_splits = []
+            if group_size > 1:
+                def find_combo(sorted_list):
+                    combo = []
+                    cap = 0
+                    for r in sorted_list:
+                        combo.append(r)
+                        cap += r.max_capacity
+                        if cap >= group_size:
+                            total = 0
+                            details = []
+                            for cr in combo:
+                                q = calculate_booking_quote(db, tenant_id, cr.id, ci, co, cr.max_capacity if cr.max_capacity < group_size else group_size)
+                                total += q["total"]
+                                details.append(f"{cr.type} #{cr.id}")
+                            return {
+                                "rooms": [cr.id for cr in combo],
+                                "description": " + ".join(details),
+                                "total_price": total,
+                                "pricing_description": f"R$ {total:.2f} total",
+                                "room_count": len(combo)
+                            }
+                    return None
+
+                # ESTRATÉGIA A: CONFORTO (Menos quartos, maior capacidade primeiro)
+                sorted_cap = sorted(rooms, key=lambda x: x.max_capacity, reverse=True)
+                comfort = find_combo(sorted_cap)
+                if comfort:
+                    comfort["strategy"] = "conforto"
+                    comfort["message"] = f"Opção Conforto ({comfort['room_count']} quartos): {comfort['description']} por R$ {comfort['total_price']:.2f}"
+                    suggested_splits.append(comfort)
+
+                # ESTRATÉGIA B: ECONOMIA (Menor preço primeiro)
+                sorted_price = sorted(rooms, key=lambda x: (x.price_per_night, -x.max_capacity))
+                economy = find_combo(sorted_price)
+                if economy and (not comfort or economy["total_price"] < comfort["total_price"] or economy["room_count"] != comfort["room_count"]):
+                    economy["strategy"] = "economia"
+                    economy["message"] = f"Opção Econômica ({economy['room_count']} quartos): {economy['description']} por R$ {economy['total_price']:.2f}"
+                    suggested_splits.append(economy)
+
+            return {
+                "available": len(rooms) > 0,
+                "rooms": final_rooms[:5], 
+                "combinations": suggested_splits,
+                "pricing_model": pricing_model,
+                "summary": f"Encontrei {len(final_rooms)} opções de quartos individuais e {len(suggested_splits)} combinações inteligentes."
+            }
     except Exception as e:
         return {"error": str(e)}
 
@@ -131,28 +206,64 @@ def unified_booking_flow(tenant_id: int, guest_id: int, room_id: str, check_in: 
     res_payment = payment_info_logic(tenant_id, res_booking["booking_id"])
     return {"success": True, "booking_details": res_booking, "payment_details": res_payment}
 
-def booking_creation_logic(tenant_id: int, guest_id: int, room_id: str, check_in: str, check_out: str, group_size: int, companions: List[dict] = [], mode: str = "NORMAL") -> dict:
+def booking_creation_logic(tenant_id: int, guest_id: int, room_id: Any, check_in: str, check_out: str, group_size: int, companions: List[dict] = [], mode: str = "NORMAL") -> dict:
     try:
         with SessionLocal() as db:
             set_tenant_context(db, tenant_id)
             ci = universal_date_parser(check_in)
             co = universal_date_parser(check_out)
-            guest = db.query(models.Guest).get(guest_id)
+            guest = db.get(models.Guest, guest_id)
+            if not guest:
+                return {"error": "Hóspede principal não identificado. Por favor, forneça seu CPF primeiro."}
+            
+            # Normalizar room_id para lista (suporte a multi-quarto)
+            room_ids = [room_id] if isinstance(room_id, (str, int)) else list(room_id)
+            
             ages = [guest.age or 18] + [int(c.get('age', 18)) for c in companions]
-            quote = calculate_booking_quote(db, tenant_id, room_id, ci, co, group_size, ages)
+            
+            # Cálculo de preço consolidado para todos os quartos
+            total_amount = 0.0
+            notes_list = []
+            
+            # Distribuir pessoas entre os quartos para o cálculo (aproximado)
+            avg_people = group_size // len(room_ids)
+            remainder = group_size % len(room_ids)
+            
+            for i, r_id in enumerate(room_ids):
+                p_count = avg_people + (1 if i < remainder else 0)
+                q = calculate_booking_quote(db, tenant_id, r_id, ci, co, p_count, ages)
+                total_amount += q["total"]
+                notes_list.append(f"Quarto {r_id}: {q['notes']}")
 
             booking = models.Booking(
-                guest_id=guest_id, room_id=room_id, check_in_date=ci, check_out_date=co,
-                total_guests=group_size, total_amount=quote["total"], 
-                status=models.BookingStatus.PENDENTE, notes=quote["notes"]
+                tenant_id=tenant_id,
+                guest_id=guest_id, 
+                room_id=room_ids[0], 
+                check_in_date=ci, 
+                check_out_date=co,
+                total_guests=group_size, 
+                total_amount=total_amount, 
+                status=models.BookingStatus.PENDENTE, 
+                notes=" | ".join(notes_list)
             )
             db.add(booking)
-            db.commit()
-            db.refresh(booking)
+            db.flush() # Gerar ID do booking para os filhos
+            
+            # Registrar todos os quartos
+            for r_id in room_ids:
+                db.add(models.BookingRoom(booking_id=booking.id, room_id=r_id))
+            
+            # Registrar acompanhantes com tenant_id explícito
             for c in companions:
-                db.add(models.Companion(booking_id=booking.id, name=c['name'], age=int(c.get('age', 18))))
+                db.add(models.Companion(
+                    tenant_id=tenant_id,
+                    booking_id=booking.id, 
+                    name=c.get('name', 'N/A'), 
+                    age=int(c.get('age', 18))
+                ))
+            
             db.commit()
-            return {"success": True, "booking_id": booking.id, "total": quote["total"]}
+            return {"success": True, "booking_id": booking.id, "total": total_amount}
     except Exception as e:
         return {"error": str(e)}
 
@@ -277,3 +388,345 @@ def search_events_logic(tenant_id: int, query: str) -> dict:
                 "description": e.description
             })
         return {"results": results}
+
+# ============================================================================
+# FERRAMENTAS NOVAS (PARTE 5.0)
+# ============================================================================
+
+def validate_cpf_real(cpf: str) -> dict:
+    """
+    Valida CPF usando algoritmo real (Módulo 11).
+    
+    Parâmetros:
+    - cpf: CPF em qualquer formato (123.456.789-00 ou 12345678900)
+    
+    Retorno:
+    {
+        'valid': True/False,
+        'cpf': str (limpo, 11 dígitos),
+        'message': str
+    }
+    """
+    clean_cpf = "".join(filter(str.isdigit, cpf))
+    
+    if len(clean_cpf) != 11:
+        return {
+            'valid': False,
+            'cpf': None,
+            'message': 'CPF deve ter 11 dígitos'
+        }
+    
+    # Usar função real de validação (importada no topo)
+    if not _cpf_valid(clean_cpf):
+        return {
+            'valid': False,
+            'cpf': None,
+            'message': 'CPF inválido (falhou na validação de dígitos)'
+        }
+    
+    return {
+        'valid': True,
+        'cpf': clean_cpf,
+        'message': 'CPF válido'
+    }
+
+
+def preview_booking_price(
+    tenant_id: int,
+    room_id: str,
+    check_in: str,
+    check_out: str,
+    group_size: int,
+    ages: list = None
+) -> dict:
+    """
+    Calcula preço de forma PREVIEW (sem criar reserva).
+    
+    Retorno:
+    {
+        'total': float,
+        'days': int,
+        'notes': str,
+        'event_name': str,
+        'pricing_model': str
+    }
+    """
+    try:
+        if ages is None:
+            ages = []
+        
+        with SessionLocal() as db:
+            set_tenant_context(db, tenant_id)
+            
+            # Converter datas se forem strings
+            ci = check_in if isinstance(check_in, date) else universal_date_parser(check_in)
+            co = check_out if isinstance(check_out, date) else universal_date_parser(check_out)
+            
+            quote = calculate_booking_quote(
+                db,
+                tenant_id,
+                room_id,
+                ci,
+                co,
+                group_size,
+                ages
+            )
+            
+            settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
+            pricing_model = settings.get('pousada_pricing_model', 'per_person')
+            quote['pricing_model'] = pricing_model
+            
+            return quote
+    
+    except Exception as e:
+        return {'error': f'Erro ao calcular preço: {str(e)}'}
+
+
+def format_booking_summary(tenant_id: int, session_context: dict) -> dict:
+    """
+    Formata resumo de reserva para apresentação clara ao hóspede.
+    """
+    try:
+        with SessionLocal() as db:
+            set_tenant_context(db, tenant_id)
+            
+            guest_name = session_context.get('guest_name', 'Não informado')
+            check_in = session_context.get('check_in')
+            check_out = session_context.get('check_out')
+            room_id = session_context.get('room_id')
+            group_size = session_context.get('group_size', 1)
+            companions = session_context.get('companions', [])
+            total_price = session_context.get('total_price', 0)
+            
+            room_ids = [room_id] if isinstance(room_id, (str, int)) else list(room_id)
+            rooms = db.query(models.Room).filter(models.Room.id.in_(room_ids)).all()
+            
+            if rooms:
+                room_type = rooms[0].type if len(rooms) == 1 else "Múltiplos Quartos"
+                room_display = ", ".join([f"{r.type} #{r.id}" for r in rooms])
+            else:
+                room_type = "Quarto"
+                room_display = ", ".join(map(str, room_ids))
+            
+            companions_text = ""
+            if companions:
+                companions_text = "\n**Acompanhantes:**\n"
+                for i, c in enumerate(companions, 1):
+                    age_str = f", {c.get('age')} anos" if c.get('age') else ""
+                    companions_text += f"  {i}. {c.get('name', 'N/A')}{age_str}\n"
+            
+            summary_text = f"""
+╔════════════════════════════════════════════════════════════╗
+║           RESUMO DA SUA RESERVA                            ║
+╚════════════════════════════════════════════════════════════╝
+
+**Hóspede Principal:** {guest_name}
+
+**Quarto:** {room_type} ({room_display})
+
+**Período:**
+  • Check-in: {check_in}
+  • Check-out: {check_out}
+
+**Grupo:**
+  • Total de pessoas: {group_size} (1 principal + {group_size - 1} acompanhante(s))
+{companions_text}
+
+**Valor Total:** R$ {float(total_price):.2f}
+
+╔════════════════════════════════════════════════════════════╗
+║  As informações acima estão corretas?                     ║
+║  Responda: "Sim" para confirmar ou "Não" para corrigir    ║
+╚════════════════════════════════════════════════════════════╝
+"""
+            
+            return {
+                'summary_text': summary_text,
+                'total': total_price,
+                'breakdown': {
+                    'guest_name': guest_name,
+                    'room_type': room_type,
+                    'check_in': str(check_in),
+                    'check_out': str(check_out),
+                    'group_size': group_size,
+                    'total_price': total_price
+                }
+            }
+    
+    except Exception as e:
+        return {'error': f'Erro ao formatar resumo: {str(e)}'}
+
+
+def reissue_payment_qr(tenant_id: int, booking_id: int) -> dict:
+    """Regenera QR Code PIX para uma reserva existente."""
+    return payment_info_logic(tenant_id, booking_id)
+
+
+def handle_guest_registration_webhook(
+    tenant_id: int,
+    cpf: str,
+    session_id: str = None
+) -> dict:
+    """Processa webhook quando hóspede se cadastra no formulário público."""
+    try:
+        with SessionLocal() as db:
+            set_tenant_context(db, tenant_id)
+            clean_cpf = "".join(filter(str.isdigit, cpf))
+            
+            guest = db.query(models.Guest).filter(
+                models.Guest.document == clean_cpf,
+                models.Guest.tenant_id == tenant_id
+            ).first()
+            
+            if not guest:
+                return {'success': False, 'error': f'Hóspede {clean_cpf} não encontrado', 'webhook_received': False}
+            
+            if session_id:
+                state_manager = StateManager(tenant_id)
+                session_state = state_manager.load_session(session_id)
+                if session_state:
+                    context = session_state.get_context()
+                    context['guest_id'] = guest.id
+                    context['guest_name'] = guest.name
+                    context['webhook_received'] = True
+                    context['webhook_received_at'] = datetime.utcnow().isoformat()
+                    state_manager.update_state(session_id, context) 
+            
+            return {'success': True, 'guest_id': guest.id, 'guest_name': guest.name, 'webhook_received': True}
+    except Exception as e:
+        return {'success': False, 'error': str(e), 'webhook_received': False}
+
+def update_booking_status(
+    tenant_id: int,
+    booking_id: int,
+    payment_status: str = None,
+    booking_status: str = None,
+    payment_id_mp: int = None
+) -> dict:
+    """
+    Atualiza status de pagamento e/ou status da reserva.
+    """
+    try:
+        with SessionLocal() as db:
+            set_tenant_context(db, tenant_id)
+            booking = db.get(models.Booking, booking_id)
+            if not booking:
+                return {'error': f'Reserva #{booking_id} não encontrada'}
+            
+            if payment_status:
+                booking.payment_status = payment_status
+            
+            if booking_status:
+                booking.status = booking_status
+            
+            if payment_id_mp:
+                booking.payment_id_mp = payment_id_mp
+            
+            booking.updated_at = datetime.utcnow()
+            db.commit()
+            return {'success': True, 'message': f'Reserva #{booking_id} atualizada'}
+    except Exception as e:
+        return {'error': str(e)}
+
+async def execute_business_logic(tenant_id: int, message: str, context: dict) -> dict:
+    """
+    MOTOR DETERMINÍSTICO (80% Código): 
+    Executa a lógica de negócio baseada no estado atual, sem depender da decisão da IA.
+    """
+    results = {}
+    updated_context = context.copy()
+    msg_lower = message.lower()
+    
+    with SessionLocal() as db:
+        set_tenant_context(db, tenant_id)
+        
+        # 1. LOGICA DE BUSCA DE HÓSPEDE (Prioridade Macro)
+        cpf_to_search = context.get("cpf")
+        guest_lookup = find_guest_logic(tenant_id, cpf=cpf_to_search)
+        results["guest"] = guest_lookup
+        if guest_lookup.get("found"):
+            updated_context["guest_id"] = guest_lookup["id"]
+            updated_context["guest_name"] = guest_lookup["name"]
+
+        # 2. LOGICA DE DISPONIBILIDADE
+        if context.get("check_in") and context.get("check_out"):
+            availability = availability_check_logic(
+                tenant_id, 
+                context["check_in"], 
+                context["check_out"], 
+                context.get("group_size", 1)
+            )
+            results["availability"] = availability
+
+        # 3. LOGICA DE COTAÇÃO (DETERMINÍSTICA)
+        if context.get("room_id") and context.get("check_in") and context.get("check_out"):
+            room_id = context["room_id"]
+            room_ids = [room_id] if isinstance(room_id, (str, int)) else list(room_id)
+            
+            total_price = 0
+            for r_id in room_ids:
+                quote = calculate_booking_quote(
+                    db, tenant_id, r_id, 
+                    universal_date_parser(context["check_in"]), 
+                    universal_date_parser(context["check_out"]), 
+                    context.get("group_size", 1)
+                )
+                total_price += quote["total"]
+            
+            updated_context["total_price"] = total_price
+            results["quote"] = {"total": total_price, "rooms": room_ids}
+
+        # 4. MONITORAMENTO DE STATUS (RESERVA/PAGAMENTO)
+        booking_id = context.get("booking_id")
+        if booking_id:
+            booking = db.get(models.Booking, booking_id)
+            if booking:
+                results["booking_status"] = str(booking.status.value)
+                results["payment_status"] = str(booking.payment_status.value)
+                if booking.payment_status in [models.PaymentStatus.PAGO, models.PaymentStatus.PARCIAL]:
+                    results["payment_confirmed"] = True
+
+        # 5. GERADOR DE LINK DE PAGAMENTO
+        if any(w in msg_lower for w in ["pagar", "link", "pix", "pagamento", "confirmar"]):
+            setting = db.query(models.SystemSetting).filter(
+                models.SystemSetting.key == "pousada_deposit_percentage",
+                models.SystemSetting.tenant_id == tenant_id
+            ).first()
+            perc = float(setting.value) / 100.0 if (setting and setting.value) else 1.0
+            
+            # Saldo pendiente
+            if any(w in msg_lower for w in ["restante", "falta", "saldo", "quitar"]):
+                last_booking = db.query(models.Booking).filter(
+                    models.Booking.tenant_id == tenant_id,
+                    models.Booking.payment_status == models.PaymentStatus.PARCIAL,
+                    models.Booking.status.in_([models.BookingStatus.PENDENTE, models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO])
+                ).order_by(models.Booking.id.desc()).first()
+                
+                if last_booking:
+                    balance = last_booking.total_amount - last_booking.deposit_amount
+                    pay_info = payment_info_logic(tenant_id, last_booking.id)
+                    pay_info["total"] = balance
+                    results["payment"] = {
+                        "type": "balance", "amount": balance, "info": pay_info, "booking_id": last_booking.id
+                    }
+                else:
+                    results["payment"] = {"error": "Sem reserva com saldo em aberto."}
+            
+            # Sinal de Nova Reserva
+            elif updated_context.get("total_price") and updated_context.get("guest_id"):
+                bid = updated_context.get("booking_id")
+                if bid:
+                    pay_info = payment_info_logic(tenant_id, bid)
+                    results["payment"] = {
+                        "type": "deposit",
+                        "amount": updated_context["total_price"] * perc,
+                        "percentage": int(perc * 100),
+                        "info": pay_info,
+                        "booking_id": bid
+                    }
+
+    results["updated_context"] = updated_context
+    return results
+
+    results["updated_context"] = updated_context
+    return results

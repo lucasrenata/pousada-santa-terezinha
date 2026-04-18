@@ -62,6 +62,29 @@ interface CompareResult {
   delta: { revenue: DeltaItem; expense: DeltaItem; net: DeltaItem; checkins: DeltaItem; daily_avg_revenue: DeltaItem; };
 }
 
+interface CaixaSession {
+  id: number;
+  user_full_name?: string;
+  status: 'aberto' | 'fechado';
+  opened_at: string;
+  closed_at?: string;
+  opening_balance: number;
+  closing_balance?: number;
+  summary_json?: {
+    user_name: string;
+    opening_balance: number;
+    vendas_dinheiro: number;
+    vendas_pix: number;
+    vendas_debito: number;
+    vendas_credito: number;
+    entradas_total: number;
+    retiradas_total: number;
+    saldo_dinheiro: number;
+    saldo_geral: number;
+    comandas_processadas: number;
+  };
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const fmtCurrency = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -151,10 +174,11 @@ function Delta({ pct, inverted = false }: { pct: number; inverted?: boolean }) {
 }
 
 // ─── Tab navigation ───────────────────────────────────────────────────────────
-type Tab = 'receitas' | 'despesas' | 'fluxo' | 'comparativo' | 'relatorios';
+type Tab = 'receitas' | 'despesas' | 'fluxo' | 'fechamentos' | 'comparativo' | 'relatorios';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'receitas', label: '💰 Receitas' },
   { id: 'despesas', label: '📋 Despesas' },
+  { id: 'fechamentos', label: '⚖️ Fechamentos' },
   { id: 'fluxo', label: '📊 Fluxo de Caixa' },
   { id: 'comparativo', label: '🔀 Comparativo' },
   { id: 'relatorios', label: '📈 Relatórios' },
@@ -390,16 +414,25 @@ export default function Finance() {
   }, [cfStart, cfEnd]);
 
   useEffect(() => { if (activeTab === 'fluxo') loadCashFlow(); }, [activeTab, loadCashFlow]);
-
+  
   // ════════════════════════════════════════════════════════════════
   // ABA 4 — COMPARATIVO
   // ════════════════════════════════════════════════════════════════
-  const [cmpResult, setCmpResult] = useState<CompareResult | null>(null);
+  const [p1Start, setP1Start] = useState(() => {
+    const d = new Date(); d.setMonth(d.getMonth() - 1); d.setDate(1);
+    return d.toISOString().slice(0, 10);
+  });
+  const [p1End, setP1End] = useState(() => {
+    const d = new Date(); d.setDate(0);
+    return d.toISOString().slice(0, 10);
+  });
+  const [p2Start, setP2Start] = useState(() => {
+    const d = new Date(); d.setDate(1);
+    return d.toISOString().slice(0, 10);
+  });
+  const [p2End, setP2End] = useState(() => new Date().toISOString().slice(0, 10));
   const [cmpLoading, setCmpLoading] = useState(false);
-  const [p1Start, setP1Start] = useState('');
-  const [p1End, setP1End] = useState('');
-  const [p2Start, setP2Start] = useState('');
-  const [p2End, setP2End] = useState('');
+  const [cmpResult, setCmpResult] = useState<any>(null);
 
   async function loadCompare() {
     if (!p1Start || !p1End || !p2Start || !p2End) { setError('Preencha os 4 campos de data'); return; }
@@ -410,6 +443,33 @@ export default function Finance() {
     } catch { setError('Falha ao carregar comparativo'); }
     finally { setCmpLoading(false); }
   }
+
+  // ════════════════════════════════════════════════════════════════
+  // ABA 5 — FECHAMENTOS DE CAIXA
+  // ════════════════════════════════════════════════════════════════
+  const [closings, setClosings] = useState<CaixaSession[]>([]);
+  const [closingsLoading, setClosingsLoading] = useState(false);
+  const [closingsStart, setClosingsStart] = useState('');
+  const [closingsEnd, setClosingsEnd] = useState('');
+
+  const loadClosings = useCallback(async () => {
+    setClosingsLoading(true);
+    try {
+      const params: any = {};
+      if (closingsStart) params.start = closingsStart;
+      if (closingsEnd) params.end = closingsEnd;
+      const res = await api.get('/finance/caixa-closings', { params });
+      setClosings(res.data);
+    } catch {
+      setError('Falha ao carregar históricos de fechamento');
+    } finally {
+      setClosingsLoading(false);
+    }
+  }, [closingsStart, closingsEnd]);
+
+  useEffect(() => {
+    if (activeTab === 'fechamentos') loadClosings();
+  }, [activeTab, loadClosings]);
 
   // ════════════════════════════════════════════════════════════════
   // INPUT / SELECT helpers
@@ -797,6 +857,94 @@ export default function Finance() {
                 </div>
               );
             })()}
+          </div>
+        )}
+
+        {/* ══════════════════════════════════ ABA FECHAMENTOS ══════════════════════════════════ */}
+        {activeTab === 'fechamentos' && (
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div>
+              <h3 className="text-2xl font-bold text-slate-800 tracking-tight">Governança de Caixa</h3>
+              <p className="text-slate-500 text-sm">Histórico consolidado de turnos e conferência de valores.</p>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-200 p-5">
+              <div className="flex flex-wrap gap-3 items-end">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Início</label>
+                  <input type="date" className={inputCls} value={closingsStart} onChange={e => setClosingsStart(e.target.value)} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Fim</label>
+                  <input type="date" className={inputCls} value={closingsEnd} onChange={e => setClosingsEnd(e.target.value)} />
+                </div>
+                <button onClick={loadClosings} className={btnPrimary}>Filtrar Histórico</button>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-slate-600 text-[10px] uppercase font-bold tracking-wider">
+                    <tr>
+                      <th className="px-4 py-4 text-left">Data/Hora</th>
+                      <th className="px-4 py-4 text-left">Operador</th>
+                      <th className="px-4 py-4 text-right">Abertura</th>
+                      <th className="px-4 py-4 text-center">Vendas por Meio</th>
+                      <th className="px-4 py-4 text-right">Retiradas</th>
+                      <th className="px-4 py-4 text-right">Saldo do Dia</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {closingsLoading && <tr><td colSpan={6} className="px-4 py-12 text-center text-slate-400">Carregando auditoria...</td></tr>}
+                    {!closingsLoading && closings.map(c => {
+                      const s = c.summary_json;
+                      if (!s) return null;
+                      return (
+                        <tr key={c.id} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="px-4 py-4">
+                            <p className="font-bold text-slate-800">{new Date(c.closed_at!).toLocaleDateString('pt-BR')}</p>
+                            <p className="text-[10px] text-slate-400">{new Date(c.closed_at!).toLocaleTimeString('pt-BR')}</p>
+                          </td>
+                          <td className="px-4 py-4">
+                            <span className="text-xs font-semibold text-slate-600">{c.user_full_name}</span>
+                          </td>
+                          <td className="px-4 py-4 text-right text-slate-500 font-medium">
+                            {fmtCurrency(s.opening_balance)}
+                          </td>
+                          <td className="px-4 py-4">
+                            <div className="flex flex-wrap gap-2 justify-center">
+                              <div className="flex flex-col items-center px-2 py-1 bg-slate-50 rounded-lg min-w-[70px]">
+                                <span className="text-[8px] font-bold text-slate-400">DIN</span>
+                                <span className="text-[10px] font-bold text-slate-700">{fmtCurrency(s.vendas_dinheiro)}</span>
+                              </div>
+                              <div className="flex flex-col items-center px-2 py-1 bg-blue-50 rounded-lg min-w-[70px]">
+                                <span className="text-[8px] font-bold text-blue-400">PIX</span>
+                                <span className="text-[10px] font-bold text-blue-700">{fmtCurrency(s.vendas_pix)}</span>
+                              </div>
+                              <div className="flex flex-col items-center px-2 py-1 bg-indigo-50 rounded-lg min-w-[70px]">
+                                <span className="text-[8px] font-bold text-indigo-400">CARTÃO</span>
+                                <span className="text-[10px] font-bold text-indigo-700">{fmtCurrency(s.vendas_debito + s.vendas_credito)}</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-4 text-right text-red-500 font-semibold">
+                            {fmtCurrency(s.retiradas_total)}
+                          </td>
+                          <td className="px-4 py-4 text-right">
+                            <p className="text-sm font-black text-slate-900">{fmtCurrency(s.saldo_geral)}</p>
+                            <p className="text-[9px] text-slate-400 font-bold uppercase">{s.comandas_processadas} comandas</p>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {!closingsLoading && closings.length === 0 && (
+                      <tr><td colSpan={6} className="px-4 py-16 text-center text-slate-400 italic">Nenhum fechamento registrado no período.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         )}
 

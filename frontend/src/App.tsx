@@ -17,6 +17,7 @@ import Settings from './pages/Settings';
 import AdminUsers from './pages/AdminUsers';
 import Chat from './pages/Chat';
 import Events from './pages/Events';
+import PDV from './pages/PDV';
 import SuperDashboard from './pages/SuperDashboard';
 import GuestLayout from './components/GuestLayout';
 import GuestChatPage from './pages/GuestChatPage';
@@ -58,6 +59,7 @@ function App() {
             <Route path="/settings" element={<Settings />} />
             <Route path="/events" element={<Events />} />
             <Route path="/admin/users" element={<AdminUsers />} />
+            <Route path="/pdv" element={<PDV />} />
             <Route path="/service" element={<ServicePanel />} />
             <Route path="/super/dashboard" element={<SuperDashboard />} />
           </Route>

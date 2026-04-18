@@ -44,6 +44,7 @@ ALTER TABLE products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bookings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE session_state ENABLE ROW LEVEL SECURITY;
 
 -- Mensagem de Confirmação
 SELECT 'Provisionamento de pousada_app concluído com sucesso!' as status;

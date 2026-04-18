@@ -148,7 +148,7 @@ export default function Chat() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-120px)] max-w-5xl mx-auto space-y-4">
+    <div className="flex flex-col h-[calc(100dvh-100px)] sm:h-[calc(100vh-120px)] max-w-5xl mx-auto space-y-4 px-2 sm:px-0">
       <div>
         <h2 className="text-3xl font-black text-slate-900 tracking-tight">Assistente Administrativo</h2>
         <p className="text-slate-500 font-medium">Relatórios, estoque e gestão inteligente via IA</p>
@@ -158,7 +158,7 @@ export default function Chat() {
         {/* Mensagens */}
         <div 
           ref={scrollRef}
-          className="flex-1 overflow-y-auto p-6 space-y-4 scroll-smooth"
+          className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 scroll-smooth"
         >
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center space-y-4 animate-in fade-in zoom-in duration-500">
@@ -179,7 +179,7 @@ export default function Chat() {
               key={m.id} 
               className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-2 duration-300`}
             >
-              <div className={`flex gap-3 max-w-[80%] ${m.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+              <div className={`flex gap-3 max-w-[90%] sm:max-w-[80%] ${m.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden ${
                   m.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-white border text-slate-600 shadow-sm'
                 }`}>
@@ -227,8 +227,8 @@ export default function Chat() {
         </div>
 
         {/* Input */}
-        <CardContent className="p-4 bg-white border-t border-slate-100">
-          <form onSubmit={(e) => handleSend(e)} className="flex gap-3">
+        <CardContent className="p-3 sm:p-4 bg-white border-t border-slate-100">
+          <form onSubmit={(e) => handleSend(e)} className="flex gap-2 sm:gap-3">
             <input
               value={message}
               onChange={(e) => setMessage(e.target.value)}

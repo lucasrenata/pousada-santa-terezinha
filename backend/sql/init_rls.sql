@@ -16,6 +16,7 @@ ALTER TABLE stock_entries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE stock_entry_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE session_state ENABLE ROW LEVEL SECURITY;
 
 -- 2. Criar Políticas de Isolamento (Isolation Policies)
 -- Nota: 'app.current_tenant' é a variável de sessão definida pelo backend.
@@ -27,7 +28,7 @@ DECLARE
         'users', 'rooms', 'guests', 'products', 'bookings', 
         'companions', 'consumptions', 'revenues', 'business_rules', 
         'chat_messages', 'stock_entries', 'stock_entry_items', 
-        'settings', 'events'
+        'settings', 'events', 'session_state'
     ];
 BEGIN
     FOREACH t IN ARRAY tables LOOP

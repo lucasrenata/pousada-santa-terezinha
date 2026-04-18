@@ -87,9 +87,9 @@ export default function ServicePanel() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       {/* Header Estilo Dashboard */}
-      <div className="flex flex-col md:flex-row justify-between items-end md:items-center gap-4 mb-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
         <div>
           <h2 className="text-3xl font-bold text-slate-800 tracking-tight">Painel de Serviços</h2>
           <p className="text-slate-500">Gestão operacional de limpeza e manutenção.</p>
@@ -122,10 +122,10 @@ export default function ServicePanel() {
       ) : (
         <div className="space-y-8">
           {/* NAVEGAÇÃO POR ABAS */}
-          <div className="flex p-1.5 bg-slate-100 rounded-2xl w-full sm:w-fit gap-1 border border-slate-200">
+          <div className="flex p-1.5 bg-slate-100 rounded-2xl w-full sm:w-fit gap-1 border border-slate-200 overflow-x-auto scrollbar-hide">
             <button
               onClick={() => setActiveTab('limpeza')}
-              className={`flex-1 sm:flex-none flex items-center justify-center gap-3 px-8 py-3 rounded-xl font-bold transition-all ${
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-3 px-4 sm:px-8 py-3 rounded-xl font-bold transition-all ${
                 activeTab === 'limpeza' 
                 ? 'bg-white text-yellow-600 shadow-md ring-1 ring-slate-200/50' 
                 : 'text-slate-500 hover:text-slate-700'
@@ -141,7 +141,7 @@ export default function ServicePanel() {
             </button>
             <button
               onClick={() => setActiveTab('manutencao')}
-              className={`flex-1 sm:flex-none flex items-center justify-center gap-3 px-8 py-3 rounded-xl font-bold transition-all ${
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-3 px-4 sm:px-8 py-3 rounded-xl font-bold transition-all ${
                 activeTab === 'manutencao' 
                 ? 'bg-white text-indigo-600 shadow-md ring-1 ring-slate-200/50' 
                 : 'text-slate-500 hover:text-slate-700'
@@ -251,7 +251,7 @@ export default function ServicePanel() {
                   )}
                 </div>
 
-                <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-[2.5rem] p-8 text-white shadow-2xl relative overflow-hidden border border-slate-700 max-w-4xl">
+                <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-3xl sm:rounded-[2.5rem] p-6 sm:p-8 text-white shadow-2xl relative overflow-hidden border border-slate-700 max-w-4xl">
                     <div className="relative z-10">
                         <div className="flex items-center gap-4 mb-8">
                           <div className="bg-blue-600 p-3 rounded-2xl shadow-lg ring-4 ring-blue-500/20">
@@ -294,7 +294,7 @@ export default function ServicePanel() {
                           <button
                             onClick={saveMaintenance}
                             disabled={!noteRoomId || !noteText.trim()}
-                            className={`px-12 py-4 rounded-2xl text-sm font-black transition-all shadow-xl flex items-center gap-3 ${
+                            className={`px-6 sm:px-12 py-4 rounded-2xl text-sm font-black transition-all shadow-xl flex items-center gap-3 ${
                               noteRoomId && noteText.trim()
                                 ? 'bg-blue-600 text-white hover:bg-blue-700 hover:-translate-y-1 active:scale-95 active:translate-y-0'
                                 : 'bg-slate-700 text-slate-500 cursor-not-allowed border border-slate-600'

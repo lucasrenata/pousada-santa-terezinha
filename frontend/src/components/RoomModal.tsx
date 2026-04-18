@@ -1,5 +1,5 @@
 import { useForm } from 'react-hook-form';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import api from '../services/api';
 import type { AxiosError } from 'axios';
 import { X } from 'lucide-react';
@@ -24,8 +24,22 @@ export default function RoomModal({ isOpen, onClose, onSuccess, initialData }: R
   const { register, handleSubmit, reset, setValue } = useForm<FormData>({ 
     defaultValues: { max_capacity: 2 } 
   });
+  const [pricingModel, setPricingModel] = useState<'per_person' | 'per_room'>('per_person');
+
+  async function loadPricingModel() {
+    try {
+      const res = await api.get('/settings/');
+      const model = res.data.find((s: any) => s.key === 'pousada_pricing_model')?.value;
+      if (model) setPricingModel(model as any);
+    } catch {
+      console.error('Falha ao carregar modelo de preço no modal');
+    }
+  }
 
   useEffect(() => {
+    if (isOpen) {
+        loadPricingModel();
+    }
     if (initialData) {
       setValue('id', initialData.id);
       setValue('type', initialData.type);
@@ -97,8 +111,10 @@ export default function RoomModal({ isOpen, onClose, onSuccess, initialData }: R
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Preço (Diária)</label>
-              <input {...register("price", { required: true })} type="number" step="0.01" placeholder="0.00" className="w-full border border-slate-300 rounded-lg p-2 outline-none" />
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Preço ({pricingModel === 'per_person' ? 'por pessoa' : 'por quarto'})
+              </label>
+              <input {...register("price", { required: true })} type="number" step="0.01" placeholder="0.00" className="w-full border border-slate-300 rounded-lg p-2 outline-none font-bold text-blue-600" />
             </div>
           </div>
           

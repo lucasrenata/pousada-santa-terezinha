@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 
-import { LayoutDashboard, BedDouble, CalendarDays, CalendarHeart, Package, DollarSign, LogOut, Menu, Settings, Users, Wrench, MessageSquare, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, BedDouble, CalendarDays, CalendarHeart, Package, DollarSign, LogOut, Menu, Settings, Users, Wrench, MessageSquare, ShieldCheck, ShoppingCart } from 'lucide-react';
 
 export default function MainLayout() {
   const navigate = useNavigate();
@@ -84,14 +84,28 @@ export default function MainLayout() {
             })}
           </nav>
 
-          {/* BOTÃO SAIR */}
-          <button 
-            onClick={handleLogout}
-            className="flex items-center text-slate-500 hover:text-red-600 transition-colors text-sm font-medium px-3 py-2 rounded-lg hover:bg-red-50"
-          >
-            <LogOut size={18} className="mr-2" />
-            <span className="hidden sm:inline">Sair</span>
-          </button>
+          {/* BOTÕES DE AÇÃO (DIREITA) */}
+          <div className="flex items-center gap-3">
+            {/* BOTÃO PDV DE DESTAQUE */}
+            {(role === 'admin' || role === 'recepcionista') && (
+              <button 
+                onClick={() => navigate('/pdv')}
+                className="flex items-center bg-[#EAB308] text-[#1E293B] px-6 py-2 rounded-xl text-sm font-black transition-all hover:scale-105 active:scale-95 shadow-lg shadow-yellow-200"
+              >
+                <ShoppingCart size={18} className="mr-2" />
+                PDV
+              </button>
+            )}
+
+            {/* BOTÃO SAIR */}
+            <button 
+              onClick={handleLogout}
+              className="flex items-center text-slate-500 hover:text-red-600 transition-colors text-sm font-medium px-3 py-2 rounded-lg hover:bg-red-50"
+            >
+              <LogOut size={18} className="mr-2" />
+              <span className="hidden sm:inline">Sair</span>
+            </button>
+          </div>
         </div>
       </header>
 

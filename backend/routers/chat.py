@@ -56,29 +56,12 @@ async def chat_customer(request: ChatRequest, http_req: Request, db: Session = D
     # 0. Ativa RLS context
     set_tenant_context(db, request.tenant_id)
     
-    # 1. Salva mensagem do usuário
-    save_message(request.session_id, "user", request.message, request.tenant_id, db)
+    # 1. Orquestração Multi-Agente (Mente Central - LangGraph)
+    from agents.supervisor_agent import SupervisorAgent
+    supervisor = SupervisorAgent(request.tenant_id)
     
-    # 2. Busca histórico completo do banco (Fonte da Verdade)
-    set_tenant_context(db, request.tenant_id)
-    history = await get_db_history(request.session_id, db, request.tenant_id)
-    
-    # 3. Importação tardia do agente
-    from agents.customer_agent import handle_customer_query
-    
-    # Captura a URL base limpa da origem da requisição
-    from urllib.parse import urlparse
-    origin = http_req.headers.get("origin") or http_req.headers.get("referer") or ""
-    if origin:
-        parsed = urlparse(origin)
-        origin = f"{parsed.scheme}://{parsed.netloc}"
-    base_url = os.getenv("FRONTEND_URL") or origin or "http://localhost:5173"
-    
-    # Chamamos o agente (ele já recebe o histórico do banco e a URL correta)
-    result = await handle_customer_query(request.message, history[:-1], db, request.tenant_id, base_url=base_url) 
-    
-    # 4. Salva resposta da IA
-    save_message(request.session_id, "assistant", result["response"], request.tenant_id, db)
+    # Processar via Supervisor (Ele próprio agora salva User/Assistant no DB para o histórico)
+    result = await supervisor.process(request.message, request.session_id)
     
     return result
 

@@ -108,17 +108,17 @@ export function CustomerForm({ customer, onSuccess, onCancel }: CustomerFormProp
 
   return (
     <Card className="w-full max-w-2xl mx-auto shadow-md border-slate-200">
-      <CardHeader className="bg-slate-50 border-b border-slate-100 rounded-t-xl mb-6">
-        <CardTitle className="text-xl font-bold text-slate-800">
+      <CardHeader className="bg-slate-50 border-b border-slate-100 rounded-t-xl mb-4 py-4 px-6">
+        <CardTitle className="text-lg font-bold text-slate-800">
           {customer ? 'Editar Hóspede' : 'Novo Hóspede'}
         </CardTitle>
-        <CardDescription>
+        <CardDescription className="text-xs">
           Gerencie as informações detalhadas do hóspede principal.
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="p-4 sm:p-6">
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
               
               {/* Seção 1: Identidade */}

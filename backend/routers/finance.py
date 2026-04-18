@@ -601,3 +601,33 @@ def compare_periods(
             "daily_avg_revenue": delta(period_a["daily_avg_revenue"], period_b["daily_avg_revenue"]),
         }
     }
+
+# =============================================================================
+# FECHAMENTOS DE CAIXA (PDV)
+# =============================================================================
+
+@router.get("/caixa-closings", response_model=List[schemas.CaixaSessionResponse])
+def list_caixa_closings(
+    start: Optional[date] = None,
+    end:   Optional[date] = None,
+    db: Session = Depends(get_db),
+    admin = Depends(get_current_admin)
+):
+    """Lista sessões de caixa fechadas com resumos consolidados"""
+    set_tenant_context(db, admin.tenant_id)
+    query = db.query(models.CaixaSession).filter(
+        models.CaixaSession.status == models.CaixaStatus.FECHADO
+    )
+    
+    if start:
+        query = query.filter(models.CaixaSession.closed_at >= datetime.combine(start, datetime.min.time()))
+    if end:
+        query = query.filter(models.CaixaSession.closed_at <= datetime.combine(end, datetime.max.time()))
+        
+    closings = query.order_by(desc(models.CaixaSession.closed_at)).all()
+    
+    # Injetar o nome do usuário manualmente para o schema response_model
+    for c in closings:
+        c.user_full_name = c.user.full_name or c.user.username if c.user else "N/A"
+        
+    return closings

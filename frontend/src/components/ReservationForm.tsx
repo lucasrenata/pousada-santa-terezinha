@@ -61,6 +61,8 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);
   const [pricingModel, setPricingModel] = useState<'per_person' | 'per_room'>('per_person');
+  const [childPercentage, setChildPercentage] = useState(50);
+  const [infantFixedRate, setInfantFixedRate] = useState(30);
   const [showCustomerForm, setShowCustomerForm] = useState(false);
   
   const { createReservation, updateReservation } = useReservations();
@@ -98,17 +100,45 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
   });
 
   // Cálculo automático do Total Presumido (Visual apenas no form)
-  const watchedValues = form.watch(['check_in_date', 'check_out_date', 'daily_rate', 'total_guests']);
+  const watchedValues = form.watch(['check_in_date', 'check_out_date', 'check_in_time', 'check_out_time', 'daily_rate', 'total_guests', 'companions']);
+  
   const totalPresumed = useMemo(() => {
-    const [start, end, rate, guests] = watchedValues;
+    const [start, end, ciTime, coTime, rate, guests, companionsList] = watchedValues;
     if (!start || !end || !rate) return 0;
-    const days = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
+
+    // Regra hoteleira de contagem de diárias (baseada no backend logic)
+    const calculateDays = (d1: Date, d2: Date, h1: string, h2: string) => {
+      const msPerDay = 24 * 60 * 60 * 1000;
+      let diff = Math.ceil((new Date(d2).setHours(0,0,0,0) - new Date(d1).setHours(0,0,0,0)) / msPerDay);
+      if (diff < 1) diff = 1;
+
+      const hour1 = parseInt(h1.split(':')[0]);
+      const hour2 = parseInt(h2.split(':')[0]);
+
+      if (hour1 < 14) diff += 1; // Check-in antecipado
+      if (hour2 >= 14) diff += 1; // Check-out tardio
+
+      return diff;
+    };
+
+    const days = calculateDays(start, end, ciTime, coTime);
     
-    if (pricingModel === 'per_person') {
-      return days * rate * (guests || 1);
+    if (pricingModel === 'per_room') {
+      return days * rate;
     }
-    return days * rate;
-  }, [watchedValues, pricingModel]);
+
+    // Lógica Per Person (Adultos full, Crianças %, Bebês fixo)
+    let total = 0;
+    const allAges = [18, ...(companionsList?.map(c => Number(c.age)) || [])];
+    
+    allAges.forEach(age => {
+      if (age >= 13) total += (days * rate);
+      else if (age >= 7) total += (days * rate * (childPercentage / 100));
+      else total += (days * infantFixedRate); 
+    });
+
+    return total;
+  }, [watchedValues, pricingModel, childPercentage, infantFixedRate]);
 
   // --- BUSCA DE DISPONIBILIDADE E CONFIGS EM TEMPO REAL ---
   const checkInDate = form.watch('check_in_date');
@@ -124,7 +154,12 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
       try {
         const response = await api.get('/settings/');
         const model = response.data.find((s: any) => s.key === 'pousada_pricing_model');
-        if (model) setPricingModel(model.value as 'per_person' | 'per_room');
+        const childPct = response.data.find((s: any) => s.key === 'pousada_rate_child_percentage');
+        const infantFixed = response.data.find((s: any) => s.key === 'pousada_rate_infant_fixed');
+        
+        if (model) setPricingModel(model.value as any);
+        if (childPct) setChildPercentage(Number(childPct.value));
+        if (infantFixed) setInfantFixedRate(Number(infantFixed.value));
       } catch (err) {
         console.error("Erro ao carregar modelo de preços", err);
       }
@@ -386,9 +421,11 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
                         Quarto {r.id} - {r.type} (Cap. {r.max_capacity} pessoas)
                       </SelectItem>
                     ))}
-                    {roomConflict && !availableRooms.find(r => r.id === field.value) && rooms.find((r: any) => r.id === field.value) && (
-                       <SelectItem value={field.value} disabled className="text-red-500 italic">
-                         Quarto {rooms.find((r: any) => r.id === field.value).id} (OCUPADO NO PERÍODO)
+                    
+                    {/* GARANTIA DE EXIBIÇÃO: Se o quarto atual não está na lista de disponíveis, mostra ele mesmo assim */}
+                    {field.value && !availableRooms.find(r => r.id === field.value) && (
+                       <SelectItem value={field.value} className="font-bold text-blue-600">
+                         Quarto {field.value} (Atual)
                        </SelectItem>
                     )}
                   </SelectContent>
@@ -495,7 +532,7 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
                 </div>
               </div>
               <div className="text-right">
-                <Badge variant="outline" className="border-white/30 text-white bg-white/10">Diária: R$ {watchedValues[2]?.toFixed(2) || '0.00'}</Badge>
+                <Badge variant="outline" className="border-white/30 text-white bg-white/10">Diária: R$ {watchedValues[4]?.toFixed(2) || '0.00'}</Badge>
               </div>
             </div>
           </section>

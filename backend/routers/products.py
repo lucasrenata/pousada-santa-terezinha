@@ -3,6 +3,7 @@ from fastapi.responses import FileResponse
 from .auth import get_current_staff, get_current_admin
 
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 import models, schemas
 from database import get_db, set_tenant_context
@@ -23,13 +24,21 @@ def create_product(product: schemas.ProductCreate, db: Session = Depends(get_db)
         if existing:
             raise HTTPException(status_code=400, detail="Código de barras já cadastrado")
             
+    tid = user.get("tenant_id") if isinstance(user, dict) else user.tenant_id
+    
     # Converte string vazia para None para evitar erro de UniqueViolation no banco
     data = product.model_dump()
     if not data.get("barcode"): data["barcode"] = None
     
-    new_prod = models.Product(**data)
+    # Explicitamente define o tenant_id para garantir que o RLS não oculte o objeto no refresh
+    new_prod = models.Product(**data, tenant_id=tid)
     db.add(new_prod)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Código de barras já cadastrado em outro produto")
+    
     db.refresh(new_prod)
     return new_prod
 
@@ -67,10 +76,11 @@ def list_categories(db: Session = Depends(get_db), user = Depends(get_current_st
 
 @router.post("/categories", response_model=schemas.ProductCategoryResponse)
 def create_category(payload: schemas.ProductCategoryCreate, db: Session = Depends(get_db), user = Depends(get_current_staff)):
-    set_tenant_context(db, user.get("tenant_id") if isinstance(user, dict) else user.tenant_id)
+    tid = user.get("tenant_id") if isinstance(user, dict) else user.tenant_id
+    set_tenant_context(db, tid)
     exists = db.query(models.ProductCategory).filter(models.ProductCategory.name.ilike(payload.name)).first()
     if exists: return exists
-    new_cat = models.ProductCategory(name=payload.name)
+    new_cat = models.ProductCategory(name=payload.name, tenant_id=tid)
     db.add(new_cat)
     db.commit()
     db.refresh(new_cat)
@@ -126,15 +136,24 @@ def update_product(product_id: int, payload: schemas.ProductUpdate, db: Session 
     prod = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not prod:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
+    
+    # Normaliza barcode: string vazia vira None
+    if payload.barcode is not None:
+        payload.barcode = payload.barcode.strip() if payload.barcode.strip() else None
+
+    tid = user.get("tenant_id") if isinstance(user, dict) else user.tenant_id
     if payload.barcode is not None and payload.barcode != prod.barcode:
         exists = db.query(models.Product).filter(models.Product.barcode == payload.barcode).first()
         if exists:
             raise HTTPException(status_code=400, detail="Código de barras já cadastrado")
+            
+    # Garante o tenant_id no objeto (importante se o objeto for órfão)
+    prod.tenant_id = tid
+            
     if payload.name is not None: prod.name = payload.name
     if payload.price is not None: prod.price = payload.price
     if payload.category is not None: prod.category = payload.category
-    if payload.barcode is not None: 
-        prod.barcode = payload.barcode if payload.barcode.strip() else None
+    if payload.barcode is not None: prod.barcode = payload.barcode
     if payload.unit_measure is not None: prod.unit_measure = payload.unit_measure
     if payload.stock_quantity is not None: prod.stock_quantity = payload.stock_quantity
     if payload.min_stock is not None: prod.min_stock = payload.min_stock
@@ -145,9 +164,39 @@ def update_product(product_id: int, payload: schemas.ProductUpdate, db: Session 
     if payload.is_quick_access is not None: prod.is_quick_access = payload.is_quick_access
     if payload.cost_price is not None: prod.cost_price = payload.cost_price
     if payload.markup_percent is not None: prod.markup_percent = payload.markup_percent
-    db.commit()
-    db.refresh(prod)
+    
+    try:
+        db.commit()
+        db.refresh(prod)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Código de barras já cadastrado em outro produto")
+    
     return prod
+
+@router.patch("/bulk-quick-access")
+def update_bulk_quick_access(
+    request: schemas.QuickAccessUpdateRequest,
+    db: Session = Depends(get_db),
+    user = Depends(get_current_staff)
+):
+    """Define quais produtos são atalhos rápidos (limpa os antigos e seta os novos)"""
+    tenant_id = user.get("tenant_id") if isinstance(user, dict) else user.tenant_id
+    
+    # 1. Limpa todos os atalhos atuais do tenant
+    db.query(models.Product).filter(
+        models.Product.tenant_id == tenant_id
+    ).update({"is_quick_access": False}, synchronize_session=False)
+    
+    # 2. Ativa apenas os novos selecionados
+    if request.product_ids:
+        db.query(models.Product).filter(
+            models.Product.tenant_id == tenant_id,
+            models.Product.id.in_(request.product_ids)
+        ).update({"is_quick_access": True}, synchronize_session=False)
+    
+    db.commit()
+    return {"message": "Atalhos atualizados com sucesso"}
 
 # 6. RECEBIMENTO DE ESTOQUE VIA NOTA FISCAL (CSV/XLSX) + Registro de histórico
 @router.post("/stock/receipt", response_model=schemas.StockEntryResponse)
@@ -160,9 +209,11 @@ def stock_receipt(
     db: Session = Depends(get_db),
     user = Depends(get_current_staff)
 ):
-    set_tenant_context(db, user.get("tenant_id") if isinstance(user, dict) else user.tenant_id)
+    tid = user.get("tenant_id") if isinstance(user, dict) else user.tenant_id
+    set_tenant_context(db, tid)
     filename = file.filename.lower()
     rows: List[dict] = []
+    # ... (rest of parsing)
     if filename.endswith(".csv"):
         content = file.file.read().decode("utf-8", errors="ignore")
         reader = csv.DictReader(io.StringIO(content))
@@ -275,7 +326,8 @@ def stock_receipt(
                     price=sale_price,
                     category="Importado via NF",
                     stock_quantity=0, # Será somado abaixo
-                    min_stock=5
+                    min_stock=5,
+                    tenant_id=tid
                 )
                 db.add(prod)
                 db.flush() # Obtém ID
@@ -334,7 +386,8 @@ def stock_ocr(
     db: Session = Depends(get_db),
     user = Depends(get_current_staff)
 ):
-    set_tenant_context(db, user.get("tenant_id") if isinstance(user, dict) else user.tenant_id)
+    tid = user.get("tenant_id") if isinstance(user, dict) else user.tenant_id
+    set_tenant_context(db, tid)
     filename = (file.filename or "").lower()
     if not (filename.endswith(".png") or filename.endswith(".jpg") or filename.endswith(".jpeg") or filename.endswith(".pdf")):
         raise HTTPException(status_code=400, detail="Envie imagem PNG/JPG ou PDF")
@@ -444,7 +497,8 @@ def stock_ocr(
                 price=sale_p,
                 category="Importado via OCR",
                 stock_quantity=0,
-                min_stock=5
+                min_stock=5,
+                tenant_id=tid
             )
             db.add(found)
             db.flush()
