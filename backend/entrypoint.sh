@@ -47,6 +47,11 @@ else:
 
 echo "✨ [SUCCESS] Deploy do banco concluído!"
 
-# 4. Iniciar a aplicação
-echo "🚀 Iniciando Uvicorn..."
-exec uvicorn main:app --host 0.0.0.0 --port 8000 --proxy-headers
+# 4. Iniciar a aplicação ou comando customizado
+if [ "$#" -gt 0 ]; then
+    echo "🚀 Executando comando customizado: $@"
+    exec "$@"
+else
+    echo "🚀 Iniciando Uvicorn..."
+    exec uvicorn main:app --host 0.0.0.0 --port 8000 --proxy-headers
+fi
