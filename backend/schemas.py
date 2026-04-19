@@ -110,6 +110,7 @@ class GuestCreate(GuestBase): pass
 
 class GuestPublicCreate(GuestBase):
     tenant_id: int # Recebido via URL pública
+    session_id: Optional[str] = None # ID da sessão de chat para o webhook de reconhecimento
 
 class GuestUpdate(BaseModel):
     name: Optional[str] = None

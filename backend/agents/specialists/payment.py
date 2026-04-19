@@ -29,7 +29,9 @@ class PaymentSpecialist(BaseSpecialist):
             booking_status = logic_results.get("booking_status", "PENDENTE")
             
             # Extração robusta do link de pagamento (Padrão 80/20)
-            payment_link = payment_info.get("info", {}).get("pix_qr", {}).get("link")
+            info = payment_info.get("info", {})
+            payment_link = info.get("pix_qr", {}).get("link")
+            manual_pix = payment_info.get("manual_key") or info.get("manual_key")
             
             payment_prompt = f"""
 Você é o Especialista de PAGAMENTO da pousada (ID: {self.tenant_id}).
@@ -37,19 +39,22 @@ Você é o Especialista de PAGAMENTO da pousada (ID: {self.tenant_id}).
 INFORMAÇÕES DE PAGAMENTO (REAIS):
 {json.dumps(payment_info, ensure_ascii=False, indent=2)}
 
-LINK DE PAGAMENTO ATUAL: {payment_link if payment_link else "NÃO GERADO"}
-
-STATUS ATUAL DA RESERVA: {booking_status}
+DADOS PARA O HÓSPEDE:
+- Link Mercado Pago: {payment_link if payment_link else "NÃO DISPONÍVEL"}
+- Chave PIX Manual: {manual_pix if manual_pix else "NÃO CADASTRADA"}
+- Status Reserva: {booking_status}
 
 MISSÃO:
-1. Se o status for PENDENTE: Forneça o Link de Pagamento/PIX e incentive o hóspede. Explique que a reserva só será confirmada após o pagamento do sinal.
-2. Se o status for CONFIRMADO: Diga: "Ótimas notícias! Recebemos a confirmação do seu pagamento. Sua reserva agora está TOTALMENTE CONFIRMADA! Estamos ansiosos para te receber."
-3. Seja amigável e focado em fechar a venda.
+1. Se o status for PENDENTE: Proporcione IMEDIATAMENTE uma forma de pagamento.
+   - SE houver Link Mercado Pago: Use [**Pagar Agora**]({payment_link}).
+   - SE NÃO houver link, mas houver Chave PIX: Forneça a chave {manual_pix} e peça para enviar o comprovante aqui.
+   - SEMPRE incentive o hóspede a concluir agora para garantir a vaga.
+2. Se o status for CONFIRMADO: Celebre com o hóspede e confirme que está tudo certo.
 
 REGRAS CRÍTICAS:
-- SE o link estiver disponível ({payment_link}): Use este formato exato: [**Pagar Agora**]({payment_link})
-- SE o link NÃO estiver pronto: Explique que o sistema está processando e peça para ele aguardar um momento.
-- NUNCA invente links fictícios. Use apenas o que foi fornecido em LINK DE PAGAMENTO ATUAL.
+- NUNCA peça para o hóspede "aguardar o sistema gerar o link". Se não tem link, use a chave PIX manual.
+- Formate valores em R$ 0,00.
+- Seja extremamente proativo e amigável.
 """
             
             llm_messages = [SystemMessage(content=payment_prompt)]

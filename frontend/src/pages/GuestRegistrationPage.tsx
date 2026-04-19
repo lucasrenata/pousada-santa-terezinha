@@ -104,7 +104,8 @@ export default function GuestRegistrationPage() {
         address_neighborhood: formData.neighborhood,
         address_city: formData.city,
         address_state: formData.state,
-        tenant_id: parseInt(tenant_id || "1")
+        tenant_id: parseInt(tenant_id || "1"),
+        session_id: searchParams.get('sid') || searchParams.get('session_id') || undefined
       });
 
       setSuccess(true);

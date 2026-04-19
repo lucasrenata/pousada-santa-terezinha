@@ -29,26 +29,40 @@ def create_guest_public(guest_data: schemas.GuestPublicCreate, db: Session = Dep
 
     # 1. Busca hóspede
     existing = db.query(models.Guest).filter(models.Guest.document == guest_data.document).first()
+    guest_to_return = None
+    
     if existing:
         # Atualiza dados, mas retira o tenant_id para evitar erro se ele tentar injetar algo estranho
-        update_dict = guest_data.model_dump(exclude={'tenant_id'})
+        update_dict = guest_data.model_dump(exclude={'tenant_id', 'session_id'})
         for key, value in update_dict.items():
             setattr(existing, key, value)
         db.commit()
-        # db.refresh(existing)
-        return existing
-    
-    # Como o RLS já ativa o before_flush, não precisa injetar o tenant explicitamente
-    # 2. Verifica se o e-mail já existe (evita Erro 500 por UniqueViolation)
-    if guest_data.email and db.query(models.Guest).filter(models.Guest.email == guest_data.email).first():
-        raise HTTPException(status_code=400, detail="O e-mail informado já está sendo utilizado por outro cadastro.")
+        guest_to_return = existing
+    else:
+        # Como o RLS já ativa o before_flush, não precisa injetar o tenant explicitamente
+        # 2. Verifica se o e-mail já existe (evita Erro 500 por UniqueViolation)
+        if guest_data.email and db.query(models.Guest).filter(models.Guest.email == guest_data.email).first():
+            raise HTTPException(status_code=400, detail="O e-mail informado já está sendo utilizado por outro cadastro.")
 
-    new_guest_dict = guest_data.model_dump(exclude={'tenant_id'})
-    new_guest = models.Guest(**new_guest_dict, tenant_id=guest_data.tenant_id)
-    db.add(new_guest)
-    db.commit()
-    # db.refresh(new_guest)
-    return new_guest
+        new_guest_dict = guest_data.model_dump(exclude={'tenant_id', 'session_id'})
+        new_guest = models.Guest(**new_guest_dict, tenant_id=guest_data.tenant_id)
+        db.add(new_guest)
+        db.commit()
+        guest_to_return = new_guest
+
+    # 3. Dispara Webhook de reconhecimento para o Agente (Se houver session_id)
+    if guest_data.session_id:
+        try:
+            from agents.shared_tools import handle_guest_registration_webhook
+            handle_guest_registration_webhook(
+                tenant_id=guest_data.tenant_id,
+                cpf=guest_data.document,
+                session_id=guest_data.session_id
+            )
+        except Exception as e:
+            print(f"[WEBHOOK ERROR] Falha ao notificar agente: {e}")
+
+    return guest_to_return
 
 @router.get("/", response_model=List[schemas.GuestResponse])
 def list_guests(q: Optional[str] = None, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):

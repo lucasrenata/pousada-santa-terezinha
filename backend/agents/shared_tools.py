@@ -686,8 +686,12 @@ async def execute_business_logic(tenant_id: int, message: str, context: dict) ->
                 if booking.payment_status in [models.PaymentStatus.PAGO, models.PaymentStatus.PARCIAL]:
                     results["payment_confirmed"] = True
 
-        # 5. GERADOR DE LINK DE PAGAMENTO
-        if any(w in msg_lower for w in ["pagar", "link", "pix", "pagamento", "confirmar"]):
+        # 5. GERADOR DE LINK DE PAGAMENTO (PROATIVO)
+        # Se estamos no estado de pagamento ou temos uma reserva pendente, SEMPRE gera info
+        is_payment_state = (context.get("current_state") == "PAYMENT")
+        has_keywords = any(w in msg_lower for w in ["pagar", "link", "pix", "pagamento", "confirmar"])
+        
+        if is_payment_state or has_keywords:
             setting = db.query(models.SystemSetting).filter(
                 models.SystemSetting.key == "pousada_deposit_percentage",
                 models.SystemSetting.tenant_id == tenant_id
