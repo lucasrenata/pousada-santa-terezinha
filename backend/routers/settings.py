@@ -19,6 +19,14 @@ def get_settings(db: Session = Depends(get_db), current_user: models.User = Depe
     # O contexto do tenant já é setado pelo get_current_user/RLS
     return db.query(models.SystemSetting).all()
 
+@router.get("/public/{tenant_id}", response_model=List[SettingSchema])
+def get_public_settings(tenant_id: int, db: Session = Depends(get_db)):
+    """Retorna apenas configurações não sensíveis para o portal do hóspede."""
+    set_tenant_context(db, tenant_id)
+    # Lista branca de chaves seguras para exposição pública
+    public_keys = ['pousada_name', 'pousada_checkin_time', 'pousada_checkout_time', 'pousada_logo_url']
+    return db.query(models.SystemSetting).filter(models.SystemSetting.key.in_(public_keys)).all()
+
 @router.post("/")
 def update_setting(setting: SettingSchema, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
     db_setting = db.query(models.SystemSetting).filter(models.SystemSetting.key == setting.key).first()

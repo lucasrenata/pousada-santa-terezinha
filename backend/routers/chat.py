@@ -35,9 +35,8 @@ def save_message(session_id: str, role: str, content: str, tenant_id: int, db: S
     db.commit()
 
 @router.get("/history/{session_id}")
-async def get_chat_history(session_id: str, db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
-    tid = current_user.tenant_id
-    set_tenant_context(db, tid)
+async def get_chat_history(session_id: str, tenant_id: int, db: Session = Depends(get_db)):
+    set_tenant_context(db, tenant_id)
     messages = db.query(models.ChatMessage).filter(
         models.ChatMessage.session_id == session_id
     ).order_by(models.ChatMessage.created_at.asc()).all()

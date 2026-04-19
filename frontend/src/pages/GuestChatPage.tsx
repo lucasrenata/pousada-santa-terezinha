@@ -110,7 +110,7 @@ export default function GuestChatPage() {
 
   const loadSettings = async () => {
     try {
-      const response = await api.get(`/settings/?tenant_id=${tenant_id}`);
+      const response = await api.get(`/settings/public/${tenant_id}`);
       const nameSetting = response.data.find((s: any) => s.key === 'pousada_name');
       if (nameSetting) setPousadaName(nameSetting.value);
     } catch (err) {
@@ -120,7 +120,8 @@ export default function GuestChatPage() {
 
   const loadHistory = async (sid: string) => {
     try {
-      const res = await api.get(`/chat/history/${sid}`);
+      // Passa o tenant_id para o histórico público
+      const res = await api.get(`/chat/history/${sid}?tenant_id=${tenant_id}`);
       setMessages(res.data.map((m: any) => ({
         ...m,
         timestamp: new Date(m.timestamp)

@@ -42,10 +42,18 @@ api.interceptors.response.use(
         }
       } catch (refreshError) {
         console.error("Sessão expirada. Redirecionando para login...");
-        localStorage.removeItem('token');
-        localStorage.removeItem('role');
-        localStorage.removeItem('tenant_id');
-        window.location.href = '/login';
+        
+        // Evita redirecionar se estiver em uma rota que deve ser pública (Guest Chat / Atendimento)
+        const publicRoutes = ['/atendimento', '/registrar', '/book'];
+        const isPublicRoute = publicRoutes.some(route => window.location.pathname.includes(route));
+
+        if (!isPublicRoute) {
+          localStorage.removeItem('token');
+          localStorage.removeItem('role');
+          localStorage.removeItem('tenant_id');
+          window.location.href = '/login';
+        }
+        
         return Promise.reject(refreshError);
       }
     }
