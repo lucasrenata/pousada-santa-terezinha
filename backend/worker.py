@@ -1,6 +1,6 @@
 import os
 from redis import Redis
-from rq import Worker, Queue, Connection
+from rq import Worker, Queue
 import logging
 
 # Configuração de Logging para o Worker
@@ -18,7 +18,8 @@ except Exception as e:
     exit(1)
 
 if __name__ == '__main__':
-    with Connection(conn):
-        worker = Worker(list(map(Queue, listen)))
-        logger.info("Worker de IA iniciado e aguardando tarefas...")
-        worker.work()
+    # Inicializa as filas e o worker passando a conexão diretamente
+    queues = [Queue(name, connection=conn) for name in listen]
+    worker = Worker(queues, connection=conn)
+    logger.info("Worker de IA iniciado e aguardando tarefas...")
+    worker.work()
