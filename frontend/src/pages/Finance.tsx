@@ -53,13 +53,30 @@ interface CfSummary {
 interface PeriodSummary {
   start: string; end: string; days: number;
   revenue: number; expense: number; net: number;
-  checkins: number; checkouts: number; daily_avg_revenue: number;
+  checkins: number; 
+  by_category: Record<string, number>;
+  expense_by_category: Record<string, number>;
+  by_payment: Record<string, number>;
+  product_mix: Record<string, number>;
+  occupancy_rate: number;
+  adr: number;
+  revpar: number;
+  ticket_medio: number;
 }
 interface DeltaItem { absolute: number; percent: number | null; }
 interface CompareResult {
   period_a: PeriodSummary;
   period_b: PeriodSummary;
-  delta: { revenue: DeltaItem; expense: DeltaItem; net: DeltaItem; checkins: DeltaItem; daily_avg_revenue: DeltaItem; };
+  delta: { 
+    revenue: DeltaItem; 
+    expense: DeltaItem; 
+    net: DeltaItem; 
+    checkins: DeltaItem;
+    occupancy_rate: DeltaItem;
+    adr: DeltaItem;
+    revpar: DeltaItem;
+    ticket_medio: DeltaItem;
+  };
 }
 
 interface CaixaSession {
@@ -236,8 +253,8 @@ export default function Finance() {
   // ════════════════════════════════════════════════════════════════
   // ABA 1 — RECEITAS (código original preservado)
   // ════════════════════════════════════════════════════════════════
-  const [start, setStart] = useState('');
-  const [end, setEnd] = useState('');
+  const [start, setStart] = useState(() => new Date().toISOString().slice(0, 10));
+  const [end, setEnd] = useState(() => new Date().toISOString().slice(0, 10));
   const [summary, setSummary] = useState<{ total_revenue: number; transactions: number } | null>(null);
   const [revenues, setRevenues] = useState<Revenue[]>([]);
   const [filterCategory, setFilterCategory] = useState<RevenueCategory | ''>('');
@@ -256,8 +273,7 @@ export default function Finance() {
 
   function toDateString(date: string) {
     if (!date) return undefined;
-    const d = new Date(date);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return date; 
   }
   function sortArrow(field: typeof sortBy) { return sortBy !== field ? '' : sortDir === 'asc' ? '↑' : '↓'; }
   function headerSort(field: typeof sortBy) {
@@ -833,17 +849,15 @@ export default function Finance() {
                             <td className="px-4 py-3 font-medium text-slate-700">{fmtDate(row.date)}</td>
                             <td className="px-4 py-3 text-right text-emerald-700 font-semibold">{fmtCurrency(row.revenue)}</td>
                             <td className="px-4 py-3 text-right text-red-600 font-semibold">{row.expense > 0 ? fmtCurrency(row.expense) : '—'}</td>
-                            {/* campo é 'net' no backend, não 'balance' */}
                             <td className={`px-4 py-3 text-right font-bold ${row.net >= 0 ? 'text-slate-800' : 'text-red-600'}`}>{fmtCurrency(row.net)}</td>
                             <td className="px-4 py-3 w-32">
-                              <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                                <div className={`h-full rounded-full ${row.net >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`} style={{ width: `${Math.min((Math.abs(row.net || 0) / maxVal) * 100, 100)}%` }} />
+                              <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                <div className="h-full bg-blue-500" style={{ width: `${((row.revenue || 0) / maxVal) * 100}%` }} />
                               </div>
                             </td>
                           </tr>
                         );
                       })}
-                      {cashFlow.length === 0 && <tr><td colSpan={5} className="px-4 py-10 text-center text-slate-400 italic">Nenhum dado no período</td></tr>}
                     </tbody>
                   </table>
                 </div>
@@ -852,69 +866,181 @@ export default function Finance() {
           </div>
         )}
 
-        {/* ══════════════════════════════════ ABA COMPARATIVO ══════════════════════════════════ */}
+        {/* ══════════════════════════════════ ABA COMPARATIVO (RAIO-X) ══════════════════════════════════ */}
         {activeTab === 'comparativo' && (
-          <div className="space-y-6 animate-in fade-in duration-500">
-            <div>
-              <h3 className="text-2xl font-bold text-slate-800">Comparativo</h3>
-              <p className="text-slate-500 text-sm">Analise o desempenho entre diferentes períodos.</p>
+          <div className="space-y-6 animate-in fade-in duration-500 pb-12">
+            <div className="flex justify-between items-end">
+              <div>
+                <h3 className="text-2xl font-black text-slate-800 tracking-tight">Raio-X Comparativo</h3>
+                <p className="text-slate-500 text-sm">Análise estratégica de performance e demanda entre períodos selecionados.</p>
+              </div>
+              <div className="bg-violet-600/5 p-2 rounded-2xl border border-violet-100">
+                <ArrowRightLeft className="text-violet-600" size={24} />
+              </div>
             </div>
+
             {/* Seletor de períodos */}
-            <div className="bg-white rounded-2xl border border-slate-200 p-6">
-              <p className="text-base font-semibold text-slate-800 mb-4 flex items-center gap-2"><ArrowRightLeft size={16} />Comparar dois períodos</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50">
-                  <p className="text-xs font-bold text-blue-700 uppercase mb-3">Período A</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div><label className="text-xs text-slate-600 block mb-1">Início</label><input type="date" className={inputCls} value={p1Start} onChange={e => setP1Start(e.target.value)} /></div>
-                    <div><label className="text-xs text-slate-600 block mb-1">Fim</label><input type="date" className={inputCls} value={p1End} onChange={e => setP1End(e.target.value)} /></div>
+            <div className="bg-white rounded-[2.5rem] border border-slate-200 p-8 shadow-sm">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="p-6 rounded-3xl border border-blue-100 bg-blue-50/30">
+                  <p className="text-[10px] font-black text-blue-700 uppercase tracking-widest mb-4">Período A (Referência)</p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div><label className="text-[10px] font-bold text-slate-400 uppercase mb-2 block">Início</label><input type="date" className={inputCls} value={p1Start} onChange={e => setP1Start(e.target.value)} /></div>
+                    <div><label className="text-[10px] font-bold text-slate-400 uppercase mb-2 block">Fim</label><input type="date" className={inputCls} value={p1End} onChange={e => setP1End(e.target.value)} /></div>
                   </div>
                 </div>
-                <div className="p-4 rounded-xl border border-violet-200 bg-violet-50/50">
-                  <p className="text-xs font-bold text-violet-700 uppercase mb-3">Período B</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div><label className="text-xs text-slate-600 block mb-1">Início</label><input type="date" className={inputCls} value={p2Start} onChange={e => setP2Start(e.target.value)} /></div>
-                    <div><label className="text-xs text-slate-600 block mb-1">Fim</label><input type="date" className={inputCls} value={p2End} onChange={e => setP2End(e.target.value)} /></div>
+                <div className="p-6 rounded-3xl border border-violet-100 bg-violet-50/30">
+                  <p className="text-[10px] font-black text-violet-700 uppercase tracking-widest mb-4">Período B (Comparativo)</p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div><label className="text-[10px] font-bold text-slate-400 uppercase mb-2 block">Início</label><input type="date" className={inputCls} value={p2Start} onChange={e => setP2Start(e.target.value)} /></div>
+                    <div><label className="text-[10px] font-bold text-slate-400 uppercase mb-2 block">Fim</label><input type="date" className={inputCls} value={p2End} onChange={e => setP2End(e.target.value)} /></div>
                   </div>
                 </div>
               </div>
-              <button onClick={loadCompare} disabled={cmpLoading} className={btnPrimary + ' mt-4'}>
-                {cmpLoading ? 'Comparando...' : 'Comparar Períodos'}
+              <button 
+                onClick={loadCompare} 
+                disabled={cmpLoading} 
+                className="w-full mt-6 bg-slate-900 hover:bg-black text-white py-4 rounded-2xl font-black text-xs tracking-widest transition-all shadow-lg active:scale-[0.98]"
+              >
+                {cmpLoading ? 'PROCESSANDO ANÁLISE...' : 'GERAR RAIO-X COMPARATIVO'}
               </button>
             </div>
 
-            {/* Resultado */}
+            {/* Resultado Rico (Raio-X) */}
             {cmpResult && (() => {
               const { period_a, period_b, delta } = cmpResult;
-              // backend: period_a.net (não .balance), delta.revenue.percent (não .revenue_pct)
-              const rows = [
-                { label: 'Receitas', a: period_a.revenue, b: period_b.revenue, dpct: delta.revenue?.percent ?? 0, inverted: false },
-                { label: 'Despesas', a: period_a.expense, b: period_b.expense, dpct: delta.expense?.percent ?? 0, inverted: true },
-                { label: 'Saldo', a: period_a.net, b: period_b.net, dpct: delta.net?.percent ?? 0, inverted: false },
+              
+              const mainKpis = [
+                { label: 'Receita Total', a: period_a.revenue, b: period_b.revenue, d: delta.revenue, isCurrency: true },
+                { label: 'Despesas Pagas', a: period_a.expense, b: period_b.expense, d: delta.expense, isCurrency: true, inverted: true },
+                { label: 'Saldo Líquido', a: period_a.net, b: period_b.net, d: delta.net, isCurrency: true },
               ];
+
+              const hotelKpis = [
+                { label: 'ADR (Diária Média)', a: period_a.adr, b: period_b.adr, d: delta.adr, isCurrency: true },
+                { label: 'Ocupação', a: period_a.occupancy_rate, b: period_b.occupancy_rate, d: delta.occupancy_rate, suffix: '%' },
+                { label: 'RevPAR', a: period_a.revpar, b: period_b.revpar, d: delta.revpar, isCurrency: true },
+                { label: 'Ticket Médio/Ref', a: period_a.ticket_medio, b: period_b.ticket_medio, d: delta.ticket_medio, isCurrency: true },
+              ];
+
+              const allProducts = Array.from(new Set([...Object.keys(period_a.product_mix || {}), ...Object.keys(period_b.product_mix || {})])).sort();
+
               return (
-                <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-                  <div className="grid grid-cols-3 text-center text-xs font-bold uppercase border-b border-slate-100">
-                    <div className="p-4 text-blue-700 bg-blue-50">Período A<br /><span className="text-[10px] font-normal normal-case text-slate-500">{fmtDate(period_a.start)} – {fmtDate(period_a.end)}</span></div>
-                    <div className="p-4 text-slate-600">Indicador</div>
-                    <div className="p-4 text-violet-700 bg-violet-50">Período B<br /><span className="text-[10px] font-normal normal-case text-slate-500">{fmtDate(period_b.start)} – {fmtDate(period_b.end)}</span></div>
-                  </div>
-                  {rows.map(row => (
-                    <div key={row.label} className="grid grid-cols-3 text-center border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors">
-                      <div className="p-4 text-lg font-black text-blue-800">{fmtCurrency(row.a)}</div>
-                      <div className="p-4 flex flex-col items-center justify-center gap-1">
-                        <span className="text-xs font-semibold text-slate-600">{row.label}</span>
-                        <Delta pct={row.dpct} inverted={row.inverted} />
-                        <span className="text-[10px] text-slate-400">{row.b >= row.a ? '+' : ''}{fmtCurrency(row.b - row.a)}</span>
+                <div className="space-y-10 animate-in slide-in-from-bottom-4 duration-500">
+                  
+                  {/* Grid de KPIs Financeiros */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {mainKpis.map(kpi => (
+                      <div key={kpi.label} className="bg-white p-7 rounded-[2rem] border border-slate-200 shadow-sm transition-all hover:shadow-md">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">{kpi.label}</p>
+                        <div className="flex justify-between items-end">
+                          <div>
+                            <p className="text-2xl font-black text-slate-800">{fmtCurrency(kpi.b)}</p>
+                            <p className="text-[10px] text-slate-400 mt-1">Anterior: {fmtCurrency(kpi.a)}</p>
+                          </div>
+                          <div className="text-right">
+                             <Delta pct={kpi.d?.percent ?? 0} inverted={kpi.inverted} />
+                             <p className="text-[10px] text-slate-400 font-bold mt-1">{kpi.d?.absolute >= 0 ? '+' : ''}{fmtCurrency(kpi.d?.absolute || 0)}</p>
+                          </div>
+                        </div>
                       </div>
-                      <div className="p-4 text-lg font-black text-violet-800">{fmtCurrency(row.b)}</div>
+                    ))}
+                  </div>
+
+                  {/* Dash de Performance Hoteleira */}
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                     {hotelKpis.map(kpi => (
+                        <div key={kpi.label} className="bg-slate-900 text-white p-6 rounded-[2rem] shadow-xl">
+                           <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-3">{kpi.label}</p>
+                           <h4 className="text-xl font-black mb-1">{kpi.isCurrency ? fmtCurrency(kpi.b) : `${kpi.b}${kpi.suffix || ''}`}</h4>
+                           <div className="flex items-center gap-2">
+                              {kpi.d && <Delta pct={kpi.d.percent ?? 0} />}
+                              <span className="text-[9px] text-slate-500 font-bold">vs anterior</span>
+                           </div>
+                        </div>
+                     ))}
+                  </div>
+
+                  {/* Comparativo de Mix de Produtos (Demanda por Evento) */}
+                  <div className="bg-white rounded-[2.5rem] border border-slate-200 overflow-hidden shadow-sm">
+                    <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/30">
+                       <div>
+                         <h4 className="text-lg font-black text-slate-800 tracking-tight">Raio-X de Demanda (Mix de Vendas)</h4>
+                         <p className="text-xs text-slate-500">Compare a performance de venda item a item entre os períodos.</p>
+                       </div>
+                       <div className="bg-violet-600 text-white px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest">
+                          Business Intelligence
+                       </div>
                     </div>
-                  ))}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-50 text-[10px] uppercase font-bold text-slate-500 border-b border-slate-100">
+                          <tr>
+                            <th className="px-8 py-5 text-left">Produto / Serviço</th>
+                            <th className="px-8 py-5 text-center bg-blue-50/30 text-blue-700 border-x border-blue-100/50">Qtd Período A</th>
+                            <th className="px-8 py-5 text-center bg-violet-50/30 text-violet-700 border-x border-violet-100/50">Qtd Período B</th>
+                            <th className="px-8 py-5 text-center">Variação Real</th>
+                            <th className="px-8 py-5 text-right pr-12">Crescimento %</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {allProducts.length === 0 ? (
+                            <tr><td colSpan={5} className="px-8 py-24 text-center text-slate-400 italic">Nenhum dado de venda disponível para comparação nestes períodos.</td></tr>
+                          ) : allProducts.map(name => {
+                            const qa = period_a.product_mix?.[name] || 0;
+                            const qb = period_b.product_mix?.[name] || 0;
+                            const diff = qb - qa;
+                            const pct = qa > 0 ? (diff / qa) * 100 : 0;
+                            return (
+                              <tr key={name} className="hover:bg-slate-50/50 transition-colors">
+                                <td className="px-8 py-6 font-bold text-slate-700">{name}</td>
+                                <td className="px-8 py-6 text-center font-mono text-slate-500 bg-blue-50/5 border-x border-blue-100/50">{qa}</td>
+                                <td className="px-8 py-6 text-center font-black text-slate-900 bg-violet-50/5 border-x border-violet-100/50">{qb}</td>
+                                <td className={`px-8 py-6 text-center font-bold ${diff >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                  {diff > 0 ? '+' : ''}{diff}
+                                </td>
+                                <td className="px-8 py-6 text-right pr-12">
+                                  <div className="flex items-center justify-end gap-3">
+                                    <div className="w-24 h-2 bg-slate-100 rounded-full overflow-hidden">
+                                       <div className={`h-full rounded-full ${diff >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`} style={{ width: `${Math.min(Math.abs(pct), 100)}%` }} />
+                                    </div>
+                                    <span className={`text-[11px] font-black ${diff >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                                      {diff > 0 ? '+' : ''}{pct.toFixed(0)}%
+                                    </span>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Mix de Faturamento Comparativo */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                     <div className="bg-white p-10 rounded-[2.5rem] border border-slate-200 shadow-sm">
+                        <h5 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-6 border-b border-slate-100 pb-4 flex justify-between">
+                           <span>Mix de Receita A</span>
+                           <span className="text-[10px] font-normal lowercase italic text-slate-400">{fmtDate(period_a.start)}</span>
+                        </h5>
+                        <PieChart data={period_a.by_category} />
+                     </div>
+                     <div className="bg-white p-10 rounded-[2.5rem] border border-slate-200 shadow-sm">
+                        <h5 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-6 border-b border-slate-100 pb-4 flex justify-between">
+                           <span>Mix de Receita B</span>
+                           <span className="text-[10px] font-normal lowercase italic text-slate-400">{fmtDate(period_b.start)}</span>
+                        </h5>
+                        <PieChart data={period_b.by_category} />
+                     </div>
+                  </div>
+
                 </div>
               );
             })()}
           </div>
         )}
+
 
         {/* ══════════════════════════════════ ABA FECHAMENTOS ══════════════════════════════════ */}
         {activeTab === 'fechamentos' && (

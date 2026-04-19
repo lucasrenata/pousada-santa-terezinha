@@ -51,8 +51,8 @@ def get_report(
 ):
     set_tenant_context(db, admin.tenant_id)
     query = db.query(models.Revenue)
-    if start: query = query.filter(models.Revenue.created_at >= start)
-    if end:   query = query.filter(models.Revenue.created_at <= end)
+    if start: query = query.filter(models.Revenue.created_at >= datetime.combine(start, datetime.min.time()))
+    if end:   query = query.filter(models.Revenue.created_at <= datetime.combine(end, datetime.max.time()))
     if category:        query = query.filter(models.Revenue.category == category)
     if payment_method:  query = query.filter(models.Revenue.payment_method == payment_method)
     if search:
@@ -527,36 +527,70 @@ def export_financial_pdf(
     
     return FileResponse(path, media_type="application/pdf", filename=filename)
 def _period_summary(db: Session, start: date, end: date) -> dict:
-    """Helper: calcula receita, despesa e KPIs de ocupação para um período."""
+    """Helper: calcula receita, despesa e KPIs de ocupação para um período rico."""
     start_dt = datetime.combine(start, datetime.min.time())
     end_dt   = datetime.combine(end,   datetime.max.time())
-
-    revenue = db.query(
-        func.coalesce(func.sum(models.Revenue.amount), 0.0)
-    ).filter(
-        models.Revenue.created_at >= start_dt,
-        models.Revenue.created_at <= end_dt
-    ).scalar() or 0.0
-
-    expense = db.query(
-        func.coalesce(func.sum(models.Expense.amount), 0.0)
-    ).filter(
-        models.Expense.is_paid == True,
-        models.Expense.paid_date >= start,
-        models.Expense.paid_date <= end
-    ).scalar() or 0.0
-
-    checkins = db.query(models.Booking).filter(
-        models.Booking.real_check_in >= start_dt,
-        models.Booking.real_check_in <= end_dt
-    ).count()
-
-    checkouts = db.query(models.Booking).filter(
-        models.Booking.real_check_out >= start_dt,
-        models.Booking.real_check_out <= end_dt
-    ).count()
-
     days = (end - start).days + 1
+
+    # 1. Totais Básicos
+    revenue = db.query(func.coalesce(func.sum(models.Revenue.amount), 0.0)).filter(
+        models.Revenue.created_at >= start_dt, models.Revenue.created_at <= end_dt
+    ).scalar() or 0.0
+
+    expense = db.query(func.coalesce(func.sum(models.Expense.amount), 0.0)).filter(
+        models.Expense.is_paid == True,
+        models.Expense.paid_date >= start, models.Expense.paid_date <= end
+    ).scalar() or 0.0
+
+    # 2. Breakdowns (Receitas e Despesas por Categoria)
+    rev_cats = db.query(models.Revenue.category, func.sum(models.Revenue.amount)).filter(
+        models.Revenue.created_at >= start_dt, models.Revenue.created_at <= end_dt
+    ).group_by(models.Revenue.category).all()
+    by_category = {c.value: float(v) for c, v in rev_cats}
+
+    exp_cats = db.query(models.Expense.category, func.sum(models.Expense.amount)).filter(
+        models.Expense.is_paid == True,
+        models.Expense.paid_date >= start, models.Expense.paid_date <= end
+    ).group_by(models.Expense.category).all()
+    expense_by_category = {c.value: float(v) for c, v in exp_cats}
+
+    # 3. Meios de Pagamento
+    pay_methods = db.query(models.Revenue.payment_method, func.sum(models.Revenue.amount)).filter(
+        models.Revenue.created_at >= start_dt, models.Revenue.created_at <= end_dt
+    ).group_by(models.Revenue.payment_method).all()
+    by_payment = {p.value if p else 'quarto': float(v) for p, v in pay_methods}
+
+    # 4. Mix de Produtos (Top Vendas do PDV)
+    prod_mix = db.query(models.PDVSaleItem.product_name, func.sum(models.PDVSaleItem.quantity)).join(
+        models.PDVSale
+    ).filter(
+        models.PDVSale.created_at >= start_dt, models.PDVSale.created_at <= end_dt
+    ).group_by(models.PDVSaleItem.product_name).all()
+    product_mix = {name: float(qty) for name, qty in prod_mix}
+
+    # 5. Métricas de Ocupação e Hotelaria
+    total_rooms = db.query(models.Room).count() or 1
+    
+    # Estimativa de booked_nights: soma de dias de estadias que interceptam o período
+    # (Simplified: sum of nights for each booking within the range)
+    # Using real_check_in/out if available, fallback to scheduled
+    # For a high-fidelity X-ray, we count actual nights stayed within the window
+    checkins = db.query(models.Booking).filter(
+        models.Booking.real_check_in >= start_dt, models.Booking.real_check_in <= end_dt
+    ).count()
+
+    hospedagem_revenue = by_category.get('hospedagem', 0.0)
+    
+    # Cálculo de ADR e RevPAR
+    # Para simplificar e manter performance, usaremos checkins como base de diárias se o hotel for rotativo
+    # Ou calculamos a ocupação real via BookingRoom
+    booked_rooms_count = db.query(func.count(models.BookingRoom.id)).join(models.Booking).filter(
+        models.Booking.check_in_date <= end_dt,
+        models.Booking.check_out_date >= start_dt,
+        models.Booking.status.in_(['confirmado', 'ativo', 'concluido'])
+    ).scalar() or 0
+    
+    occupancy_rate = (booked_rooms_count / (total_rooms * days)) * 100 if (total_rooms * days) > 0 else 0
 
     return {
         "start":     start.isoformat(),
@@ -566,8 +600,14 @@ def _period_summary(db: Session, start: date, end: date) -> dict:
         "expense":   round(float(expense), 2),
         "net":       round(float(revenue) - float(expense), 2),
         "checkins":  checkins,
-        "checkouts": checkouts,
-        "daily_avg_revenue": round(float(revenue) / days, 2) if days else 0.0,
+        "by_category": by_category,
+        "expense_by_category": expense_by_category,
+        "by_payment": by_payment,
+        "product_mix": product_mix,
+        "occupancy_rate": round(occupancy_rate, 1),
+        "adr": round(hospedagem_revenue / max(checkins, 1), 2) if checkins > 0 else 0.0,
+        "revpar": round(hospedagem_revenue / (total_rooms * days), 2) if (total_rooms * days) > 0 else 0.0,
+        "ticket_medio": round(float(revenue) / max(checkins, 1), 2) if checkins > 0 else 0.0
     }
 
 # 11. COMPARATIVO A vs B
@@ -598,7 +638,10 @@ def compare_periods(
             "expense":           delta(period_a["expense"],           period_b["expense"]),
             "net":               delta(period_a["net"],               period_b["net"]),
             "checkins":          delta(period_a["checkins"],          period_b["checkins"]),
-            "daily_avg_revenue": delta(period_a["daily_avg_revenue"], period_b["daily_avg_revenue"]),
+            "occupancy_rate":    delta(period_a["occupancy_rate"],    period_b["occupancy_rate"]),
+            "adr":               delta(period_a["adr"],               period_b["adr"]),
+            "revpar":            delta(period_a["revpar"],            period_b["revpar"]),
+            "ticket_medio":      delta(period_a["ticket_medio"],      period_b["ticket_medio"]),
         }
     }
 
