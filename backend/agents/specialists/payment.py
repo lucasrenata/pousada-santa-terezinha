@@ -28,11 +28,16 @@ class PaymentSpecialist(BaseSpecialist):
             payment_info = logic_results.get("payment", {})
             booking_status = logic_results.get("booking_status", "PENDENTE")
             
+            # Extração robusta do link de pagamento (Padrão 80/20)
+            payment_link = payment_info.get("info", {}).get("pix_qr", {}).get("link")
+            
             payment_prompt = f"""
 Você é o Especialista de PAGAMENTO da pousada (ID: {self.tenant_id}).
 
 INFORMAÇÕES DE PAGAMENTO (REAIS):
 {json.dumps(payment_info, ensure_ascii=False, indent=2)}
+
+LINK DE PAGAMENTO ATUAL: {payment_link if payment_link else "NÃO GERADO"}
 
 STATUS ATUAL DA RESERVA: {booking_status}
 
@@ -41,10 +46,10 @@ MISSÃO:
 2. Se o status for CONFIRMADO: Diga: "Ótimas notícias! Recebemos a confirmação do seu pagamento. Sua reserva agora está TOTALMENTE CONFIRMADA! Estamos ansiosos para te receber."
 3. Seja amigável e focado em fechar a venda.
 
-REGRAS:
-- SEMPRE apresente o link clicável APENAS se disponível. Use este formato exato: [**Pagar Agora**](URL_AQUI)
-- Se a URL estiver disponível: {f"[**Pagar Agora**]({payment_info.get('payment_url')})" if payment_info.get('payment_url') else "⚠️ Link de pagamento sendo gerado, um momento..."}
-- Verifique se a URL começa com http. Se não, avise: "O link de pagamento ainda não está pronto."
+REGRAS CRÍTICAS:
+- SE o link estiver disponível ({payment_link}): Use este formato exato: [**Pagar Agora**]({payment_link})
+- SE o link NÃO estiver pronto: Explique que o sistema está processando e peça para ele aguardar um momento.
+- NUNCA invente links fictícios. Use apenas o que foi fornecido em LINK DE PAGAMENTO ATUAL.
 """
             
             llm_messages = [SystemMessage(content=payment_prompt)]

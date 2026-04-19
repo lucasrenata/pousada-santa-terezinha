@@ -72,12 +72,21 @@ def process_mp_response(result: dict):
         }
     
     poi = (response.get("point_of_interaction") or {}).get("transaction_data") or {}
+    
+    # Extração robusta da URL de pagamento (vários fallbacks dependendo do tipo de resposta)
+    payment_url = (
+        poi.get("ticket_url") or 
+        poi.get("external_resource_url") or 
+        response.get("init_point") or 
+        response.get("sandbox_init_point")
+    )
+    
     return {
         "payment_id": response.get("id"),
         "status": response.get("status"),
         "amount": response.get("transaction_amount"),
         "qr_code": poi.get("qr_code"),
         "qr_code_base64": poi.get("qr_code_base64"),
-        "payment_url": poi.get("ticket_url"),
+        "payment_url": payment_url,
         "metadata": response.get("metadata", {})
     }
