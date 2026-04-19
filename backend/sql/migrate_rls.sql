@@ -20,31 +20,34 @@ DECLARE
     ];
 BEGIN
     FOREACH t IN ARRAY tables LOOP
-        -- Adiciona a coluna se ela não existir
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = t AND column_name = 'tenant_id') THEN
-            EXECUTE format('ALTER TABLE %I ADD COLUMN tenant_id INTEGER REFERENCES tenants(id)', t);
-            -- Atribui dados existentes ao Tenant 1
-            EXECUTE format('UPDATE %I SET tenant_id = 1 WHERE tenant_id IS NULL', t);
+        -- Verifica se a tabela existe antes de aplicar qualquer lógica
+        IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = t) THEN
+            -- Adiciona a coluna se ela não existir
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = t AND column_name = 'tenant_id') THEN
+                EXECUTE format('ALTER TABLE %I ADD COLUMN tenant_id INTEGER REFERENCES tenants(id)', t);
+                -- Atribui dados existentes ao Tenant 1
+                EXECUTE format('UPDATE %I SET tenant_id = 1 WHERE tenant_id IS NULL', t);
+            END IF;
+
+            -- Habilita RLS e força a política mesmo para o proprietário da tabela
+            EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+            EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
+
+            -- Recria a política de isolamento
+            EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_policy ON %I', t);
+            EXECUTE format('
+                CREATE POLICY tenant_isolation_policy ON %I 
+                USING (
+                    tenant_id = NULLIF(current_setting(''app.current_tenant'', true), '''') ::integer 
+                    OR 
+                    current_setting(''app.current_tenant'', true) = ''-1''
+                )
+                WITH CHECK (
+                    tenant_id = NULLIF(current_setting(''app.current_tenant'', true), '''') ::integer 
+                    OR 
+                    current_setting(''app.current_tenant'', true) = ''-1''
+                )
+            ', t);
         END IF;
-
-        -- Habilita RLS e força a política mesmo para o proprietário da tabela
-        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
-        EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
-
-        -- Recria a política de isolamento
-        EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_policy ON %I', t);
-        EXECUTE format('
-            CREATE POLICY tenant_isolation_policy ON %I 
-            USING (
-                tenant_id = NULLIF(current_setting(''app.current_tenant'', true), '''') ::integer 
-                OR 
-                current_setting(''app.current_tenant'', true) = ''-1''
-            )
-            WITH CHECK (
-                tenant_id = NULLIF(current_setting(''app.current_tenant'', true), '''') ::integer 
-                OR 
-                current_setting(''app.current_tenant'', true) = ''-1''
-            )
-        ', t);
     END LOOP;
 END $$;
