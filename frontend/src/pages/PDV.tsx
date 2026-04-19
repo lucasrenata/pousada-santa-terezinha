@@ -480,18 +480,58 @@ export default function PDV() {
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
              {/* Lançar Prato por Peso */}
-             <ActionCard title="Lançar Prato por Peso" icon={Weight} color="text-orange-500" onAdd={() => addItemToComanda(null, { price: parseFloat(pesoValue), desc: 'Prato por Peso', type: 'peso' })}>
+             <ActionCard 
+               title="Lançar Prato por Peso" 
+               icon={Weight} 
+               color="text-orange-500" 
+               onAdd={() => {
+                 const val = parseFloat(pesoValue);
+                 if (val > 0) addItemToComanda(null, { price: val, desc: 'Prato por Peso', type: 'peso' });
+               }}
+             >
                <div className="relative flex-1">
                  <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-300 text-sm">R$</span>
-                 <Input type="number" placeholder="0,00" className="pl-10 h-10 border-slate-200 bg-white" value={pesoValue} onChange={e => setPesoValue(e.target.value)} />
+                 <Input 
+                   type="number" 
+                   placeholder="0,00" 
+                   className="pl-10 h-10 border-slate-200 bg-white" 
+                   value={pesoValue} 
+                   onChange={e => setPesoValue(e.target.value)}
+                   onKeyDown={e => {
+                     if (e.key === 'Enter') {
+                       const val = parseFloat(pesoValue);
+                       if (val > 0) addItemToComanda(null, { price: val, desc: 'Prato por Peso', type: 'peso' });
+                     }
+                   }}
+                 />
                </div>
              </ActionCard>
 
              {/* Lançar Marmitex */}
-             <ActionCard title="Lançar Marmitex" icon={Utensils} color="text-emerald-500" onAdd={() => addItemToComanda(null, { price: parseFloat(marmitexValue), desc: 'Marmitex', type: 'marmitex' })}>
+             <ActionCard 
+               title="Lançar Marmitex" 
+               icon={Utensils} 
+               color="text-emerald-500" 
+               onAdd={() => {
+                 const val = parseFloat(marmitexValue);
+                 if (val > 0) addItemToComanda(null, { price: val, desc: 'Marmitex', type: 'marmitex' });
+               }}
+             >
                <div className="relative flex-1">
                  <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-300 text-sm">R$</span>
-                 <Input type="number" placeholder="0,00" className="pl-10 h-10 border-slate-200 bg-white" value={marmitexValue} onChange={e => setMarmitexValue(e.target.value)} />
+                 <Input 
+                   type="number" 
+                   placeholder="0,00" 
+                   className="pl-10 h-10 border-slate-200 bg-white" 
+                   value={marmitexValue} 
+                   onChange={e => setMarmitexValue(e.target.value)}
+                   onKeyDown={e => {
+                     if (e.key === 'Enter') {
+                       const val = parseFloat(marmitexValue);
+                       if (val > 0) addItemToComanda(null, { price: val, desc: 'Marmitex', type: 'marmitex' });
+                     }
+                   }}
+                 />
                </div>
              </ActionCard>
 
