@@ -239,6 +239,22 @@ export default function Rooms() {
     }
   }
 
+  async function handleDeleteConsumption(consumptionId: number) {
+    try {
+      if (!confirm('Tem certeza que deseja remover este item de consumo?')) return;
+      await api.delete(`/bookings/consumption/${consumptionId}`);
+      if (selectedRoomForCons) {
+        await loadConsumptions(selectedRoomForCons);
+        await loadRooms();
+      }
+      toast({ title: "Consumo removido", description: "O item foi excluído com sucesso." });
+    } catch (err) {
+      const axErr = err as AxiosError<{ detail?: string }>;
+      const msg = axErr.response?.data?.detail ?? 'Erro ao remover consumo';
+      alert(msg);
+    }
+  }
+
   async function searchBookings() {
     try {
       if (!bookingSearchTerm.trim()) {
@@ -964,17 +980,25 @@ export default function Rooms() {
                           <th className="px-3 py-2 text-left">Produto</th>
                           <th className="px-3 py-2 text-center">Qtd</th>
                           <th className="px-3 py-2 text-right">Total</th>
+                          <th className="px-3 py-2 text-center">Ação</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-50">
-                        {currentConsumptions.map((c, i) => (
-                          <tr key={i} className="hover:bg-blue-50/30 transition-colors">
+                        {currentConsumptions.map((c) => (
+                          <tr key={c.id} className="hover:bg-blue-50/30 transition-colors">
                             <td className="px-3 py-2 font-medium text-slate-700">{c.product_name}</td>
                             <td className="px-3 py-2 text-center text-slate-600 font-bold">{c.quantity}</td>
                             <td className="px-3 py-2 text-right text-blue-600 font-bold">R$ {c.total.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-center">
+                              <button 
+                                onClick={() => handleDeleteConsumption(c.id)}
+                                className="p-1 text-red-500 hover:bg-red-50 rounded-md transition-colors"
+                                title="Remover item"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </td>
                           </tr>
                         ))}
-                      </tbody>
                     </table>
                   </div>
                 ) : (

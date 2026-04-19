@@ -299,6 +299,7 @@ def checkout_summary(room_id: str, db: Session = Depends(get_db), current_user =
         "breakdown": pricing["breakdown"],
         "consumptions": [
             { 
+                "id": c.id,
                 "product_id": c.product_id, 
                 "product_name": c.description or (c.product.name if c.product else "N/A"),
                 "quantity": c.quantity, 
@@ -674,6 +675,18 @@ def delete_booking(booking_id: int, db: Session = Depends(get_db), current_user 
     db.delete(booking)
     db.commit()
     return {"message": "Reserva deletada com sucesso"}
+
+# 10. DELETAR CONSUMO
+@router.delete("/consumption/{consumption_id}")
+def delete_consumption(consumption_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
+    set_tenant_context(db, current_user.tenant_id)
+    consumption = db.query(models.Consumption).filter(models.Consumption.id == consumption_id).first()
+    if not consumption:
+        raise HTTPException(status_code=404, detail="Item de consumo não encontrado")
+    
+    db.delete(consumption)
+    db.commit()
+    return {"message": "Consumo excluído com sucesso"}
 
 # 10. UPLOAD DE COMPROVANTE
 @router.post("/{booking_id}/receipt")
