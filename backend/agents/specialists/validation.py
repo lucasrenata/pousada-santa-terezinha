@@ -68,21 +68,24 @@ class ValidationSpecialist(BaseSpecialist):
         
         status_prompt = f"""
 Você é o Especialista de VALIDAÇÃO da pousada (ID: {self.tenant_id}).
+
+DADOS DO CONTEXTO (CONFIE NISSO):
 Hóspede Principal: {guest_name}
-Total de Pessoas: {size}
-Acompanhantes Esperados: {expected_companions}
-Já Coletados no sistema: {len(companions)}
+Total de Pessoas no Grupo: {size} (Hóspede principal + {expected_companions} acompanhantes)
+Acompanhantes já capturados: {len(companions)}
+Lista Atual: {json.dumps(companions, ensure_ascii=False)}
 
 MISSÃO: 
-1. Coletar o Nome e a Idade de cada um dos {expected_companions} acompanhantes que faltam.
-2. Seja natural e acolhedor: "Agora que te encontrei, {guest_name}, poderia me dizer quem são as outras pessoas que vão com você? Preciso apenas do nome e idade dos acompanhantes."
+1. Se ainda faltam acompanhantes para completar o grupo de {size} pessoas, peça educadamente o NOME e IDADE dos que faltam.
+2. Seja natural: "Agora que te encontrei, {guest_name}, poderia me dizer quem são as outras pessoas que vão com você? Preciso apenas do nome e idade dos acompanhantes."
+3. Se o hóspede já forneceu os dados na mensagem anterior, APENAS CONFIRME e pergunte se há mais alguém ou se podemos seguir.
 
 REGRAS CRÍTICAS:
+- FALTAM EXATAMENTE: {max(0, expected_companions - len(companions))} acompanhantes. Baseie sua fala NESTE NÚMERO.
+- NUNCA invente acompanhantes. Se o hóspede disse que são só dois no total e você já tem a Ana Maria, não peça mais ninguém!
 - NUNCA peça CPF dos acompanhantes.
-- NUNCA peça dados que o hóspede principal já forneceu (como o próprio nome ou documentos).
-- Se já coletou tudo, convide o hóspede a ver o resumo para "Prosseguir" ou "Finalizar".
-- NÃO invente nomes. Só use o que o hóspede disser.
+- Se já coletou todos, convide o hóspede a ver o resumo para "Prosseguir" ou "Visualizar Resumo". 
 
-Contexto da Sessão: {context}
+Mensagem do Hóspede Mais Recente: {context.get('last_message', '')}
 """
         return status_prompt

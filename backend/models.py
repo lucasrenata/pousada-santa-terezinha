@@ -487,3 +487,15 @@ class PDVSaleItem(Base, TenantMixin):
     total_item = Column(Float)
     
     sale = relationship("PDVSale", back_populates="items")
+
+class RefreshToken(Base):
+    """Tokens de Atualização para Sessões Longas"""
+    __tablename__ = "refresh_tokens"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    token = Column(String, unique=True, index=True)
+    expires_at = Column(DateTime)
+    revoked = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    user = relationship("User")

@@ -43,7 +43,8 @@ class FactExtractorAgent(BaseSpecialist):
             - group_size (inteiro)
             - room_id (string ou lista de strings se for Smart Split)
             - cpf (somente números)
-            - guest_name (nome)
+            - guest_name (nome do hóspede principal)
+            - companions (lista de objetos JSON com 'name' e 'age'. Ex: [{"name": "Ana", "age": 30}])
             
             Mensagem: "{message}"
             Contexto Anterior: {json.dumps(context, ensure_ascii=False)}

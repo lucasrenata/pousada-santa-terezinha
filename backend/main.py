@@ -23,20 +23,18 @@ import sys
 app = FastAPI(title="Pousada System Modular", version="1.0.0")
 
 # --- CONFIGURAÇÃO DE CORS (IMPORTANTE PARA O REACT) ---
-# Isso permite que o Front-end (porta 5173) converse com o Back-end (porta 8000)
 origins = [
+    "http://hotelaria.parceriacomia.com.br",
+    "https://hotelaria.parceriacomia.com.br",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "http://localhost:5174",
-    "http://127.0.0.1:5174",
-    "http://localhost:5174",
     "http://localhost:5174",
     "http://127.0.0.1:5174",
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

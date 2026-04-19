@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
+import secrets
 from jose import JWTError, jwt
 import os
 import bcrypt
@@ -13,7 +14,20 @@ mp_service = MercadoPagoService()
 
 router = APIRouter(tags=["Auth"])
 
-# ... (Previous constants)
+# Configurações de Segurança
+SECRET_KEY = os.getenv("SECRET_KEY", "dev_change_this_secret")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+REFRESH_TOKEN_EXPIRE_DAYS = 7
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
+
+# Funções Auxiliares (Usando bcrypt diretamente para evitar bugs de versão)
+def verify_password(plain, hashed):
+    return bcrypt.checkpw(plain.encode('utf-8'), hashed.encode('utf-8'))
+
+def get_password_hash(password):
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
 @router.post("/validate-field", response_model=schemas.FieldValidationResponse)
 def validate_field(request: schemas.FieldValidationRequest, db: Session = Depends(get_db)):
@@ -32,23 +46,24 @@ def validate_field(request: schemas.FieldValidationRequest, db: Session = Depend
             
     return {"available": True, "message": "Disponível"}
 
-SECRET_KEY = os.getenv("SECRET_KEY", "dev_change_this_secret")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
-
-# Funções Auxiliares (Usando bcrypt diretamente para evitar bugs de versão)
-def verify_password(plain, hashed):
-    return bcrypt.checkpw(plain.encode('utf-8'), hashed.encode('utf-8'))
-
-def get_password_hash(password):
-    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def create_refresh_token(db: Session, user_id: int):
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    
+    db_token = models.RefreshToken(
+        user_id=user_id,
+        token=token,
+        expires_at=expires_at
+    )
+    db.add(db_token)
+    db.commit()
+    return token
 
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(status_code=401, detail="Credenciais inválidas", headers={"WWW-Authenticate": "Bearer"})
@@ -198,9 +213,8 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     return new_user
 
 @router.post("/token", response_model=schemas.Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def login(response: Response, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     # CRÍTICO: Ativa visão global para encontrar o usuário em qualquer tenant
-    # Sem isso, o RLS filtra todos os users (tenant_id=0 não existe)
     set_tenant_context(db, -1)
     
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
@@ -210,7 +224,51 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     # Impedir emissão de token se a Pousada estiver bloqueada
     if user.role != "superadmin" and user.tenant_id and user.tenant:
         if not user.tenant.is_active:
-            raise HTTPException(status_code=403, detail="Ambiente suspenso administrativamente. Contate o provedor SaaS.")
+            raise HTTPException(status_code=403, detail="Ambiente suspenso administrativamente.")
             
-    token = create_access_token(data={"sub": user.username, "role": user.role, "tenant_id": user.tenant_id})
-    return {"access_token": token, "token_type": "bearer", "role": user.role, "tenant_id": user.tenant_id}
+    access_token = create_access_token(data={"sub": user.username, "role": user.role, "tenant_id": user.tenant_id})
+    refresh_token = create_refresh_token(db, user.id)
+
+    # Set Refresh Token in HttpOnly Cookie
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        expires=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        samesite="lax",
+        secure=os.getenv("ENVIRONMENT") == "production"
+    )
+
+    return {"access_token": access_token, "token_type": "bearer", "role": user.role, "tenant_id": user.tenant_id}
+
+@router.post("/refresh", response_model=schemas.Token)
+def refresh(refresh_token: str = Cookie(None), db: Session = Depends(get_db)):
+    if not refresh_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token ausente")
+    
+    db_token = db.query(models.RefreshToken).filter(
+        models.RefreshToken.token == refresh_token,
+        models.RefreshToken.revoked == False,
+        models.RefreshToken.expires_at > datetime.utcnow()
+    ).first()
+    
+    if not db_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token inválido ou expirado")
+    
+    user = db_token.user
+    set_tenant_context(db, user.tenant_id) # Ativa contexto para o usuário
+    
+    access_token = create_access_token(data={"sub": user.username, "role": user.role, "tenant_id": user.tenant_id})
+    return {"access_token": access_token, "token_type": "bearer", "role": user.role, "tenant_id": user.tenant_id}
+
+@router.post("/logout")
+def logout(response: Response, refresh_token: str = Cookie(None), db: Session = Depends(get_db)):
+    if refresh_token:
+        db_token = db.query(models.RefreshToken).filter(models.RefreshToken.token == refresh_token).first()
+        if db_token:
+            db_token.revoked = True
+            db.commit()
+    
+    response.delete_cookie("refresh_token")
+    return {"message": "Sessão encerrada"}

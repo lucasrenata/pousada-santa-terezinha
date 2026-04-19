@@ -29,7 +29,17 @@ def merge_context(old_context: Dict[str, Any], new_context: Dict[str, Any]) -> D
     for key, val in new_context.items():
         is_valid = val is not None and (val != "" and val != [] and val != {})
         if is_valid:
-            merged[key] = val
+            # Lógica especial para listas aditivas (acompanhantes)
+            if key == "companions" and isinstance(val, list) and isinstance(merged.get(key), list):
+                # Unir listas sem duplicar nomes (baseado no nome)
+                existing_names = {c.get("name").lower() for c in merged[key] if c.get("name")}
+                for new_c in val:
+                    name = new_c.get("name")
+                    if name and name.lower() not in existing_names:
+                        merged[key].append(new_c)
+                        existing_names.add(name.lower())
+            else:
+                merged[key] = val
             
     return merged
 

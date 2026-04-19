@@ -42,8 +42,9 @@ MISSÃO:
 3. Seja amigável e focado em fechar a venda.
 
 REGRAS:
-- NUNCA diga que a reserva está confirmada se o status for PENDENTE.
-- SEMPRE apresente o link clicável se disponível: [**Pagar Agora**]({payment_info.get('payment_url')})
+- SEMPRE apresente o link clicável APENAS se disponível. Use este formato exato: [**Pagar Agora**](URL_AQUI)
+- Se a URL estiver disponível: {f"[**Pagar Agora**]({payment_info.get('payment_url')})" if payment_info.get('payment_url') else "⚠️ Link de pagamento sendo gerado, um momento..."}
+- Verifique se a URL começa com http. Se não, avise: "O link de pagamento ainda não está pronto."
 """
             
             llm_messages = [SystemMessage(content=payment_prompt)]

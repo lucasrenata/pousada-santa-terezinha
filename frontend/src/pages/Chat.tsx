@@ -67,29 +67,58 @@ export default function Chat() {
 
     try {
       const tenantId = localStorage.getItem('tenant_id') ? Number(localStorage.getItem('tenant_id')) : 0;
+      
+      // 1. Dispara a tarefa no Redis
       const res = await api.post('/chat/admin', {
         message: userMsg.content,
         session_id: sessionId,
         tenant_id: tenantId
       });
 
-      const botMsg: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: res.data.response,
-        timestamp: new Date()
+      const { job_id } = res.data;
+
+      // 2. Polling de Status
+      const pollJob = async () => {
+        try {
+          const statusRes = await api.get(`/chat/job/${job_id}`);
+          const { status, result, error } = statusRes.data;
+
+          if (status === 'finished') {
+            const botMsg: Message = {
+              id: (Date.now() + 1).toString(),
+              role: 'assistant',
+              content: result.response,
+              timestamp: new Date()
+            };
+            setMessages(prev => [...prev, botMsg]);
+            setLoading(false);
+          } else if (status === 'failed') {
+            throw new Error(error || "Erro no processamento do Admin Agent");
+          } else {
+            setTimeout(pollJob, 2000); // Tenta novamente em 2s
+          }
+        } catch (err) {
+          console.error("Erro no polling Admin:", err);
+          setMessages(prev => [...prev, {
+            id: 'err-' + Date.now(),
+            role: 'assistant',
+            content: "Não consegui processar sua solicitação agora. Pode tentar novamente em instantes?",
+            timestamp: new Date()
+          }]);
+          setLoading(false);
+        }
       };
 
-      setMessages(prev => [...prev, botMsg]);
+      setTimeout(pollJob, 1000);
+
     } catch (error) {
-      console.error('Erro no chat:', error);
+      console.error('Erro ao iniciar chat admin:', error);
       setMessages(prev => [...prev, {
-        id: 'err',
+        id: 'err-init',
         role: 'assistant',
-        content: "Oops! Tive um problema em processar sua solicitação. Verifique sua conexão ou tente novamente mais tarde.",
+        content: "Oops! Tive um problema em conectar com o assistente. Verifique sua conexão.",
         timestamp: new Date()
       }]);
-    } finally {
       setLoading(false);
     }
   };
@@ -192,16 +221,19 @@ export default function Chat() {
                 }`}>
                   <ReactMarkdown 
                     components={{
-                      a: ({ node, ...props }: any) => (
-                        <a 
-                          {...props} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-2 mt-2 bg-indigo-50 text-indigo-700 px-4 py-2 rounded-lg font-bold border border-indigo-200 hover:bg-indigo-100 transition-all no-underline shadow-sm mb-1"
-                        >
-                          <span>📄</span> {props.children}
-                        </a>
-                      ),
+                      a: ({ node, ...props }: any) => {
+                        const href = props.href?.startsWith('http') ? props.href : (props.href?.startsWith('/') ? props.href : `https://${props.href}`);
+                        return (
+                          <a 
+                            href={href}
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-2 mt-2 bg-indigo-50 text-indigo-700 px-4 py-2 rounded-lg font-bold border border-indigo-200 hover:bg-indigo-100 transition-all no-underline shadow-sm mb-1"
+                          >
+                            <span>📄</span> {props.children}
+                          </a>
+                        );
+                      },
                       p: ({ children }: any) => <p className="mb-0 whitespace-pre-wrap">{children}</p>
                     }}
                   >

@@ -51,19 +51,84 @@ async def get_chat_history(session_id: str, db: Session = Depends(get_db), curre
         } for m in messages
     ]
 
-@router.post("/customer")
-async def chat_customer(request: ChatRequest, http_req: Request, db: Session = Depends(get_db)):
-    # 0. Ativa RLS context
-    set_tenant_context(db, request.tenant_id)
-    
-    # 1. Orquestração Multi-Agente (Mente Central - LangGraph)
+import asyncio
+from redis import Redis
+from rq import Queue
+from rq.job import Job
+
+# Configuração do Redis e Fila
+redis_url = os.getenv('REDIS_URL', 'redis://redis:6379/0')
+redis_conn = Redis.from_url(redis_url)
+q = Queue('default', connection=redis_conn)
+
+def run_agent_task(message: str, session_id: str, tenant_id: int):
+    """Função que será executada pelo Worker (Sync wrapper para código Async)"""
     from agents.supervisor_agent import SupervisorAgent
-    supervisor = SupervisorAgent(request.tenant_id)
+    # Criamos um novo loop se necessário (dentro do worker)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        supervisor = SupervisorAgent(tenant_id)
+        return loop.run_until_complete(supervisor.process(message, session_id))
+    finally:
+        loop.close()
+
+@router.post("/customer")
+async def chat_customer(request: ChatRequest, db: Session = Depends(get_db)):
+    """Recebe a mensagem e delega para o Worker retornar um Job ID."""
+    job = q.enqueue(
+        run_agent_task, 
+        request.message, 
+        request.session_id, 
+        request.tenant_id,
+        job_timeout='2m' # Aumentamos o tempo limite para agentes complexos
+    )
+    return {"job_id": job.get_id(), "status": "queued"}
+
+@router.get("/job/{job_id}")
+async def get_job_status(job_id: str):
+    """Endpoint de Polling para verificar o status e o resultado do agente."""
+    try:
+        job = Job.fetch(job_id, connection=redis_conn)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Job não encontrado")
     
-    # Processar via Supervisor (Ele próprio agora salva User/Assistant no DB para o histórico)
-    result = await supervisor.process(request.message, request.session_id)
+    if job.is_finished:
+        return {
+            "status": "finished",
+            "result": job.result
+        }
+    elif job.is_failed:
+        return {
+            "status": "failed",
+            "error": str(job.exc_info)
+        }
+    else:
+        return {
+            "status": "processing"
+        }
+
+def run_admin_task(message: str, history: List[dict], tenant_id: int, session_id: str):
+    """Função que será executada pelo Worker para o Agente Admin"""
+    from agents.admin_agent import handle_admin_query
+    from database import SessionLocal
+    from routers.chat import save_message
+    import asyncio
     
-    return result
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    db = SessionLocal()
+    try:
+        result = loop.run_until_complete(handle_admin_query(message, history, db, tenant_id))
+        
+        # Salva a resposta do assistente no DB para o histórico
+        if result and result.get("response"):
+            save_message(session_id, "assistant", result["response"], tenant_id, db)
+            
+        return result
+    finally:
+        db.close()
+        loop.close()
 
 @router.post("/admin")
 async def chat_admin(request: ChatRequest, db: Session = Depends(get_db), current_admin = Depends(get_current_admin)):
@@ -71,15 +136,23 @@ async def chat_admin(request: ChatRequest, db: Session = Depends(get_db), curren
     tid = current_admin.tenant_id
     set_tenant_context(db, tid)
     
+    # Salva a mensagem do usuário imediatamente para o histórico
     save_message(request.session_id, "user", request.message, tid, db)
+    
+    # Busca o histórico para passar ao worker
     history = await get_db_history(request.session_id, db, tid)
     
-    from agents.admin_agent import handle_admin_query
-    result = await handle_admin_query(request.message, history[:-1], db, tid)
+    # Dispara a tarefa assíncrona
+    job = q.enqueue(
+        run_admin_task,
+        request.message,
+        history[:-1], 
+        tid,
+        request.session_id, # Novo argumento
+        job_timeout='5m'
+    )
     
-    save_message(request.session_id, "assistant", result["response"], tid, db)
-    
-    return result
+    return {"job_id": job.get_id(), "status": "queued"}
 
 @router.post("/transcribe")
 async def transcribe_audio(audio: UploadFile = File(...), current_admin = Depends(get_current_admin)):
