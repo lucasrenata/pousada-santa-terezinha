@@ -82,7 +82,7 @@ async def chat_customer(request: ChatRequest, db: Session = Depends(get_db)):
         request.tenant_id,
         job_timeout='2m' # Aumentamos o tempo limite para agentes complexos
     )
-    return {"job_id": job.get_id(), "status": "queued"}
+    return {"job_id": job.id, "status": "queued"}
 
 @router.get("/job/{job_id}")
 async def get_job_status(job_id: str):
@@ -151,7 +151,7 @@ async def chat_admin(request: ChatRequest, db: Session = Depends(get_db), curren
         job_timeout='5m'
     )
     
-    return {"job_id": job.get_id(), "status": "queued"}
+    return {"job_id": job.id, "status": "queued"}
 
 @router.post("/transcribe")
 async def transcribe_audio(audio: UploadFile = File(...), current_admin = Depends(get_current_admin)):
