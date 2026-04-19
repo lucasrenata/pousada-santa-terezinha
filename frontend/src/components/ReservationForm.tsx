@@ -23,6 +23,7 @@ import { useCustomers } from '@/hooks/useCustomers';
 import { CustomerSearch } from './CustomerSearch';
 import { CustomerForm } from './CustomerForm';
 import { cn } from '@/lib/utils';
+import { getTodayISODate } from '@/utils/dateUtils';
 
 // Schema de validação Zod
 const reservationSchema = z.object({
@@ -79,8 +80,8 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
     defaultValues: {
       guest_id: reservation?.id ? 0 : 0, // Será setado no useEffect
       room_id: initialRoomId || "", 
-      check_in_date: reservation?.check_in_date ? new Date(reservation.check_in_date) : new Date(),
-      check_out_date: reservation?.check_out_date ? new Date(reservation.check_out_date) : new Date(new Date().setDate(new Date().getDate() + 1)),
+      check_in_date: reservation?.check_in_date ? new Date(reservation.check_in_date) : new Date(getTodayISODate() + 'T00:00:00'),
+      check_out_date: reservation?.check_out_date ? new Date(reservation.check_out_date) : new Date(new Date(getTodayISODate() + 'T00:00:00').setDate(new Date(getTodayISODate() + 'T00:00:00').getDate() + 1)),
       check_in_time: reservation?.check_in_time || '14:00',
       check_out_time: reservation?.check_out_time || '12:00',
       total_guests: reservation?.total_guests || 1,
@@ -249,11 +250,11 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
     setIsSubmitting(true);
     try {
       // O backend espera check_in_date como string ISO ou Date. 
-      // Vamos formatar adequadamente.
+      // Vamos usar a parte da data local para evitar problemas de UTC.
       const payload = {
         ...data,
-        check_in_date: data.check_in_date.toISOString(),
-        check_out_date: data.check_out_date.toISOString(),
+        check_in_date: data.check_in_date.toLocaleDateString('en-CA'), // YYYY-MM-DD local
+        check_out_date: data.check_out_date.toLocaleDateString('en-CA'),
       };
 
       if (reservation) {

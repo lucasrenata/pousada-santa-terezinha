@@ -10,6 +10,7 @@ export default function MainLayout() {
   const menuItems = [
     { label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard', roles: ['admin', 'recepcionista', 'servico'] },
     { label: 'Chat IA', icon: MessageSquare, path: '/chat', roles: ['admin'] },
+    { label: 'PDV', icon: ShoppingCart, path: '/pdv', roles: ['admin', 'recepcionista'] },
     { label: 'Quartos', icon: BedDouble, path: '/rooms', roles: ['admin', 'recepcionista', 'servico'] },
     { label: 'Reservas', icon: CalendarDays, path: '/bookings', roles: ['admin', 'recepcionista'] },
     { label: 'Estoque', icon: Package, path: '/inventory', roles: ['admin', 'recepcionista'] },
@@ -67,6 +68,21 @@ export default function MainLayout() {
             {filteredMenu.map((item) => {
               const isActive = location.pathname === item.path;
               const Icon = item.icon;
+              
+              // Especial: Se for o PDV, renderiza com estilo de destaque amarelo
+              if (item.path === '/pdv') {
+                return (
+                  <button 
+                    key={item.path}
+                    onClick={() => navigate('/pdv')}
+                    className="flex items-center bg-[#EAB308] text-[#1E293B] px-6 py-2 ml-2 rounded-xl text-sm font-black transition-all hover:scale-105 active:scale-95 shadow-lg shadow-yellow-200"
+                  >
+                    <Icon size={18} className="mr-2" />
+                    PDV
+                  </button>
+                );
+              }
+
               return (
                 <button
                   key={item.path}
@@ -86,17 +102,6 @@ export default function MainLayout() {
 
           {/* BOTÕES DE AÇÃO (DIREITA) */}
           <div className="flex items-center gap-3">
-            {/* BOTÃO PDV DE DESTAQUE */}
-            {(role === 'admin' || role === 'recepcionista') && (
-              <button 
-                onClick={() => navigate('/pdv')}
-                className="flex items-center bg-[#EAB308] text-[#1E293B] px-6 py-2 rounded-xl text-sm font-black transition-all hover:scale-105 active:scale-95 shadow-lg shadow-yellow-200"
-              >
-                <ShoppingCart size={18} className="mr-2" />
-                PDV
-              </button>
-            )}
-
             {/* BOTÃO SAIR */}
             <button 
               onClick={handleLogout}

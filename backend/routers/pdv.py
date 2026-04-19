@@ -305,6 +305,7 @@ def _process_comanda_finalization(comanda: models.Comanda, request: schemas.Clos
                 product_id=item.product_id,
                 quantity=int(item.quantity),
                 unit_price=item.unit_price,
+                description=item.description or (item.product.name if item.product else None),
                 tenant_id=current_user.tenant_id
             )
             db.add(consumo)

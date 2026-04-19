@@ -300,7 +300,7 @@ def checkout_summary(room_id: str, db: Session = Depends(get_db), current_user =
         "consumptions": [
             { 
                 "product_id": c.product_id, 
-                "product_name": c.product.name if c.product else "N/A",
+                "product_name": c.description or (c.product.name if c.product else "N/A"),
                 "quantity": c.quantity, 
                 "unit_price": c.unit_price,
                 "total": c.quantity * c.unit_price

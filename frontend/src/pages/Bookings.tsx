@@ -131,8 +131,8 @@ export default function Bookings() {
         setRooms(r.data);
         return;
       }
-      const start = new Date(checkInDate).toISOString();
-      const end = new Date(checkOutDate).toISOString();
+      const start = new Date(checkInDate).toLocaleDateString('en-CA');
+      const end = new Date(checkOutDate).toLocaleDateString('en-CA');
       const guests = mode === 'normal' ? 1 + companions.length : totalGuests;
       const availRes = await api.get(`/bookings/availability?start=${start}&end=${end}&guests=${guests}`);
       const available: Room[] = availRes.data;
@@ -271,8 +271,8 @@ export default function Bookings() {
       const payload = {
         guest_id: guestId,
         room_id: roomId ?? null,
-        check_in_date: new Date(checkInDate).toISOString(),
-        check_out_date: new Date(checkOutDate).toISOString(),
+        check_in_date: new Date(checkInDate).toLocaleDateString('en-CA'),
+        check_out_date: new Date(checkOutDate).toLocaleDateString('en-CA'),
         mode,
         total_guests: totalGuests,
         daily_rate: parseFloat(dailyRate),
@@ -303,8 +303,8 @@ export default function Bookings() {
       const payload = {
         guest_id: guestId!,
         room_id: roomId ?? null,
-        check_in_date: new Date(checkInDate).toISOString(),
-        check_out_date: new Date(checkOutDate).toISOString(),
+        check_in_date: new Date(checkInDate).toLocaleDateString('en-CA'),
+        check_out_date: new Date(checkOutDate).toLocaleDateString('en-CA'),
         mode,
         total_guests: totalGuests,
         daily_rate: parseFloat(dailyRate),

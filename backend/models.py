@@ -254,6 +254,7 @@ class Consumption(Base, TenantMixin):
     product_id = Column(Integer, ForeignKey("products.id"))
     quantity = Column(Integer, default=1)
     unit_price = Column(Float)
+    description = Column(String, nullable=True) # Nome amigável para itens manuais
     created_at = Column(DateTime, default=datetime.now)
     booking = relationship("Booking", back_populates="consumptions")
     product = relationship("Product")

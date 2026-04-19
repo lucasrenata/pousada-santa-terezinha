@@ -4,6 +4,7 @@ import {
   TrendingUp, TrendingDown, Minus, DollarSign,
   CheckCircle, Clock, Trash2, Pencil, Plus, ArrowRightLeft, FileText
 } from 'lucide-react';
+import { getTodayISODate } from '../utils/dateUtils';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type RevenueCategory = 'hospedagem' | 'consumo' | 'outros';
@@ -238,8 +239,8 @@ export default function Finance() {
   const [isExpModalOpen, setIsExpModalOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportConfig, setExportConfig] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10),
-    end: new Date().toISOString().slice(0, 10),
+    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toLocaleDateString('en-CA'), // en-CA retorna YYYY-MM-DD local
+    end: getTodayISODate(),
     mode: 'full' as 'full' | 'summary'
   });
 
@@ -253,8 +254,8 @@ export default function Finance() {
   // ════════════════════════════════════════════════════════════════
   // ABA 1 — RECEITAS (código original preservado)
   // ════════════════════════════════════════════════════════════════
-  const [start, setStart] = useState(() => new Date().toISOString().slice(0, 10));
-  const [end, setEnd] = useState(() => new Date().toISOString().slice(0, 10));
+  const [start, setStart] = useState(() => getTodayISODate());
+  const [end, setEnd] = useState(() => getTodayISODate());
   const [summary, setSummary] = useState<{ total_revenue: number; transactions: number } | null>(null);
   const [revenues, setRevenues] = useState<Revenue[]>([]);
   const [filterCategory, setFilterCategory] = useState<RevenueCategory | ''>('');
@@ -384,7 +385,7 @@ export default function Finance() {
 
   async function markAsPaid(exp: Expense) {
     try {
-      await api.put(`/finance/expenses/${exp.id}`, { is_paid: true, paid_date: new Date().toISOString().slice(0, 10) });
+      await api.put(`/finance/expenses/${exp.id}`, { is_paid: true, paid_date: getTodayISODate() });
       setMessage('Marcada como paga!'); await loadExpenses();
     } catch { setError('Erro ao marcar como paga'); }
   }
@@ -426,8 +427,8 @@ export default function Finance() {
   // ════════════════════════════════════════════════════════════════
   const [cashFlow, setCashFlow] = useState<CashFlowItem[]>([]);
   const [cfLoading, setCfLoading] = useState(false);
-  const [cfStart, setCfStart] = useState(() => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); });
-  const [cfEnd, setCfEnd] = useState(() => new Date().toISOString().slice(0, 10));
+  const [cfStart, setCfStart] = useState(() => { const d = new Date(); d.setDate(1); return d.toLocaleDateString('en-CA'); });
+  const [cfEnd, setCfEnd] = useState(() => getTodayISODate());
 
   const [cfSummary, setCfSummary] = useState<CfSummary>({ total_revenue: 0, total_expense: 0, net_result: 0, pending_expenses: 0 });
 
@@ -455,17 +456,17 @@ export default function Finance() {
   // ════════════════════════════════════════════════════════════════
   const [p1Start, setP1Start] = useState(() => {
     const d = new Date(); d.setMonth(d.getMonth() - 1); d.setDate(1);
-    return d.toISOString().slice(0, 10);
+    return d.toLocaleDateString('en-CA');
   });
   const [p1End, setP1End] = useState(() => {
     const d = new Date(); d.setDate(0);
-    return d.toISOString().slice(0, 10);
+    return d.toLocaleDateString('en-CA');
   });
   const [p2Start, setP2Start] = useState(() => {
     const d = new Date(); d.setDate(1);
-    return d.toISOString().slice(0, 10);
+    return d.toLocaleDateString('en-CA');
   });
-  const [p2End, setP2End] = useState(() => new Date().toISOString().slice(0, 10));
+  const [p2End, setP2End] = useState(() => getTodayISODate());
   const [cmpLoading, setCmpLoading] = useState(false);
   const [cmpResult, setCmpResult] = useState<any>(null);
 

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import api from '@/services/api';
+import { getTodayISODate } from '../utils/dateUtils';
 
 export interface DailySnapshot {
   date: string;
@@ -20,7 +21,7 @@ export interface DailySnapshot {
 }
 
 const EMPTY_SNAPSHOT: DailySnapshot = {
-  date: new Date().toISOString().slice(0, 10),
+  date: getTodayISODate(),
   revenue_today: 0,
   expense_today: 0,
   net_today: 0,
