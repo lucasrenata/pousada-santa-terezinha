@@ -118,7 +118,7 @@ def run_admin_task(message: str, history: List[dict], tenant_id: int, session_id
     asyncio.set_event_loop(loop)
     db = SessionLocal()
     try:
-        result = loop.run_until_complete(handle_admin_query(message, history, db, tenant_id))
+        result = loop.run_until_complete(handle_admin_query(message, history, db, tenant_id, session_id))
         
         # Salva a resposta do assistente no DB para o histórico
         if result and result.get("response"):

@@ -35,7 +35,13 @@ class FactExtractorAgent(BaseSpecialist):
             REGRAS DE OURO:
             - Se o usuário disser "dia 20 e 21/04" ou "abril", use o ANO ATUAL ({current_year}).
             - Se o usuário disser "amanhã", calcule com base em {today_str}.
+            - Se o usuário mudar uma data ou o número de pessoas (ex: "mudei de ideia", "na verdade quero..."), capture os NOVOS valores.
+            - Caso o usuário mencione um período (ex: "de 10 a 15"), extraia check_in e check_out.
             - Retorne APENAS o JSON.
+            
+            EXTREMA IMPORTÂNCIA:
+            - Se o usuário disser "vou sozinho", o group_size é 1 e companions é [].
+            - Se o usuário disser "eu e minha esposa", o group_size é 2.
             
             Fatos a extrair:
             - check_in (YYYY-MM-DD)
@@ -44,7 +50,8 @@ class FactExtractorAgent(BaseSpecialist):
             - room_id (string ou lista de strings se for Smart Split)
             - cpf (somente números)
             - guest_name (nome do hóspede principal)
-            - companions (lista de objetos JSON com 'name' e 'age'. Ex: [{"name": "Ana", "age": 30}])
+            - mudei_de_ideia (booleano - true se o usuário explicitamente alterou dados anteriores)
+            - companions (lista de objetos JSON com 'name' e 'age'. Ex: [{{"name": "Ana", "age": 30}}])
             
             Mensagem: "{message}"
             Contexto Anterior: {json.dumps(context, ensure_ascii=False)}
@@ -57,6 +64,9 @@ class FactExtractorAgent(BaseSpecialist):
             # Limpeza de markdown de código se houver
             if content.startswith("```"):
                 content = content.replace("```json", "").replace("```", "").strip()
+            
+            # LOG DE DEBUG CRÍTICO
+            logger.info(f"[FACT_EXTRACTOR] Resposta bruta: {content}")
             
             facts = json.loads(content)
             if facts:

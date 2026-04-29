@@ -19,12 +19,21 @@ interface BusinessRule {
 export default function BusinessRulesTab() {
   const [rules, setRules] = useState<BusinessRule[]>([]);
   const [loading, setLoading] = useState(true);
+  const [depositPercent, setDepositPercent] = useState('100');
+  const [savingDeposit, setSavingDeposit] = useState(false);
   const { toast } = useToast();
 
   const loadRules = async () => {
     try {
       const response = await api.get('/business-rules/');
       setRules(response.data);
+      
+      // Carrega também a configuração de sinal do endpoint /settings
+      const settingsResp = await api.get('/settings/');
+      const depositSetting = settingsResp.data.find((s: any) => s.key === 'pousada_deposit_percentage');
+      if (depositSetting) {
+        setDepositPercent(depositSetting.value);
+      }
     } catch (error) {
       console.error('Erro ao carregar regras:', error);
     } finally {
@@ -50,6 +59,29 @@ export default function BusinessRulesTab() {
         description: "Falha ao salvar a regra de negócio.",
         variant: "destructive"
       });
+    }
+  };
+
+  const handleSaveDeposit = async () => {
+    setSavingDeposit(true);
+    try {
+      await api.post('/settings/', {
+        key: 'pousada_deposit_percentage',
+        value: depositPercent,
+        description: 'Porcentagem do valor total cobrada como sinal para garantir a reserva'
+      });
+      toast({
+        title: "Configuração Salva",
+        description: "Percentual de sinal atualizado com sucesso.",
+      });
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: "Falha ao salvar configuração de sinal.",
+        variant: "destructive"
+      });
+    } finally {
+      setSavingDeposit(false);
     }
   };
 
@@ -115,6 +147,39 @@ export default function BusinessRulesTab() {
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-6 space-y-8">
+          
+          {/* CONFIGURAÇÃO: PERCENTUAL DE SINAL */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 rounded-xl border-2 border-indigo-100 bg-indigo-50/30">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <p className="font-bold text-indigo-900">Percentual de Sinal (Depósito Inicial)</p>
+                <div className="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded text-[10px] font-bold uppercase">Pagamento</div>
+              </div>
+              <p className="text-xs text-indigo-700/70 max-w-md">Quanto o hóspede deve pagar para garantir a reserva (0 a 100%).</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Input 
+                  className="w-24 pr-8 font-bold text-lg" 
+                  type="number" 
+                  min="0"
+                  max="100"
+                  value={depositPercent}
+                  onChange={(e) => setDepositPercent(e.target.value)}
+                />
+                <span className="absolute right-3 top-2.5 font-bold text-slate-400">%</span>
+              </div>
+              <Button 
+                onClick={handleSaveDeposit} 
+                className="bg-indigo-600 hover:bg-indigo-700"
+                disabled={savingDeposit}
+              >
+                {savingDeposit ? "..." : <Save className="w-4 h-4" />}
+              </Button>
+            </div>
+          </div>
+
+          <div className="h-px bg-slate-100 my-2" />
           
           {/* REGRA: TARIFA FDS */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 rounded-xl border border-slate-100 bg-white">

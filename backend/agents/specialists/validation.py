@@ -1,4 +1,5 @@
 from typing import Dict, Any, List, Optional
+import json
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 import logging
 from agents.base_specialist import BaseSpecialist
@@ -26,7 +27,7 @@ class ValidationSpecialist(BaseSpecialist):
             logic_results = logic_results or {}
             
             # Prompt dinâmico
-            prompt = self._get_prompt(context)
+            prompt = self._get_prompt(context, logic_results, message)
             
             llm_messages = [SystemMessage(content=prompt)]
             if history:
@@ -60,7 +61,9 @@ class ValidationSpecialist(BaseSpecialist):
             logger.error(f"[VALIDATION_LOG] Erro: {str(e)}", exc_info=True)
             return {'response': f"Erro técnico: {str(e)}", 'state': 'VALIDATION', 'specialist': 'validation', 'context': context}
 
-    def _get_prompt(self, context: Dict[str, Any]) -> str:
+    def _get_prompt(self, context: Dict[str, Any], logic_results: Dict[str, Any] = None, message: str = "") -> str:
+        logic_results = logic_results or {}
+        logic_results = logic_results or {}
         guest_name = context.get('guest_name', 'Hóspede')
         size = context.get('group_size', 1)
         expected_companions = size - 1
@@ -71,21 +74,25 @@ Você é o Especialista de VALIDAÇÃO da pousada (ID: {self.tenant_id}).
 
 DADOS DO CONTEXTO (CONFIE NISSO):
 Hóspede Principal: {guest_name}
-Total de Pessoas no Grupo: {size} (Hóspede principal + {expected_companions} acompanhantes)
+Total de Pessoas no Grupo: {size}
 Acompanhantes já capturados: {len(companions)}
 Lista Atual: {json.dumps(companions, ensure_ascii=False)}
 
+MUDANÇA DE IDEIA? {json.dumps(logic_results.get("intent_shift"), ensure_ascii=False)}
+
 MISSÃO: 
-1. Se ainda faltam acompanhantes para completar o grupo de {size} pessoas, peça educadamente o NOME e IDADE dos que faltam.
-2. Seja natural: "Agora que te encontrei, {guest_name}, poderia me dizer quem são as outras pessoas que vão com você? Preciso apenas do nome e idade dos acompanhantes."
-3. Se o hóspede já forneceu os dados na mensagem anterior, APENAS CONFIRME e pergunte se há mais alguém ou se podemos seguir.
+1. SAUDAÇÃO PERSONALIZADA: Comece sempre usando o primeiro nome do hóspede: "{guest_name.split()[0]}".
+2. RECONHECIMENTO DE MUDANÇA: Se o usuário mudou de ideia (Datas ou Pessoas), reconheça isso primeiro: "Sem problemas, {guest_name.split()[0]}, já atualizei os dados para você."
+3. COLETA DE ACOMPANHANTES:
+   - Se o grupo for maior que 1 ({size} > 1) e ainda faltam acompanhantes, peça educadamente o NOME e IDADE dos que faltam.
+   - Se o grupo for 1 (sozinho), NÃO peça acompanhantes. Diga algo como: "Entendido! Como você estará viajando sozinho, já temos tudo o que precisamos."
+4. DIRECIONAMENTO: Se já coletou todos (ou se for sozinho), convide o hóspede a ver o resumo para "Prosseguir" ou "Visualizar Resumo".
 
 REGRAS CRÍTICAS:
-- FALTAM EXATAMENTE: {max(0, expected_companions - len(companions))} acompanhantes. Baseie sua fala NESTE NÚMERO.
-- NUNCA invente acompanhantes. Se o hóspede disse que são só dois no total e você já tem a Ana Maria, não peça mais ninguém!
+- FALTAM EXATAMENTE: {max(0, expected_companions - len(companions))} acompanhantes.
 - NUNCA peça CPF dos acompanhantes.
-- Se já coletou todos, convide o hóspede a ver o resumo para "Prosseguir" ou "Visualizar Resumo". 
+- Sua linguagem deve ser acolhedora e eficiente.
 
-Mensagem do Hóspede Mais Recente: {context.get('last_message', '')}
+Mensagem do Hóspede: "{message}"
 """
         return status_prompt

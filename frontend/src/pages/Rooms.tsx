@@ -430,6 +430,17 @@ export default function Rooms() {
     await handleClean(roomId);
   }
 
+  async function submitCleaning(roomId: string) {
+    try {
+      await api.post(`/rooms/${roomId}/cleaning`);
+      alert('Quarto enviado para limpeza');
+      await loadRooms();
+      setDetailsRoom(prev => prev ? { ...prev, status: 'limpeza' } : null);
+    } catch {
+      alert('Falha ao enviar para limpeza');
+    }
+  }
+
   async function handleEditClick() {
     if (!detailsRoom) return;
     
@@ -624,6 +635,13 @@ export default function Rooms() {
                   title="Marcar manutenção com observação"
                 >
                   Manutenção
+                </button>
+                <button
+                  onClick={() => submitCleaning(detailsRoom.id)}
+                  className="px-3 py-2 rounded-lg bg-yellow-600 text-white hover:bg-yellow-700 transition"
+                  title="Colocar em limpeza"
+                >
+                  Limpeza
                 </button>
                 <button
                   onClick={handleEditClick}

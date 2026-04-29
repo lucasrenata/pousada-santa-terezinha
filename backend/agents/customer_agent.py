@@ -76,9 +76,14 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
         return {"status": "ready" if not missing else "incomplete", "missing": missing}
 
     @tool
-    def robot_search_events(query: str) -> dict:
-        """Micro-robô de consulta de eventos locais. Use sempre que o hóspede mencionar um evento pelo nome (ex: Hosana Brasil, Canção Nova, Kairós)."""
-        return shared_tools.search_events_logic(tenant_id, query)
+    def robot_search_events(query: str = "", month: int = None, year: int = None) -> dict:
+        """Micro-robô de consulta de eventos locais da Canção Nova. 
+        Use 'query' se o hóspede buscar por nome (Ex: Hosana Brasil). 
+        Use 'month' e 'year' se o hóspede quiser saber quais são os eventos de um mês específico."""
+        if query:
+            return shared_tools.search_events_logic(tenant_id, query)
+        else:
+            return shared_tools.event_listing_logic(tenant_id, month, year)
 
     @tool
     def robot_book_with_payment(guest_id: int, room_id: str, check_in: str, check_out: str, group_size: int, companions: List[dict] = []) -> dict:

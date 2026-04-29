@@ -33,7 +33,8 @@ export default function Chat() {
 
   const loadHistory = async (sid: string) => {
     try {
-      const res = await api.get(`/chat/history/${sid}`);
+      const tenantId = localStorage.getItem('tenant_id') ? Number(localStorage.getItem('tenant_id')) : 1;
+      const res = await api.get(`/chat/history/${sid}`, { params: { tenant_id: tenantId } });
       setMessages(res.data.map((m: any) => ({
         ...m,
         timestamp: new Date(m.timestamp)

@@ -47,6 +47,17 @@ def mark_clean(room_id: str, db: Session = Depends(get_db), user: models.User = 
     db.commit()
     return {"message": "Quarto limpo"}
 
+# Coloca o quarto em limpeza
+@router.post("/{room_id}/cleaning")
+def mark_cleaning(room_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_staff)):
+    set_tenant_context(db, user.tenant_id)
+    room = db.query(models.Room).filter(models.Room.id == room_id).first()
+    if not room: raise HTTPException(status_code=404, detail="Quarto não encontrado")
+    room.status = models.RoomStatus.LIMPEZA
+    room.maintenance_note = None
+    db.commit()
+    return {"message": "Quarto em limpeza"}
+
 # Manutenção: marca quarto como MANUTENCAO com observação
 @router.post("/{room_id}/maintenance")
 def mark_maintenance(room_id: str, note: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_staff)):

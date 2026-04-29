@@ -15,6 +15,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, Tool
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode
 from agents import shared_tools
+from agents.checkpoint_manager import CheckpointManager
 
 # =============================================================================
 # CONVERSÃO DE HISTÓRICO
@@ -215,6 +216,41 @@ def checkout_logic(tenant_id: int, room_id: str, action: str = "preview", paymen
 
 # --- GRUPO FINANCEIRO E RELATÓRIOS ---
 
+def expense_logic(tenant_id: int, description: str, amount: float, category: str = "outros", is_paid: bool = True, payment_method: str = "pix", due_date: str = None) -> dict:
+    """Lógica atômica para lançar contas a pagar ou despesas operacionais."""
+    with SessionLocal() as db:
+        set_tenant_context(db, tenant_id)
+        valid_categories = [c.value for c in models.ExpenseCategory]
+        cat_val = category.lower()
+        if cat_val not in valid_categories:
+            cat_val = "outros"
+
+        t_payment = None
+        if is_paid:
+            for pm in models.PaymentMethod:
+                if pm.value == payment_method.lower():
+                    t_payment = pm
+                    break
+            if not t_payment: t_payment = models.PaymentMethod.PIX
+
+        d_due = date.today()
+        if due_date:
+            try: d_due = datetime.strptime(due_date, "%Y-%m-%d").date()
+            except: pass
+
+        exp = models.Expense(
+            description=description,
+            amount=amount,
+            category=cat_val,
+            is_paid=is_paid,
+            payment_method=t_payment if is_paid else None,
+            paid_date=date.today() if is_paid else None,
+            due_date=d_due
+        )
+        db.add(exp)
+        db.commit()
+        return {"success": True, "message": f"Despesa '{description}' de R$ {amount:.2f} lançada na categoria {cat_val}."}
+
 def finance_summary_logic(tenant_id: int) -> dict:
     """Lógica atômica para resumo rápido de saúde financeira."""
     with SessionLocal() as db:
@@ -341,7 +377,7 @@ def event_manager_logic(tenant_id: int, action: str = "query") -> dict:
 # ORQUESTRADOR CENTRAL (AGENTE ADMIN)
 # =============================================================================
 
-async def handle_admin_query(message: str, history: list, db: Session, tenant_id: int):
+async def handle_admin_query(message: str, history: list, db: Session, tenant_id: int, session_id: str = None): # Adicionado session_id
     # --- SELEÇÃO DE MOTOR (GEMINI PREVIEW) ---
     google_key = os.getenv("GOOGLE_API_KEY")
     gemini_model = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
@@ -396,6 +432,13 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
         return finance_summary_logic(tenant_id)
 
     @tool
+    def robot_expense_launcher(description: str, amount: float, category: str = "outros", is_paid: bool = True, payment_method: str = "pix", due_date: str = None) -> dict:
+        """Micro-robô para LANÇAR DESPESAS OPERACIONAIS ou contas a pagar.
+        Categorias válidas: agua, energia, internet, manutencao, fornecedor, salarios, limpeza, alimentacao, marketing, impostos, aluguel, outros.
+        Pode especificar due_date no formato YYYY-MM-DD."""
+        return expense_logic(tenant_id, description, amount, category, is_paid, payment_method, due_date)
+
+    @tool
     def robot_pdf_reporter(report_type: str, mode: str = "full", start_date: str = None, end_date: str = None) -> dict:
         """Micro-robô para GERAR RELATÓRIOS PDF PROFISSIONAIS. 
         Tipos: 'finance' (financeiro), 'inventory' (estoque), 'shopping' (compras).
@@ -404,9 +447,14 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
         return pdf_generator_logic(tenant_id, report_type, mode, start_date, end_date)
 
     @tool
-    def robot_event_intelligence(action: str = "query") -> dict:
-        """Micro-robô para consultar EVENTOS regionais."""
-        return event_manager_logic(tenant_id, action)
+    def robot_event_intelligence(search_query: str = "", month: int = None, year: int = None) -> dict:
+        """Micro-robô para consultar EVENTOS do calendário (Canção Nova, etc).
+        Use 'search_query' para buscar pelo nome.
+        Use 'month' e 'year' para listar os eventos de determinado mês."""
+        if search_query:
+            return shared_tools.search_events_logic(tenant_id, search_query)
+        else:
+            return shared_tools.event_listing_logic(tenant_id, month, year)
 
     @tool
     def robot_room_viewer(status: str = None) -> dict:
@@ -473,7 +521,7 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
     tools = [
         robot_inventory_sync, robot_inventory_viewer, robot_room_status_manager,
         robot_room_setup_manager, robot_consumption_launcher, robot_checkout_manager, 
-        robot_finance_summary, robot_pdf_reporter, robot_event_intelligence,
+        robot_finance_summary, robot_expense_launcher, robot_pdf_reporter, robot_event_intelligence,
         robot_room_viewer, robot_mark_room_as_ready,
         robot_check_availability, robot_find_guest, robot_book_with_payment,
         robot_find_booking, robot_get_payment_info, robot_confirm_payment, robot_record_knowledge
@@ -487,7 +535,7 @@ DIRETRIZES DE COMUNICAÇÃO:
 3. **DIFICULDADES E PERMISSÕES**: Caso não tenha permissão para algo ou encontre um erro técnico no robô, explique: "Infelizmente meu acesso ao histórico de faturamento está restrito no momento" ou "Encontrei uma dificuldade para gerar seu arquivo agora, pode tentar novamente?".
 4. **MEMÓRIA OPERACIONAL**:
 {op_memory}
-5. **LINKS E RELATÓRIOS**: Ao fornecer links para relatórios ou arquivos PDF, use SEMPRE o formato Markdown: `[Texto Descritivo](URL)`. NUNCA envie a URL pura. Isso permite que o sistema renderize um botão clicável para o usuário.
+5. **LINKS E RELATÓRIOS (MUITO IMPORTANTE)**: Ao fornecer links para relatórios ou arquivos PDF, NUNCA INVENTE UM DOMÍNIO (NUNCA escreva 'https://example.com' ou similar)! O robô devolverá links contendo barras iniciais (ex: `/api/reports/...`). Use EXATAMENTE a URL devolvida por ele no formato Markdown (ex: `[Texto Descritivo](/api/reports/...)`).
 
 Sua postura é de um gerente sênior: resolutivo, preciso e pragmático.""")
 
@@ -502,14 +550,18 @@ Sua postura é de um gerente sênior: resolutivo, preciso e pragmático.""")
     workflow.add_edge(START, "agent")
     workflow.add_conditional_edges("agent", lambda s: "tools" if s["messages"][-1].tool_calls else END)
     workflow.add_edge("tools", "agent")
-    app = workflow.compile()
+    # Compilação do Grafo com Checkpointer (PRODUÇÃO)
+    checkpointer = await CheckpointManager.get_instance()
+    app = workflow.compile(checkpointer=checkpointer)
 
-    # Conversão de histórico para LangChain de forma robusta
-    lc_messages = convert_history_to_langchain(history)
-    lc_messages.append(HumanMessage(content=message))
+    config = {"configurable": {"thread_id": session_id or "default_admin"}}
+    
+    # Preparamos os inputs. Note que se houver checkpoint, o histórico já está lá.
+    # Mas enviamos a mensagem atual.
+    inputs = {"messages": [HumanMessage(content=message)]}
 
     try:
-        final_state = await app.ainvoke({"messages": lc_messages})
+        final_state = await app.ainvoke(inputs, config=config)
         response_msg = final_state["messages"][-1]
         response_content = response_msg.content
         

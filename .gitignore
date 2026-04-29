@@ -23,3 +23,6 @@ resumo.txt
 docker-compose.yml
 backend/reports/
 *.pdf
+*.log
+agent_logs.txt
+backend_logs_tail.txt

@@ -8,6 +8,9 @@ from utils.pricing import calculate_daily_rates_count, calculate_reservation_tot
 from datetime import datetime, date, timedelta
 from typing import Optional, List, Any
 from utils.payment_helpers import prepare_payer_data, process_mp_response, _cpf_valid
+import logging
+
+logger = logging.getLogger(__name__)
 
 # --- UTILS DE DATA (UNIVERSAL) ---
 def universal_date_parser(date_val):
@@ -83,7 +86,7 @@ def calculate_booking_quote(db, tenant_id, room_id, check_in_date, check_out_dat
     return {"total": total_amount, "days": days, "notes": " | ".join(note_parts), "event_name": event.name if event else None}
 
 # --- LOGICAS ATOMICAS ---
-def find_guest_logic(tenant_id: int, cpf: str = "", name: str = "", base_url: str = "") -> dict:
+def find_guest_logic(tenant_id: int, cpf: str = "", name: str = "", base_url: str = "", session_id: str = None) -> dict:
     with SessionLocal() as db:
         set_tenant_context(db, tenant_id)
         clean_cpf = "".join(filter(str.isdigit, cpf)) if cpf else ""
@@ -99,7 +102,8 @@ def find_guest_logic(tenant_id: int, cpf: str = "", name: str = "", base_url: st
                 }
         
         prefix = base_url.rstrip("/") if base_url else ""
-        link = f"{prefix}/{tenant_id}/registrar?cpf={clean_cpf}"
+        sid_param = f"&sid={session_id}" if session_id else ""
+        link = f"{prefix}/{tenant_id}/registrar?cpf={clean_cpf}{sid_param}"
         return {
             "found": False, 
             "error": "Hóspede não encontrado.", 
@@ -121,9 +125,16 @@ def availability_check_logic(tenant_id: int, check_in: str, check_out: str, grou
             active_rules = db.query(models.BusinessRule).filter(models.BusinessRule.is_active == True).all()
             days = calculate_daily_rates_count(ci, co, settings.get("check_in_time", "14:00"), settings.get("check_out_time", "12:00"))
             
+            # Bloqueio de Overbooking: Considera CONFIRMADO, ATIVO e PENDENTE (se não expirado)
+            expiration_limit = datetime.now() - timedelta(hours=2)
+            
             occupied = [r[0] for r in db.query(models.Booking.room_id).filter(
-                models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
-                models.Booking.check_out_date > ci, models.Booking.check_in_date < co
+                models.Booking.check_out_date > ci, 
+                models.Booking.check_in_date < co,
+                (
+                    models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]) |
+                    ((models.Booking.status == models.BookingStatus.PENDENTE) & (models.Booking.created_at >= expiration_limit))
+                )
             ).all()]
             rooms = db.query(models.Room).filter(models.Room.id.notin_(occupied), models.Room.status != models.RoomStatus.MANUTENCAO).all()
             
@@ -219,6 +230,22 @@ def booking_creation_logic(tenant_id: int, guest_id: int, room_id: Any, check_in
             # Normalizar room_id para lista (suporte a multi-quarto)
             room_ids = [room_id] if isinstance(room_id, (str, int)) else list(room_id)
             
+            # --- VALIDAÇÃO ATÔMICA DE OVERBOOKING ---
+            expiration_limit = datetime.now() - timedelta(hours=2)
+            occupied = [r[0] for r in db.query(models.Booking.room_id).filter(
+                models.Booking.room_id.in_(room_ids),
+                models.Booking.check_out_date > ci, 
+                models.Booking.check_in_date < co,
+                (
+                    models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]) |
+                    ((models.Booking.status == models.BookingStatus.PENDENTE) & (models.Booking.created_at >= expiration_limit))
+                )
+            ).all()]
+            
+            if occupied:
+                return {"error": f"Sinto muito, o quarto {occupied[0]} acabou de ser reservado por outra pessoa para estas datas."}
+            # ----------------------------------------
+
             ages = [guest.age or 18] + [int(c.get('age', 18)) for c in companions]
             
             # Cálculo de preço consolidado para todos os quartos
@@ -272,9 +299,20 @@ def payment_info_logic(tenant_id: int, booking_id: int) -> dict:
         with SessionLocal() as db:
             set_tenant_context(db, tenant_id)
             booking = db.query(models.Booking).get(booking_id)
-            config = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_id == tenant_id, models.TenantConfig.is_active == True).first()
+            if not booking:
+                return {"error": f"Reserva #{booking_id} não encontrada."}
+            
+            # 1. TENTA TOKEN DO MERCADO PAGO (PRIORIDADE)
+            config = db.query(models.TenantConfig).filter(
+                models.TenantConfig.tenant_id == tenant_id,
+                models.TenantConfig.is_active == True
+            ).first()
+            print(f"[PAYMENT_DEBUG] Tenant ID: {tenant_id}")
+            print(f"[PAYMENT_DEBUG] Config found: {config.id if config else 'None'}")
             manual_key = config.manual_pix_key if config else None
+            print(f"[PAYMENT_DEBUG] Initial manual_key: {manual_key}")
             qr_data = None
+            
             try:
                 from payments.mercadopago_service import MercadoPagoService
                 from routers.payments import get_tenant_mp_token
@@ -282,17 +320,46 @@ def payment_info_logic(tenant_id: int, booking_id: int) -> dict:
                 if token:
                     mp = MercadoPagoService()
                     payer = prepare_payer_data(booking.guest)
-                    res = mp.create_pix_payment(token, tenant_id, booking.total_amount, f"Reserva #{booking.id}", {"booking_id": booking.id}, payer=payer)
+                    res = mp.create_pix_payment(
+                        token, tenant_id, booking.total_amount,
+                        f"Reserva #{booking.id}", {"booking_id": booking.id}, payer=payer
+                    )
                     payment_result = process_mp_response(res)
                     if payment_result.get("qr_code"):
-                        qr_data = {"image": payment_result.get("qr_code_base64"), "code": payment_result.get("qr_code"), "link": payment_result.get("payment_url")}
-            except: pass
+                        qr_data = {
+                            "image": payment_result.get("qr_code_base64"),
+                            "code": payment_result.get("qr_code"),
+                            "link": payment_result.get("payment_url")
+                        }
+            except Exception as mp_err:
+                print(f"[PAYMENT_LOG] Mercado Pago indisponível: {mp_err}")
             
+            # 2. FALLBACK: Se MP falhou, busca chave PIX cadastrada nas configurações do sistema
             if not qr_data:
-                global_pix = db.query(models.SystemSetting).filter(models.SystemSetting.key == "pousada_pix_key").first()
+                # Prioridade: config do tenant > setting global
+                global_pix = db.query(models.SystemSetting).filter(
+                    models.SystemSetting.key == "pousada_pix_key",
+                    models.SystemSetting.tenant_id == tenant_id
+                ).first()
+                print(f"[PAYMENT_DEBUG] Global PIX found: {global_pix.value if global_pix else 'None'}")
                 manual_key = manual_key or (global_pix.value if global_pix else None)
-
-            return {"booking_id": booking_id, "total": booking.total_amount, "pix_qr": qr_data, "manual_key": manual_key}
+                print(f"[PAYMENT_DEBUG] Final manual_key: {manual_key}")
+            
+            # 3. Define o método de pagamento de forma explícita para o agente
+            if qr_data:
+                payment_method = "mercadopago"
+            elif manual_key:
+                payment_method = "pix_manual"
+            else:
+                payment_method = "nenhum"
+            
+            return {
+                "booking_id": booking_id,
+                "total": booking.total_amount,
+                "pix_qr": qr_data,
+                "manual_key": manual_key,
+                "payment_method": payment_method  # Campo explícito para o agente não adivinhar
+            }
     except Exception as e:
         return {"error": str(e)}
 
@@ -388,6 +455,36 @@ def search_events_logic(tenant_id: int, query: str) -> dict:
                 "description": e.description
             })
         return {"results": results}
+
+def event_listing_logic(tenant_id: int, month: int = None, year: int = None) -> dict:
+    """Lista eventos do calendário filtrados por mês e ano."""
+    with SessionLocal() as db:
+        set_tenant_context(db, tenant_id)
+        query = db.query(models.Event)
+        
+        now = datetime.now()
+        target_year = year or now.year
+        
+        if month:
+            import calendar
+            _, last_day = calendar.monthrange(target_year, month)
+            start_date = date(target_year, month, 1)
+            end_date = date(target_year, month, last_day)
+            query = query.filter(models.Event.start_date >= start_date, models.Event.start_date <= end_date)
+        else:
+            # Se não passar mês, pega os próximos 30 dias
+            query = query.filter(models.Event.start_date >= now.date(), models.Event.start_date <= now.date() + timedelta(days=30))
+            
+        events = query.order_by(models.Event.start_date.asc()).all()
+        
+        if not events:
+            return {"error": "Nenhum evento encontrado para o período solicitado."}
+            
+        return {
+            "month": month,
+            "year": target_year,
+            "events": [{"name": e.name, "start": str(e.start_date), "end": str(e.end_date), "location": e.location} for e in events]
+        }
 
 # ============================================================================
 # FERRAMENTAS NOVAS (PARTE 5.0)
@@ -628,7 +725,7 @@ def update_booking_status(
     except Exception as e:
         return {'error': str(e)}
 
-async def execute_business_logic(tenant_id: int, message: str, context: dict) -> dict:
+async def execute_business_logic(tenant_id: int, message: str, context: dict, session_id: str = None) -> dict:
     """
     MOTOR DETERMINÍSTICO (80% Código): 
     Executa a lógica de negócio baseada no estado atual, sem depender da decisão da IA.
@@ -642,7 +739,7 @@ async def execute_business_logic(tenant_id: int, message: str, context: dict) ->
         
         # 1. LOGICA DE BUSCA DE HÓSPEDE (Prioridade Macro)
         cpf_to_search = context.get("cpf")
-        guest_lookup = find_guest_logic(tenant_id, cpf=cpf_to_search)
+        guest_lookup = find_guest_logic(tenant_id, cpf=cpf_to_search, session_id=session_id)
         results["guest"] = guest_lookup
         if guest_lookup.get("found"):
             updated_context["guest_id"] = guest_lookup["id"]
@@ -659,6 +756,7 @@ async def execute_business_logic(tenant_id: int, message: str, context: dict) ->
             results["availability"] = availability
 
         # 3. LOGICA DE COTAÇÃO (DETERMINÍSTICA)
+        current_quote = None
         if context.get("room_id") and context.get("check_in") and context.get("check_out"):
             room_id = context["room_id"]
             room_ids = [room_id] if isinstance(room_id, (str, int)) else list(room_id)
@@ -674,63 +772,92 @@ async def execute_business_logic(tenant_id: int, message: str, context: dict) ->
                 total_price += quote["total"]
             
             updated_context["total_price"] = total_price
-            results["quote"] = {"total": total_price, "rooms": room_ids}
+            current_quote = {"total": total_price, "rooms": room_ids}
+            results["quote"] = current_quote
 
-        # 4. MONITORAMENTO DE STATUS (RESERVA/PAGAMENTO)
-        booking_id = context.get("booking_id")
+        # 4. GATILHO DE PERSISTÊNCIA (80/20 Persistence Rule)
+        # Se estamos em CONFIRMATION e o usuário disse SIM, criamos a reserva no banco
+        is_confirmation_state = (context.get("current_state") == "CONFIRMATION")
+        user_confirmed = any(ok in msg_lower for ok in ["sim", "pode", "ok", "confirmar", "confirmo", "bora", "estão corretas"])
+        
+        has_essential_data = all([
+            updated_context.get("guest_id"),
+            updated_context.get("room_id"),
+            updated_context.get("check_in"),
+            updated_context.get("check_out")
+        ])
+
+        if is_confirmation_state and user_confirmed and has_essential_data and not context.get("booking_id"):
+            logger.info(f"[LOGIC_PERSISTENCE] Criando reserva para guest {updated_context['guest_id']} no tenant {tenant_id}")
+            res_booking = booking_creation_logic(
+                tenant_id=tenant_id,
+                guest_id=updated_context["guest_id"],
+                room_id=updated_context["room_id"],
+                check_in=updated_context["check_in"],
+                check_out=updated_context["check_out"],
+                group_size=updated_context.get("group_size", 1),
+                companions=updated_context.get("companions", [])
+            )
+            if res_booking.get("success"):
+                bid = res_booking["booking_id"]
+                updated_context["booking_id"] = bid
+                results["booking_created"] = True
+                results["booking_id"] = bid
+                logger.info(f"[LOGIC_PERSISTENCE] Reserva #{bid} criada com sucesso.")
+            else:
+                results["booking_error"] = res_booking.get("error")
+
+        # 5. MONITORAMENTO E PAGAMENTO
+        booking_id = updated_context.get("booking_id")
         if booking_id:
             booking = db.get(models.Booking, booking_id)
             if booking:
                 results["booking_status"] = str(booking.status.value)
                 results["payment_status"] = str(booking.payment_status.value)
-                if booking.payment_status in [models.PaymentStatus.PAGO, models.PaymentStatus.PARCIAL]:
-                    results["payment_confirmed"] = True
-
-        # 5. GERADOR DE LINK DE PAGAMENTO (PROATIVO)
-        # Se estamos no estado de pagamento ou temos uma reserva pendente, SEMPRE gera info
-        is_payment_state = (context.get("current_state") == "PAYMENT")
-        has_keywords = any(w in msg_lower for w in ["pagar", "link", "pix", "pagamento", "confirmar"])
-        
-        if is_payment_state or has_keywords:
-            setting = db.query(models.SystemSetting).filter(
-                models.SystemSetting.key == "pousada_deposit_percentage",
-                models.SystemSetting.tenant_id == tenant_id
-            ).first()
-            perc = float(setting.value) / 100.0 if (setting and setting.value) else 1.0
-            
-            # Saldo pendiente
-            if any(w in msg_lower for w in ["restante", "falta", "saldo", "quitar"]):
-                last_booking = db.query(models.Booking).filter(
-                    models.Booking.tenant_id == tenant_id,
-                    models.Booking.payment_status == models.PaymentStatus.PARCIAL,
-                    models.Booking.status.in_([models.BookingStatus.PENDENTE, models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO])
-                ).order_by(models.Booking.id.desc()).first()
                 
-                if last_booking:
-                    balance = last_booking.total_amount - last_booking.deposit_amount
-                    pay_info = payment_info_logic(tenant_id, last_booking.id)
-                    pay_info["total"] = balance
-                    results["payment"] = {
-                        "type": "balance", "amount": balance, "info": pay_info, "booking_id": last_booking.id
-                    }
-                else:
-                    results["payment"] = {"error": "Sem reserva com saldo em aberto."}
-            
-            # Sinal de Nova Reserva
-            elif updated_context.get("total_price") and updated_context.get("guest_id"):
-                bid = updated_context.get("booking_id")
-                if bid:
-                    pay_info = payment_info_logic(tenant_id, bid)
+                # Gera Info de Pagamento (Proativo se estiver em CONFIRMATION ou PAYMENT)
+                is_payment_ready = (context.get("current_state") in ["CONFIRMATION", "PAYMENT"])
+                if is_payment_ready or any(w in msg_lower for w in ["pagar", "link", "pix", "pagamento"]):
+                    pay_info = payment_info_logic(tenant_id, booking_id)
+                    
+                    # Cálculo de sinal
+                    setting = db.query(models.SystemSetting).filter(
+                        models.SystemSetting.key == "pousada_deposit_percentage",
+                        models.SystemSetting.tenant_id == tenant_id
+                    ).first()
+                    perc = float(setting.value) / 100.0 if (setting and setting.value) else 1.0
+                    
                     results["payment"] = {
                         "type": "deposit",
-                        "amount": updated_context["total_price"] * perc,
+                        "amount": booking.total_amount * perc,
                         "percentage": int(perc * 100),
                         "info": pay_info,
-                        "booking_id": bid
+                        "booking_id": booking_id
                     }
 
-    results["updated_context"] = updated_context
-    return results
+        # 6. SINCRO CONTROL (AUDITORIA DE MUDANÇA DE IDEIA)
+        # Se as datas mudaram, limpamos seleções de quarto e cotações antigas
+        prev_ci = context.get("_last_ci")
+        prev_co = context.get("_last_co")
+        curr_ci = updated_context.get("check_in")
+        curr_co = updated_context.get("check_out")
+        
+        if (curr_ci and curr_ci != prev_ci) or (curr_co and curr_co != prev_co):
+            results["intent_shift"] = "dates_changed"
+            updated_context["room_id"] = None
+            updated_context["total_price"] = 0
+            updated_context["booking_id"] = None # Reset reserva se mudar data
+            results["quote"] = None
+            updated_context["_last_ci"] = curr_ci
+            updated_context["_last_co"] = curr_co
+        
+        prev_group = context.get("_last_group")
+        curr_group = updated_context.get("group_size")
+        if curr_group and curr_group != prev_group:
+            results["intent_shift"] = "group_size_changed"
+            if context.get("companions") and len(context["companions"]) > (curr_group - 1):
+                updated_context["companions"] = context["companions"][:(curr_group - 1)]
+            updated_context["_last_group"] = curr_group
 
     results["updated_context"] = updated_context
     return results

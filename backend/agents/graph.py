@@ -11,6 +11,7 @@ from agents.specialists.discovery import DiscoverySpecialist
 from agents.specialists.validation import ValidationSpecialist
 from agents.specialists.confirmation import ConfirmationSpecialist
 from agents.specialists.payment import PaymentSpecialist
+from agents.checkpoint_manager import CheckpointManager
 
 logger = logging.getLogger(__name__)
 
@@ -73,10 +74,12 @@ async def logic_node(state: AgentState):
     results = await execute_business_logic(
         tenant_id=state["tenant_id"],
         message=state["message"],
-        context=state["context"]
+        context=state["context"],
+        session_id=state["session_id"]
     )
     
-    return {"logic_results": results, "context": results.get("updated_context", {})}
+    updated = results.get("updated_context", {})
+    return {"logic_results": results, "context": updated}
 
 async def specialist_node(state: AgentState):
     """Nó de processamento do Especialista Ativo"""
@@ -93,11 +96,18 @@ async def specialist_node(state: AgentState):
     spec_class = specialists.get(specialist_name, DiscoverySpecialist)
     agent = spec_class(state["tenant_id"])
     
-    # IMPORTANTE: No grafo, passamos o contexto do estado e o histórico de mensagens
+    # IMPORTANTE: mescla o updated_context do logic_node para garantir que os fatos
+    # extraidos pelo Guardian e confirmados pela logica cheguem ao especialista
+    merged_context = {**state["context"]}
+    logic_updated = state.get("logic_results", {}).get("updated_context", {})
+    for k, v in logic_updated.items():
+        if v is not None and v != "" and v != [] and v != {}:
+            merged_context[k] = v
+    
     result = await agent.process(
         message=state["message"], 
         session_id=state["session_id"], 
-        context=state["context"],
+        context=merged_context,
         history=state.get("history", []),
         logic_results=state.get("logic_results", {})
     )
@@ -110,21 +120,18 @@ async def specialist_node(state: AgentState):
 
 # --- DEFINIÇÃO DO WORKFLOW ---
 
-def create_pousada_graph():
+async def get_pousada_brain():
+    """Retorna a instância do cérebro com persistência ativada."""
     workflow = StateGraph(AgentState)
     
-    # Adicionar Nós
     workflow.add_node("guardian", guardian_node)
     workflow.add_node("logic", logic_node)
     workflow.add_node("specialist", specialist_node)
     
-    # Definir Fluxo (Sequencial Simples por hora, mas com Guardian enriquecendo o estado)
     workflow.set_entry_point("guardian")
     workflow.add_edge("guardian", "logic")
     workflow.add_edge("logic", "specialist")
     workflow.add_edge("specialist", END)
     
-    return workflow.compile()
-
-# Instância global do grafo
-pousada_brain = create_pousada_graph()
+    checkpointer = await CheckpointManager.get_instance()
+    return workflow.compile(checkpointer=checkpointer)
