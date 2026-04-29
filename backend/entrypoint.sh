@@ -12,9 +12,30 @@ done
 
 echo "✅ Banco de Dados Online!"
 
-# 2. Executar Migrações do Alembic (Tabelas e Índices)
-echo "📦 Aplicando migrações do Alembic (head)..."
-alembic upgrade head
+# 2. Executar Migrações do Banco
+echo "📦 Checando estado do Banco de Dados..."
+python -c "
+from database import engine
+from sqlalchemy import inspect
+import models
+inspector = inspect(engine)
+if not inspector.has_table('users'):
+    print('📦 Banco de dados vazio. Criando tabelas base via SQLAlchemy...')
+    models.Base.metadata.create_all(bind=engine)
+    import os
+    open('/tmp/fresh_db', 'w').close()
+else:
+    print('📦 Banco de dados já construído previamente. Pulando create_all inicial.')
+"
+
+if [ -f /tmp/fresh_db ]; then
+    echo "📦 Stamping as migrações do Alembic (Marcando como atualizadas)..."
+    alembic stamp head
+    rm /tmp/fresh_db
+else
+    echo "📦 Aplicando migrações do Alembic (head)..."
+    alembic upgrade head
+fi
 
 # 3. Aplicar Scripts SQL Customizados (Triggers, RLS, etc.)
 echo "🛠️ Aplicando scripts SQL customizados de backend/sql/..."
@@ -22,8 +43,8 @@ python -c "
 import os
 from sqlalchemy import text, create_engine
 
-# Usamos a conexão de ADMIN para garantir privilégios de ALTER TABLE e TRIGGER
-admin_url = 'postgresql://admin:admin_password_123@pousada_db:5432/pousada_db'
+# Usamos a conexão principal do sistema, que possui privilégios de owner do DB no container
+admin_url = os.getenv('DATABASE_URL')
 engine = create_engine(admin_url)
 
 sql_dir = 'sql'

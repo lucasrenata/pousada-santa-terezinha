@@ -6,7 +6,7 @@ import os
 import asyncio
 
 from agents.base_specialist import BaseSpecialist
-from agents.graph import pousada_brain
+from agents.graph import get_pousada_brain
 from agents.state_manager import StateManager
 import models
 from database import SessionLocal
@@ -56,9 +56,16 @@ Responda APENAS com o nome do specialist em minúsculo.
         
         # Camada 3: Reforço no Supervisor (Mente Central)
         # Se estamos tentando ir para PAYMENT ou CONFIRMATION sem dados críticos, força DISCOVERY
+        # Camada 3: Reforço no Supervisor (Mente Central)
+        # Se estamos tentando ir para PAYMENT ou CONFIRMATION sem dados críticos, força DISCOVERY
+        # A MENOS QUE a mensagem atual pareça conter esses dados.
         if specialist in ["payment", "confirmation"]:
             has_dates = context.get('check_in') and context.get('check_out')
-            if not has_dates:
+            # Se não tem no contexto, mas o usuário parace estar informando (ex: "dia 20")
+            # Deixamos o fluxo seguir para que o Guardian extraia e o Especialista processe.
+            likely_providing_info = any(m in user_message.lower() for m in ["dia", "janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro", "quarto", "pessoa", "sozinho"])
+            
+            if not has_dates and not likely_providing_info:
                 logger.warning(f"[SUPERVISOR_LOG] Dados críticos faltando para {specialist.upper()}, voltando para DISCOVERY")
                 return "discovery"
         
@@ -81,39 +88,36 @@ Responda APENAS com o nome do specialist em minúsculo.
                 models.ChatMessage.session_id == session_id
             ).order_by(models.ChatMessage.created_at.desc()).limit(10).all()
             
-            # Reverter para ordem cronológica
             db_history.reverse()
             
-            # Converter para objetos LangChain
             history = []
             for msg in db_history:
                 if msg.role == 'user':
                     history.append(HumanMessage(content=msg.content))
                 else:
                     history.append(AIMessage(content=msg.content))
-            
+
             # 2. Salvar Mensagem Atual do Usuário
             user_msg_record = models.ChatMessage(
-                session_id=session_id,
-                role='user',
-                content=message,
-                tenant_id=self.tenant_id
+                session_id=session_id, role='user', content=message, tenant_id=self.tenant_id
             )
             db.add(user_msg_record)
             db.commit()
 
-            # 3. Carregar/Garantir Contexto (Usa StateManager para consistência Multi-Tenant)
+            # 3. Carregar/Garantir Contexto
+
             context_data = self.state_manager.load_session(session_id)
             context = context_data.get('context', {}) if context_data else (context or {})
             current_state = context_data.get('current_state', 'DISCOVERY') if context_data else 'DISCOVERY'
 
-            # 4. Roteamento (Decidir próximo especialista)
-            # Se o estado veio do especialista anterior como uma sugestão (ex: VALIDATION), 
-            # o Supervisor decide se acata ou se o LLM sugere algo diferente.
+            # 4. Roteamento
             next_specialist = await self.decide_next_specialist(current_state, message, context)
-            logger.info(f"[SUPERVISOR_LOG] Roteando para: {next_specialist} (Estado anterior: {current_state})")
+            logger.info(f"[SUPERVISOR_LOG] Roteando para: {next_specialist}")
 
-            # 5. Execução via LangGraph (Fase 5.0 - Gurus)
+            # 5. Execução via LangGraph (COM CHECKPOINT)
+            brain = await get_pousada_brain()
+            config = {"configurable": {"thread_id": session_id}}
+            
             initial_state = {
                 "message": message,
                 "session_id": session_id,
@@ -121,20 +125,15 @@ Responda APENAS com o nome do specialist em minúsculo.
                 "context": context,
                 "next_specialist": next_specialist,
                 "current_state": current_state,
-                "response": "",
                 "history": history
             }
             
-            # Invocar o cérebro (LangGraph)
-            final_state = await pousada_brain.ainvoke(initial_state)
+            final_state = await brain.ainvoke(initial_state, config=config)
             
             # 6. Salvar Resposta da IA no Histórico
             response_text = final_state.get("response", "Não entendi.")
             ai_msg_record = models.ChatMessage(
-                session_id=session_id,
-                role='assistant',
-                content=response_text,
-                tenant_id=self.tenant_id
+                session_id=session_id, role='assistant', content=response_text, tenant_id=self.tenant_id
             )
             db.add(ai_msg_record)
             db.commit()

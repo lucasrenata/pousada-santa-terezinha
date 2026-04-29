@@ -29,32 +29,46 @@ class PaymentSpecialist(BaseSpecialist):
             booking_status = logic_results.get("booking_status", "PENDENTE")
             
             # Extração robusta do link de pagamento (Padrão 80/20)
-            info = payment_info.get("info", {})
-            payment_link = info.get("pix_qr", {}).get("link")
-            manual_pix = payment_info.get("manual_key") or info.get("manual_key")
+            info = payment_info.get("info", {}) or payment_info
+            payment_link = info.get("pix_qr", {}).get("link") if info.get("pix_qr") else None
+            manual_pix = info.get("manual_key") or payment_info.get("manual_key")
+            payment_method = info.get("payment_method") or payment_info.get("payment_method", "nenhum")
+            total_value = info.get("total") or payment_info.get("amount", "—")
             
             payment_prompt = f"""
 Você é o Especialista de PAGAMENTO da pousada (ID: {self.tenant_id}).
 
-INFORMAÇÕES DE PAGAMENTO (REAIS):
-{json.dumps(payment_info, ensure_ascii=False, indent=2)}
+DADOS REAIS DO SISTEMA (NÃO INVENTE NADA):
+- Link Mercado Pago disponível? {"✅ SIM" if payment_link else "❌ NÃO"}
+- Chave PIX Manual cadastrada? {"✅ SIM → " + str(manual_pix) if manual_pix else "❌ NÃO CADASTRADA"}
+- Valor total: R$ {total_value}
+- Status da Reserva: {booking_status}
 
-DADOS PARA O HÓSPEDE:
-- Link Mercado Pago: {payment_link if payment_link else "NÃO DISPONÍVEL"}
-- Chave PIX Manual: {manual_pix if manual_pix else "NÃO CADASTRADA"}
-- Status Reserva: {booking_status}
+MISSÃO (SIGA ESTA ORDEM EXATA):
 
-MISSÃO:
-1. Se o status for PENDENTE: Proporcione IMEDIATAMENTE uma forma de pagamento.
-   - SE houver Link Mercado Pago: Use [**Pagar Agora**]({payment_link}).
-   - SE NÃO houver link, mas houver Chave PIX: Forneça a chave {manual_pix} e peça para enviar o comprovante aqui.
-   - SEMPRE incentive o hóspede a concluir agora para garantir a vaga.
-2. Se o status for CONFIRMADO: Celebre com o hóspede e confirme que está tudo certo.
+CASO 1 — Link do Mercado Pago DISPONÍVEL:
+  → Apresente o link clicável: [**Clique aqui para pagar agora**]({payment_link})
+  → Informe o valor e incentive o hóspede a finalizar para garantir a vaga.
+  → Após apresentar o link, informe: "Se tiver dificuldade com o link, entre em contato conosco."
+
+CASO 2 — Link do Mercado Pago NÃO DISPONÍVEL, mas Chave PIX cadastrada:
+  → Diga: "No momento o pagamento online (Mercado Pago) está indisponível, mas você pode finalizar sua reserva via PIX direto."
+  → Forneça a chave PIX de forma destacada: **Chave PIX: {manual_pix if manual_pix else "não disponível"}**
+  → INSTRUÇÃO OBRIGATÓRIA: Peça ao hóspede para enviar o comprovante de pagamento aqui mesmo no chat assim que concluir.
+  → AVISO DE EXPIRAÇÃO: Informe que a reserva ficará garantida com status **PENDENTE por no máximo 2 horas**. Caso o comprovante não seja enviado neste prazo, o quarto será liberado automaticamente para outros interessados.
+  → Explique: "Assim que você enviar o comprovante, faremos a validação manual e sua reserva será confirmada imediatamente."
+
+CASO 3 — Nenhuma forma de pagamento disponível:
+  → Diga: "No momento estamos sem sistema de pagamento online. Por favor, entre em contato diretamente com a pousada para concluir sua reserva."
+
+CASO 4 — Reserva CONFIRMADA ou ATIVA:
+  → Celebre: "Tudo certo! Sua reserva está confirmada. Esperamos por você! 🎉"
 
 REGRAS CRÍTICAS:
-- NUNCA peça para o hóspede "aguardar o sistema gerar o link". Se não tem link, use a chave PIX manual.
+- NUNCA invente um link ou chave PIX. Se não há dados, use o CASO 3.
+- NUNCA diga "aguarde o sistema gerar o link".
 - Formate valores em R$ 0,00.
-- Seja extremamente proativo e amigável.
+- Seja proativo, amigável e objetivo.
 """
             
             llm_messages = [SystemMessage(content=payment_prompt)]
