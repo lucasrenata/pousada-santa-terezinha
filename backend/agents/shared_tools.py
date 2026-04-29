@@ -1,6 +1,7 @@
 import os
 import json
 import models
+from sqlalchemy import func, and_, or_, desc, asc
 from sqlalchemy.orm import Session
 from database import SessionLocal, set_tenant_context
 from agents.state_manager import StateManager
@@ -734,3 +735,104 @@ async def execute_business_logic(tenant_id: int, message: str, context: dict) ->
 
     results["updated_context"] = updated_context
     return results
+
+def get_raw_analytics_logic(
+    tenant_id: int, 
+    start_date: str = None, 
+    end_date: str = None, 
+    compare_with_previous: bool = False
+) -> dict:
+    """
+    Fonte de dados analíticos para o robô. Consolida KPIs, 
+    comparativos e breakdowns para que a IA realize a análise interpretativa.
+    """
+    try:
+        with SessionLocal() as db:
+            set_tenant_context(db, tenant_id)
+            
+            # 1. Normalização de Datas
+            now = datetime.now()
+            end = universal_date_parser(end_date) or now.date()
+            start = universal_date_parser(start_date) or (end - timedelta(days=29))
+            
+            # Importamos o helper do finance.py se possível, ou replicamos a lógica para ser independente
+            # replicaremos aqui para garantir que 'shared_tools' seja o ponto único de verdade para os agentes
+            
+            def get_summary(s: date, e: date):
+                s_dt = datetime.combine(s, datetime.min.time())
+                e_dt = datetime.combine(e, datetime.max.time())
+                days = (e - s).days + 1
+                
+                revenue = db.query(func.coalesce(func.sum(models.Revenue.amount), 0.0)).filter(
+                    models.Revenue.created_at >= s_dt, models.Revenue.created_at <= e_dt
+                ).scalar() or 0.0
+                
+                expense = db.query(func.coalesce(func.sum(models.Expense.amount), 0.0)).filter(
+                    models.Expense.is_paid == True,
+                    models.Expense.paid_date >= s, models.Expense.paid_date <= e
+                ).scalar() or 0.0
+                
+                # Top Products (PDV Mix) - Top 5
+                prod_mix = db.query(
+                    models.PDVSaleItem.product_name, 
+                    func.sum(models.PDVSaleItem.quantity),
+                    func.sum(models.PDVSaleItem.total_item)
+                ).join(models.PDVSale).filter(
+                    models.PDVSale.created_at >= s_dt, models.PDVSale.created_at <= e_dt
+                ).group_by(models.PDVSaleItem.product_name).order_by(desc(func.sum(models.PDVSaleItem.quantity))).limit(5).all()
+                
+                product_mix = [{"name": p[0], "qty": float(p[1]), "total": float(p[2])} for p in prod_mix]
+                
+                # Breakdown por Categoria (Receita)
+                rev_cats = db.query(models.Revenue.category, func.sum(models.Revenue.amount)).filter(
+                    models.Revenue.created_at >= s_dt, models.Revenue.created_at <= e_dt
+                ).group_by(models.Revenue.category).all()
+                by_category = {c.value if hasattr(c, 'value') else str(c): float(v) for c, v in rev_cats}
+                
+                # Ocupação
+                total_rooms = db.query(models.Room).count() or 1
+                checkins = db.query(models.Booking).filter(
+                    models.Booking.real_check_in >= s_dt, models.Booking.real_check_in <= e_dt
+                ).count()
+                
+                return {
+                    "revenue": round(float(revenue), 2),
+                    "expense": round(float(expense), 2),
+                    "net": round(float(revenue) - float(expense), 2),
+                    "checkins": checkins,
+                    "product_mix": product_mix,
+                    "by_category": by_category,
+                    "occupancy_est": round((checkins / (total_rooms * days)) * 100, 1) if days > 0 else 0
+                }
+
+            current_period = get_summary(start, end)
+            result = {
+                "period": {"start": str(start), "end": str(end)},
+                "current": current_period
+            }
+            
+            if compare_with_previous:
+                days_diff = (end - start).days + 1
+                prev_end = start - timedelta(days=1)
+                prev_start = prev_end - timedelta(days=days_diff - 1)
+                previous_period = get_summary(prev_start, prev_end)
+                
+                def calc_delta(cur, prev):
+                    diff = cur - prev
+                    pct = round((diff / prev) * 100, 1) if prev != 0 else None
+                    return {"abs": round(diff, 2), "pct": pct}
+
+                result["comparison"] = {
+                    "period": {"start": str(prev_start), "end": str(prev_end)},
+                    "data": previous_period,
+                    "deltas": {
+                        "revenue": calc_delta(current_period["revenue"], previous_period["revenue"]),
+                        "expense": calc_delta(current_period["expense"], previous_period["expense"]),
+                        "net": calc_delta(current_period["net"], previous_period["net"]),
+                        "checkins": calc_delta(current_period["checkins"], previous_period["checkins"])
+                    }
+                }
+            
+            return result
+    except Exception as e:
+        return {"error": f"Erro na análise de dados: {str(e)}"}

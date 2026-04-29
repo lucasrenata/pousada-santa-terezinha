@@ -3,6 +3,9 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak
 from reportlab.lib.units import cm
+from reportlab.graphics.shapes import Drawing
+from reportlab.graphics.charts.piecharts import Pie
+from reportlab.graphics.charts.legends import Legend
 from datetime import datetime
 import os
 from sqlalchemy.orm import Session
@@ -122,6 +125,60 @@ class ProfessionalReport:
         ]))
         self.story.append(t)
         self.story.append(Spacer(1, 0.5*cm))
+
+    def add_paragraph(self, text, style_name='Normal'):
+        """Adiciona um bloco de texto (análise do robô)."""
+        if style_name not in self.styles:
+            style_name = 'Normal'
+        self.story.append(Paragraph(text, self.styles[style_name]))
+        self.story.append(Spacer(1, 0.4*cm))
+
+    def add_pie_chart(self, data, labels, title=""):
+        """Adiciona um gráfico de pizza profissional."""
+        if not data: return
+        
+        if title:
+            self.story.append(Paragraph(title, self.styles['Heading3']))
+            self.story.append(Spacer(1, 0.2*cm))
+
+        drawing = Drawing(width=400, height=200)
+        pc = Pie()
+        pc.x = 150
+        pc.y = 25
+        pc.width = 150
+        pc.height = 150
+        pc.data = data
+        pc.labels = labels
+        
+        pc.sideLabels = True
+        pc.slices.strokeWidth = 0.5
+        
+        # Cores elegantes
+        col_palette = [
+            colors.HexColor("#2563eb"), colors.HexColor("#16a34a"), 
+            colors.HexColor("#dc2626"), colors.HexColor("#eab308"), 
+            colors.HexColor("#9333ea"), colors.HexColor("#0891b2")
+        ]
+        for i, color in enumerate(col_palette):
+            if i < len(pc.slices):
+                pc.slices[i].fillColor = color
+
+        drawing.add(pc)
+        
+        # Adiciona legenda lateral
+        legend = Legend()
+        legend.x = 20
+        legend.y = 100
+        legend.dx = 8
+        legend.dy = 8
+        legend.fontName = 'Helvetica'
+        legend.fontSize = 8
+        legend.columnMaximum = 10
+        legend.colorNamePairs = list(zip(col_palette, labels))
+        drawing.add(legend)
+
+        self.story.append(drawing)
+        self.story.append(Spacer(1, 0.8*cm))
 
     def _draw_footer(self, canvas, doc):
         canvas.saveState()

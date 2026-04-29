@@ -5,8 +5,9 @@ import models
 from database import SessionLocal, set_tenant_context
 from utils.finance_pdf import generate_financial_report
 from utils.inventory_pdf import generate_inventory_report, generate_shopping_list_report
+from utils.custom_report_logic import generate_custom_ai_report
 from datetime import datetime, date, timedelta
-from typing import Optional, List
+from typing import Optional, List, Any, Dict
 
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
@@ -431,7 +432,7 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
         return shared_tools.find_guest_logic(tenant_id, cpf, name)
 
     @tool
-    def robot_book_with_payment(guest_id: int, room_id: str, check_in: str, check_out: str, group_size: int, companions: List[dict] = []) -> dict:
+    def robot_book_with_payment(guest_id: int, room_id: str, check_in: str, check_out: str, group_size: int, companions: List[Dict[str, Any]] = []) -> dict:
         """Micro-robô FINALIZADOR: Realiza a reserva e gera a cobrança PIX. Use para efetivar a venda para o cliente."""
         return shared_tools.unified_booking_flow(tenant_id, guest_id, room_id, check_in, check_out, group_size, companions)
 
@@ -456,6 +457,33 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
         """Micro-robô de Memória: Salva fatos, preferências ou regras aprendidas na memória de longo prazo."""
         return shared_tools.store_operational_memory_logic(tenant_id, content, category, guest_id, importance)
 
+    @tool
+    def robot_get_analytics_data(start_date: str = None, end_date: str = None, compare_with_previous: bool = False) -> dict:
+        """Micro-robô Analítico: Retorna dados crus de faturamento, despesas, ocupação e mix de produtos (PDV).
+        Use para coletar dados antes de realizar uma análise interpretativa ou gerar relatórios personalizados."""
+        print(f"[AI_ADMIN_LOG] Buscando Analytics: {start_date} até {end_date}")
+        return shared_tools.get_raw_analytics_logic(tenant_id, start_date, end_date, compare_with_previous)
+
+    @tool
+    def robot_generate_custom_report(title: str, sections: List[Dict[str, Any]]) -> dict:
+        """Micro-robô de PDF Flexível: Gera um relatório PDF profissional baseado na estrutura definida por você.
+        'sections' deve ser uma lista de dicionários com: title, type (page_break ou content) e components (kpis, table, analysis, pie_chart).
+        Use este robô APÓS analisar os dados com robot_get_analytics_data."""
+        try:
+            print(f"[AI_ADMIN_LOG] Gerando PDF Analítico: {title}")
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"ai_analysis_{ts}.pdf"
+            path = generate_custom_ai_report(tenant_id, filename, title, sections)
+            base_url = os.getenv("BASE_URL", "/api")
+            return {
+                "url": f"{base_url}/reports/{filename}",
+                "message": "Relatório analítico personalizado gerado com sucesso.",
+                "title": title
+            }
+        except Exception as e:
+            print(f"[AI_ADMIN_ERROR] Falha ao gerar PDF: {str(e)}")
+            return {"error": f"Falha na geração do PDF: {str(e)}"}
+
     # --- MEMÓRIA E DIAGNÓSTICO ---
     current_guest_id = None
     for h in reversed(history):
@@ -469,14 +497,14 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
     # -------------------------------------------------------------------------
     # ORQUESTRAÇÃO
     # -------------------------------------------------------------------------
-
     tools = [
         robot_inventory_sync, robot_inventory_viewer, robot_room_status_manager,
         robot_room_setup_manager, robot_consumption_launcher, robot_checkout_manager, 
         robot_finance_summary, robot_pdf_reporter, robot_event_intelligence,
         robot_room_viewer, robot_mark_room_as_ready,
         robot_check_availability, robot_find_guest, robot_book_with_payment,
-        robot_find_booking, robot_get_payment_info, robot_confirm_payment, robot_record_knowledge
+        robot_find_booking, robot_get_payment_info, robot_confirm_payment, robot_record_knowledge,
+        robot_get_analytics_data, robot_generate_custom_report
     ]
     llm_with_tools = llm.bind_tools(tools)
     
@@ -489,7 +517,13 @@ DIRETRIZES DE COMUNICAÇÃO:
 {op_memory}
 5. **LINKS E RELATÓRIOS**: Ao fornecer links para relatórios ou arquivos PDF, use SEMPRE o formato Markdown: `[Texto Descritivo](URL)`. NUNCA envie a URL pura. Isso permite que o sistema renderize um botão clicável para o usuário.
 
-Sua postura é de um gerente sênior: resolutivo, preciso e pragmático.""")
+Sua postura é de um gerente sênior: resolutivo, preciso e pragmático.
+
+6. **ANÁLISE E RELATÓRIO**: Sempre que o usuário pedir uma análise de desempenho ou relatório personalizado:
+   - Primeiro use `robot_get_analytics_data` para obter os fatos.
+   - Realize uma interpretação dos dados (identifique tendências de alta/baixa).
+   - Use `robot_generate_custom_report` para criar o documento, incluindo uma seção de "Análise do Especialista" com suas conclusões.
+   - Utilize `pie_chart` para mostrar distribuições (ex: faturamento por categoria ou produtos mais vendidos).""")
 
     def call_model(state: MessagesState):
         messages = [sys_msg] + state["messages"]
@@ -531,20 +565,38 @@ Sua postura é de um gerente sênior: resolutivo, preciso e pragmático.""")
 
         # VÁLVULA DE ESCAPE: Se a IA ficou muda APÓS a execução das ferramentas
         if not response_content or response_content.strip() == "":
-            last_tool_msg = next((m for m in reversed(final_state["messages"]) if isinstance(m, ToolMessage)), None)
-            if last_tool_msg:
+            print(f"[AI_ADMIN_LOG] IA ficou muda. Buscando links nos resultados das ferramentas...")
+            # Tenta encontrar qualquer mensagem de ferramenta que tenha um URL
+            tool_res_msg = None
+            for m in reversed(final_state["messages"]):
+                if isinstance(m, ToolMessage):
+                    try:
+                        res_j = json.loads(m.content)
+                        if res_j.get("url"):
+                            tool_res_msg = m
+                            break
+                    except: continue
+            
+            if tool_res_msg:
                 try:
-                    import json
-                    res_j = json.loads(last_tool_msg.content)
-                    msg_info = res_j.get("message") or res_j.get("error") or "Solicitação processada com sucesso."
+                    res_j = json.loads(tool_res_msg.content)
+                    msg_info = res_j.get("message") or "Relatório processado."
                     url_pdf = res_j.get("url")
                     title_pdf = res_j.get("title") or "Baixar Arquivo"
-                    response_content = f"{msg_info}"
-                    if url_pdf: response_content += f"\n\n[{title_pdf}]({url_pdf})"
+                    response_content = f"{msg_info}\n\n[{title_pdf}]({url_pdf})"
                 except:
-                    response_content = "Seu robô completou a tarefa com sucesso. Algo mais em que posso ajudar?"
+                    response_content = "Solicitação processada com sucesso. Link gerado internamente."
             else:
-                response_content = "Entendido. No que posso te ajudar agora?"
+                # Fallback genérico se não achou URL
+                last_tool_msg = next((m for m in reversed(final_state["messages"]) if isinstance(m, ToolMessage)), None)
+                if last_tool_msg:
+                    try:
+                        res_j = json.loads(last_tool_msg.content)
+                        response_content = res_j.get("message") or res_j.get("error") or "Solicitação processada com sucesso."
+                    except:
+                        response_content = "Solicitação processada. Detalhes indisponíveis."
+                else:
+                    response_content = "Entendido. No que posso te ajudar agora?"
 
         return {"response": response_content}
     except Exception as e:
