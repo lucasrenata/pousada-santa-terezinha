@@ -21,6 +21,7 @@ export default function GuestChatPage() {
   const [uploading, setUploading] = useState(false);
   const [sessionId, setSessionId] = useState<string>('');
   const [pousadaName, setPousadaName] = useState('Estabelecimento');
+  const [aiName, setAiName] = useState('Ana');
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -110,11 +111,16 @@ export default function GuestChatPage() {
 
   const loadSettings = async () => {
     try {
+      // 1. Busca dados do Tenant (Nome Oficial)
+      const tenantResp = await api.get(`/settings/public/tenant/${tenant_id}`);
+      if (tenantResp.data.name) setPousadaName(tenantResp.data.name);
+
+      // 2. Busca outras configs públicas (IA Name, etc)
       const response = await api.get(`/settings/public/${tenant_id}`);
-      const nameSetting = response.data.find((s: any) => s.key === 'pousada_name');
-      if (nameSetting) setPousadaName(nameSetting.value);
+      const aiNameSetting = response.data.find((s: any) => s.key === 'ai_receptionist_name');
+      if (aiNameSetting) setAiName(aiNameSetting.value);
     } catch (err) {
-      console.error("Erro ao carregar nome do estabelecimento", err);
+      console.error("Erro ao carregar configurações públicas", err);
     }
   };
 
@@ -237,7 +243,9 @@ export default function GuestChatPage() {
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
                <div className="p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100/50">
-                  <p className="text-slate-600 text-sm font-medium italic">"Olá, vamos fazer uma reserva hoje!"</p>
+                  <p className="text-slate-600 text-sm font-medium italic">
+                    "Olá, meu nome é {aiName}, {aiName.toLowerCase().endsWith('a') ? 'sua' : 'seu'} recepcionista virtual, como posso te ajudar hoje?"
+                  </p>
                </div>
                <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-tighter">Sua conversa é segura e privada</p>
             </div>
