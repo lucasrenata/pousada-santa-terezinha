@@ -7,7 +7,8 @@ def generate_financial_report(data, filename="relatorio_financeiro.pdf", tenant_
     Gera um relatório financeiro de alto nível.
     mode: 'full' (completo com extrato) ou 'summary' (apenas visão geral)
     """
-    title = "Relatório Financeiro Completo" if mode == "full" else "Demonstrativo Financeiro Resumido"
+    tenant_name = data.get('tenant_name', 'Pousada')
+    title = f"{tenant_name.upper()}<br/>Relatório Financeiro" if mode == "full" else f"{tenant_name.upper()}<br/>Demonstrativo Financeiro Resumido"
     report = ProfessionalReport(filename, title, tenant_id=tenant_id)
     
     # 1. Cabeçalho e Sumário
