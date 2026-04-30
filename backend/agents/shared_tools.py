@@ -732,9 +732,9 @@ def handle_guest_registration_webhook(
             
             if session_id:
                 state_manager = StateManager(tenant_id)
-                session_state = state_manager.load_session(session_id)
-                if session_state:
-                    context = session_state.get_context()
+                session_data = state_manager.load_session(session_id)
+                if session_data:
+                    context = session_data.get('context', {})
                     context['guest_id'] = guest.id
                     context['guest_name'] = guest.name
                     context['webhook_received'] = True

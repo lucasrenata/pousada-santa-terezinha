@@ -14,7 +14,7 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, START, END, MessagesState
-from langgraph.prebuilt import ToolNode
+from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 
 # =============================================================================
@@ -107,50 +107,50 @@ ROTEIRO DE ENCANTAMENTO:
 5. FINALIZAÇÃO: Use 'robot_create_booking_atomic' para selar a reserva e 'robot_get_payment_info' para facilitar o pagamento.
 
 REGRAS DE OURO:
-- NUNCA responda de forma mecânica. Transforme os dados dos robôs em uma conversa fluida.
-- Se o hóspede der datas e pessoas, sua PRIORIDADE é dar o preço e já começar a planejar a estadia deles.
+- NUNCA diga que vai "esperar" ou "localizar". Use o robô IMEDIATAMENTE e responda já com o resultado.
+- NUNCA envie links por extenso (URLs). Sempre use o formato de botão Markdown em uma nova linha: [Texto do Botão](URL).
+- Se o hóspede não tiver cadastro, entregue o botão de cadastro IMEDIATAMENTE após a Ana se apresentar.
 - Mantenha o foco em converter a conversa em uma reserva feliz!
 """)
 
     tools = [
-        robot_identify_guest, robot_calculate_quote, robot_search_available_rooms,
-        robot_create_booking_atomic, robot_get_payment_info, robot_business_intelligence
+        robot_identify_guest, 
+        robot_calculate_quote, 
+        robot_search_available_rooms, 
+        robot_create_booking_atomic,
+        robot_get_payment_info,
+        robot_business_intelligence
     ]
     
-    llm_with_tools = llm.bind_tools(tools)
-
-    # --- EXECUÇÃO DO GRAFO ---
-    async def call_model(state: MessagesState):
-        messages = [sys_msg] + state["messages"]
-        response = await llm_with_tools.ainvoke(messages)
-        return {"messages": [response]}
+    # --- CONSTRUÇÃO DO GRAFO (AGENTE REATIVO) ---
+    def call_model(state: MessagesState):
+        return llm.bind_tools(tools).invoke([sys_msg] + state["messages"])
 
     workflow = StateGraph(MessagesState)
     workflow.add_node("agent", call_model)
     workflow.add_node("tools", ToolNode(tools))
     workflow.add_edge(START, "agent")
-    workflow.add_conditional_edges("agent", lambda s: "tools" if s["messages"][-1].tool_calls else END)
+    workflow.add_conditional_edges("agent", tools_condition)
     workflow.add_edge("tools", "agent")
+    
     app = workflow.compile()
-
-    lc_messages = convert_history_to_langchain(history)
-    lc_messages.append(HumanMessage(content=message))
-
+    
     try:
-        final_state = await app.ainvoke({"messages": lc_messages})
-        response_msg = final_state["messages"][-1]
-        response_content = response_msg.content
+        # Registramos quantas mensagens tínhamos antes para pegar apenas as NOVAS
+        initial_msg_count = len(history) + 1 # +1 pela HumanMessage que vamos enviar
         
-        # --- NORMALIZAÇÃO ROBUSTA (THE GEMINI WAY) ---
+        final_state = await app.ainvoke({"messages": convert_history_to_langchain(history) + [HumanMessage(content=message)]})
+        
+        # --- COLETA DE TODAS AS RESPOSTAS DA IA NESTE TURNO ---
+        # Queremos todas as AIMessages que surgiram após a nossa HumanMessage
+        new_messages = final_state["messages"][initial_msg_count:]
+        ai_responses = [m.content for m in new_messages if isinstance(m, AIMessage) and m.content]
+        
+        response_content = " ".join(ai_responses).strip()
+        
+        # --- NORMALIZAÇÃO ROBUSTA ---
         if isinstance(response_content, list):
-            full_text = ""
-            for part in response_content:
-                if isinstance(part, dict):
-                    if part.get("type") == "text":
-                        full_text += part.get("text", "")
-                elif isinstance(part, str):
-                    full_text += part
-            response_content = full_text.strip()
+            response_content = " ".join([p.get("text", "") if isinstance(p, dict) else str(p) for p in response_content]).strip()
         
         # --- VÁLVULA DE ESCAPE INTELIGENTE ---
         if not response_content or response_content.strip() == "":
@@ -165,12 +165,12 @@ REGRAS DE OURO:
                             break
                         # Se foi identificação
                         if res.get("registration_link"):
-                            response_content = f"Notei que você ainda não tem cadastro. Clique aqui para preencher rapidinho: [💎 Cadastrar Agora]({res['registration_link']})"
+                            response_content = f"Notei que você ainda não tem cadastro conosco. Será um prazer te receber! Para continuarmos, basta clicar no botão abaixo:\n\n[💎 Clique aqui para se Cadastrar]({res['registration_link']})"
                             break
                     except: continue
             
             if not response_content:
-                response_content = "Entendido! Como posso te ajudar a prosseguir com a reserva?"
+                response_content = "Entendido! Como posso te ajudar a prosseguir com o seu atendimento?"
 
         return {"response": response_content}
     except Exception as e:

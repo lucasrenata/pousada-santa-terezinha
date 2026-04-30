@@ -3,7 +3,7 @@ import os
 from typing import Optional, List, Any, Dict
 from datetime import datetime, date, timedelta
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_
+from sqlalchemy import func, and_, or_, text
 from database import SessionLocal, set_tenant_context
 import models
 
@@ -36,30 +36,48 @@ class CustomerEngineV2:
     # -------------------------------------------------------------------------
     async def robot_identify_guest(self, cpf: str, session_id: str = "") -> Dict[str, Any]:
         """
-        Busca hóspede pelo CPF ou gera link de cadastro.
+        Busca hóspede pelo CPF ou gera link de cadastro (com Instrumentação e Retry).
         """
+        import asyncio
+        import logging
+        logger = logging.getLogger("AI_ENGINE")
+        
         clean_cpf = "".join(filter(str.isdigit, cpf))
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5174")
         
-        with SessionLocal() as db:
-            set_tenant_context(db, self.tenant_id)
-            guest = db.query(models.Guest).filter(models.Guest.document == clean_cpf).first()
+        logger.info(f"[ROBOT_ID] Iniciando busca por CPF: {clean_cpf} (Tenant: {self.tenant_id})")
+        
+        for attempt in range(3):
+            with SessionLocal() as db:
+                set_tenant_context(db, self.tenant_id)
+                # Forçamos uma verificação do que o DB está "vendo" agora
+                tid_check = db.execute(text("SHOW app.current_tenant")).scalar()
+                logger.info(f"[ROBOT_ID] Tentativa {attempt+1}. Contexto RLS no DB: {tid_check}")
+                
+                guest = db.query(models.Guest).filter(models.Guest.document == clean_cpf).first()
+                
+                if guest:
+                    logger.info(f"[ROBOT_ID] ✅ Sucesso! Hóspede encontrado: {guest.name} (ID: {guest.id})")
+                    return {
+                        "success": True,
+                        "guest_id": guest.id,
+                        "name": guest.name,
+                        "message": f"Hóspede {guest.name} localizado com sucesso."
+                    }
+                else:
+                    logger.warning(f"[ROBOT_ID] ⚠️ Hóspede não encontrado na tentativa {attempt+1}")
             
-            if guest:
-                return {
-                    "success": True,
-                    "guest_id": guest.id,
-                    "name": guest.name,
-                    "message": f"Hóspede {guest.name} localizado com sucesso."
-                }
-            else:
-                link = f"{frontend_url}/{self.tenant_id}/registrar?cpf={clean_cpf}&sid={session_id}"
-                return {
-                    "success": False,
-                    "needs_registration": True,
-                    "registration_link": link,
-                    "message": "CPF não cadastrado. Link de registro gerado."
-                }
+            if attempt < 2:
+                await asyncio.sleep(2.0)
+        
+        link = f"{frontend_url}/{self.tenant_id}/registrar?cpf={clean_cpf}&sid={session_id}"
+        logger.error(f"[ROBOT_ID] ❌ Falha definitiva após 3 tentativas. Gerando link: {link}")
+        return {
+            "success": False,
+            "needs_registration": True,
+            "registration_link": link,
+            "message": "CPF não cadastrado ou invisível por RLS após múltiplas tentativas."
+        }
 
     # -------------------------------------------------------------------------
     # ROBÔ 2: CONSULTOR DE PREÇOS (QUOTATION)

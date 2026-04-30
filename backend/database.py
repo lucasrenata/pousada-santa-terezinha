@@ -41,15 +41,15 @@ def get_db():
 def after_begin(session, transaction, connection):
     """
     SINCRONIZAÇÃO DEFINITIVA DE RLS:
-    A raiz do problema em sistemas multi-tenant com pool de conexões é que o 'SET app.current_tenant'
-    é volátil e se perde se a conexão for devolvida ao pool ou se a sessão abrir uma nova transação.
-    Este 'hook' garante que SEMPRE que uma transação começar no SQLAlchemy, o banco de dados
-    receberá a identidade correta da pousada antes de qualquer comando SQL.
+    Garante que toda transação, mesmo as implícitas do SQLAlchemy, 
+    configurem o app.current_tenant no PostgreSQL.
     """
     tid = session.info.get('tenant_id')
     if tid is not None:
-        # Força o ID do tenant na conexão atual da transação
         connection.execute(text("SET app.current_tenant = :tid"), {"tid": str(tid)})
+    else:
+        # Se não houver TID na sessão, forçamos '0' por segurança (isolamento total)
+        connection.execute(text("SET app.current_tenant = '0'"))
 
 # Evento para garantir que todo objeto novo herde o tenant_id da sessão (Segurança de Dados)
 @event.listens_for(Session, "before_flush")
