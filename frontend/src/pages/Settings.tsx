@@ -114,6 +114,7 @@ export default function Settings() {
       if (key === 'pousada_rate_child_percentage') return '50';
       if (key === 'pousada_rate_infant_fixed') return '25';
       if (key === 'pousada_name') return 'Pousada System';
+      if (key === 'ai_receptionist_name') return 'Ana';
     }
     return setting?.value || '';
   };
@@ -375,7 +376,7 @@ export default function Settings() {
                   <div className="flex gap-2">
                     <Input 
                       placeholder="Ex: Ana, Maria, Recepcionista Virtual"
-                      value={getSettingValue('ai_receptionist_name') || 'Ana'} 
+                      value={getSettingValue('ai_receptionist_name')} 
                       onChange={(e: ChangeEvent<HTMLInputElement>) => setLocalValue('ai_receptionist_name', e.target.value)}
                     />
                     <Button 
