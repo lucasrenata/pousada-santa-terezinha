@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List
-import models
+import models, schemas
 from database import get_db, set_tenant_context
 from typing import Optional
 from routers.auth import get_current_admin
@@ -13,6 +13,11 @@ class SettingSchema(BaseModel):
     key: str
     value: str
     description: str | None = None
+
+class TenantUpdate(BaseModel):
+    name: Optional[str] = None
+    cnpj: Optional[str] = None
+    address: Optional[str] = None
 
 @router.get("/", response_model=List[SettingSchema])
 def get_settings(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
@@ -38,3 +43,21 @@ def update_setting(setting: SettingSchema, db: Session = Depends(get_db), curren
         db.add(new_s)
     db.commit()
     return {"message": "Salvo"}
+
+# --- GESTÃO DOS DADOS DA POUSADA (TENANT) ---
+
+@router.get("/tenant", response_model=schemas.TenantResponse)
+def get_tenant_info(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    """Busca os dados oficiais da pousada (Nome, CNPJ, Endereço)"""
+    return db.query(models.Tenant).filter(models.Tenant.id == current_user.tenant_id).first()
+
+@router.patch("/tenant", response_model=schemas.TenantResponse)
+def update_tenant_info(payload: TenantUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    """Atualiza os dados oficiais da pousada"""
+    tenant = db.query(models.Tenant).filter(models.Tenant.id == current_user.tenant_id).first()
+    if payload.name is not None: tenant.name = payload.name
+    if payload.cnpj is not None: tenant.cnpj = payload.cnpj
+    if payload.address is not None: tenant.address = payload.address
+    db.commit()
+    db.refresh(tenant)
+    return tenant

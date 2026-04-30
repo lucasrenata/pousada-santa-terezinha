@@ -440,6 +440,9 @@ def export_financial_pdf(
     start_dt = datetime.combine(start, datetime.min.time())
     end_dt   = datetime.combine(end,   datetime.max.time())
 
+    # Coleta Info da Pousada
+    tenant = db.query(models.Tenant).filter(models.Tenant.id == admin.tenant_id).first()
+
     # Coleta de Totais
     revs = db.query(models.Revenue).filter(
         models.Revenue.created_at >= start_dt,
@@ -454,24 +457,41 @@ def export_financial_pdf(
 
     total_revenue = sum(r.amount for r in revs)
     total_expense = sum(e.amount for e in exps)
-    total_discounts = sum(r.discount or 0.0 for r in revs) # Assume descontos registrados na receita
+    total_discounts = sum(r.discount or 0.0 for r in revs)
+    
+    # Resumo por Meio de Pagamento (Crucial para Contador)
+    pay_summary = {}
     
     # Listas detalhadas
-    incomes_list = [{
-        "data": r.created_at.strftime("%d/%m/%Y"),
-        "desc": r.description,
-        "cat": r.category.value if r.category else "Geral",
-        "valor": r.amount,
-        "desconto": r.discount or 0.0
-    } for r in revs]
+    incomes_list = []
+    for r in revs:
+        # Tenta buscar nome do hóspede se houver booking_id
+        g_name = "Venda Avulsa/PDV"
+        if r.booking:
+            g_name = r.booking.guest.name if r.booking.guest else f"Reserva #{r.booking_id}"
+        
+        m_pgto = r.payment_method.value if r.payment_method else "Não Inf."
+        pay_summary[m_pgto] = pay_summary.get(m_pgto, 0) + r.amount
+        
+        incomes_list.append({
+            "data": r.created_at.strftime("%d/%m/%Y"),
+            "desc": f"{r.description} ({g_name})",
+            "cat": r.category.value if r.category else "Geral",
+            "metodo": m_pgto,
+            "valor": r.amount,
+            "desconto": r.discount or 0.0
+        })
 
-    outcomes_list = [{
-        "data": e.paid_date.strftime("%d/%m/%Y") if e.paid_date else "-",
-        "desc": e.description,
-        "cat": e.category.value if e.category else "Geral",
-        "metodo": "Transferência", # Ou buscar do campo se houver
-        "valor": e.amount
-    } for e in exps]
+    outcomes_list = []
+    for e in exps:
+        m_pgto = e.payment_method.value if e.payment_method else "Outros"
+        outcomes_list.append({
+            "data": e.paid_date.strftime("%d/%m/%Y") if e.paid_date else "-",
+            "desc": e.description,
+            "cat": e.category.value if e.category else "Geral",
+            "metodo": m_pgto,
+            "valor": e.amount
+        })
 
     # Categorização
     by_category = {}
@@ -484,7 +504,7 @@ def export_financial_pdf(
         cat = e.category.value if e.category else "Geral"
         expense_by_category[cat] = expense_by_category.get(cat, 0) + e.amount
 
-    # Timeline (Reutilizada da lógica de cash-flow)
+    # Timeline
     timeline = []
     cursor = start
     while cursor <= end:
@@ -510,7 +530,11 @@ def export_financial_pdf(
         "outcomes_list": outcomes_list,
         "by_category": by_category,
         "expense_by_category": expense_by_category,
-        "timeline": timeline
+        "pay_summary": pay_summary,
+        "timeline": timeline,
+        "tenant_name": tenant.name if tenant else "Pousada",
+        "tenant_cnpj": tenant.cnpj if tenant else None,
+        "tenant_address": tenant.address if tenant else None
     }
 
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')

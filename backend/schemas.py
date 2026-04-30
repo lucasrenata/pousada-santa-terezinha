@@ -35,6 +35,8 @@ class Token(BaseModel):
 class TenantBase(BaseModel):
     name: str
     subdomain: Optional[str] = None
+    cnpj: Optional[str] = None
+    address: Optional[str] = None
 
 class TenantCreate(TenantBase):
     pass

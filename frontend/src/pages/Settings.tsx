@@ -19,11 +19,14 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [mpConfig, setMpConfig] = useState({
-    accessToken: '',
-    publicKey: '',
-    manualPixKey: '',
     hasToken: false
   });
+  const [tenantInfo, setTenantInfo] = useState({
+    name: '',
+    cnpj: '',
+    address: ''
+  });
+  const [savingTenant, setSavingTenant] = useState(false);
   const [testingMp, setTestingMp] = useState(false);
   const [savingManual, setSavingManual] = useState(false);
   const [isValidated, setIsValidated] = useState(false);
@@ -65,9 +68,23 @@ export default function Settings() {
     }
   };
 
+  const loadTenantInfo = async () => {
+    try {
+      const resp = await api.get('/settings/tenant');
+      setTenantInfo({
+        name: resp.data.name || '',
+        cnpj: resp.data.cnpj || '',
+        address: resp.data.address || ''
+      });
+    } catch (error) {
+      console.error('Erro ao carregar dados do tenant:', error);
+    }
+  };
+
   useEffect(() => {
     loadSettings();
     loadMpConfig();
+    loadTenantInfo();
   }, []);
 
   const handleUpdateSetting = async (key: string, value: string, description: string | null) => {
@@ -171,32 +188,31 @@ export default function Settings() {
 
   const handleSaveManualPix = async () => {
     if (!mpConfig.manualPixKey) {
-      toast({ 
-        title: "Atenção", 
-        description: "Por favor, insira uma chave PIX válida.", 
-        variant: "destructive" 
-      });
+      toast({ title: "Atenção", description: "Por favor, insira uma chave PIX válida.", variant: "destructive" });
       return;
     }
-    
     setSavingManual(true);
     try {
-      await api.post('/payments/config-manual', {
-        manual_pix_key: mpConfig.manualPixKey
-      });
-      toast({ 
-        title: "PIX Manual Salvo!", 
-        description: "Sua chave de fallback foi atualizada com sucesso.",
-      });
+      await api.post('/payments/config-manual', { manual_pix_key: mpConfig.manualPixKey });
+      toast({ title: "PIX Manual Salvo!" });
       loadMpConfig();
     } catch (error) {
-      toast({ 
-        title: "Erro ao Salvar", 
-        description: "Não foi possível salvar a chave PIX manual.", 
-        variant: "destructive" 
-      });
+      toast({ title: "Erro ao Salvar", variant: "destructive" });
     } finally {
       setSavingManual(false);
+    }
+  };
+
+  const handleUpdateTenant = async () => {
+    setSavingTenant(true);
+    try {
+      await api.patch('/settings/tenant', tenantInfo);
+      toast({ title: "Dados oficiais atualizados!" });
+      loadTenantInfo();
+    } catch (error) {
+      toast({ title: "Erro ao atualizar dados do estabelecimento", variant: "destructive" });
+    } finally {
+      setSavingTenant(false);
     }
   };
 
@@ -305,19 +321,38 @@ export default function Settings() {
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Nome do Estabelecimento</label>
-                  <div className="flex gap-2">
-                    <Input 
-                      value={getSettingValue('pousada_name') || 'Pousada System'} 
-                      onChange={(e: ChangeEvent<HTMLInputElement>) => setLocalValue('pousada_name', e.target.value)}
-                    />
-                    <Button 
-                      onClick={() => handleUpdateSetting('pousada_name', getSettingValue('pousada_name'), 'Nome oficial da propriedade')}
-                      disabled={saving}
-                    >
-                      <Save className="w-4 h-4" />
-                    </Button>
-                  </div>
+                  <Input 
+                    placeholder="Nome oficial da Pousada"
+                    value={tenantInfo.name} 
+                    onChange={(e) => setTenantInfo({...tenantInfo, name: e.target.value})}
+                  />
                 </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">CNPJ (Opcional)</label>
+                  <Input 
+                    placeholder="00.000.000/0001-00"
+                    value={tenantInfo.cnpj} 
+                    onChange={(e) => setTenantInfo({...tenantInfo, cnpj: e.target.value})}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Endereço Completo</label>
+                  <Input 
+                    placeholder="Rua, Número, Bairro, Cidade - UF"
+                    value={tenantInfo.address} 
+                    onChange={(e) => setTenantInfo({...tenantInfo, address: e.target.value})}
+                  />
+                </div>
+
+                <Button 
+                  className="w-full bg-indigo-600 hover:bg-indigo-700" 
+                  onClick={handleUpdateTenant}
+                  disabled={savingTenant}
+                >
+                  {savingTenant ? "Salvando..." : <><Save className="w-4 h-4 mr-2" /> Salvar Dados Oficiais</>}
+                </Button>
 
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Telefone de Contato</label>

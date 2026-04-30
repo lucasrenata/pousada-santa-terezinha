@@ -12,7 +12,14 @@ def generate_financial_report(data, filename="relatorio_financeiro.pdf", tenant_
     
     # 1. Cabeçalho e Sumário
     periodo = f"{data.get('start', '')} até {data.get('end', '')}"
-    report.add_header(subtitle=f"Período de Referência: {periodo}")
+    
+    subtitle = f"Período: {periodo}"
+    if data.get('tenant_cnpj'):
+        subtitle += f" | CNPJ: {data['tenant_cnpj']}"
+    if data.get('tenant_address'):
+        subtitle += f"\nEndereço: {data['tenant_address']}"
+        
+    report.add_header(subtitle=subtitle)
     
     toc_items = [("Visão Geral do Período", "OVERVIEW")]
     if mode == "full":
@@ -51,23 +58,33 @@ def generate_financial_report(data, filename="relatorio_financeiro.pdf", tenant_
         cat_data.append([cat.title(), f"R$ {rv:.2f}", f"R$ {ex:.2f}"])
     
     report.add_table(cat_data, col_widths=[6*cm, 4*cm, 4*cm])
+    
+    # Nova mini-tabela: Meios de Pagamento (Receitas)
+    report.story.append(Spacer(1, 0.5*cm))
+    report.story.append(Paragraph("Resumo por Meio de Pagamento (Entradas)", report.styles['Heading4']))
+    pay_data = [["Meio de Pagamento", "Total Recebido"]]
+    for m, val in data.get("pay_summary", {}).items():
+        pay_data.append([m.upper(), f"R$ {val:.2f}"])
+    if len(pay_data) == 1: pay_data.append(["-", "Nenhuma entrada"])
+    report.add_table(pay_data, col_widths=[7*cm, 7*cm])
+    
     report.story.append(Spacer(1, 1*cm))
 
     if mode == "full":
         # 3. Seção: Entradas
         report.story.append(PageBreak())
         report.add_section_header("Detalhamento de Entradas (Receitas)", anchor="INCOMES")
-        hist_in = [["Data", "Descrição", "Categoria", "Valor", "Desc."]]
+        hist_in = [["Data", "Descrição", "Categoria", "Método", "Valor"]]
         for tx in data.get("incomes_list", []):
             hist_in.append([
                 tx["data"],
-                tx["desc"][:25] + ".." if len(tx["desc"]) > 25 else tx["desc"],
+                tx["desc"][:28] + ".." if len(tx["desc"]) > 28 else tx["desc"],
                 tx["cat"],
-                f"R$ {tx['valor']:.2f}",
-                f"R$ {tx.get('desconto', 0):.2f}"
+                tx.get("metodo", "-"),
+                f"R$ {tx['valor']:.2f}"
             ])
         if len(hist_in) == 1: hist_in.append(["-", "Nenhuma entrada", "-", "-", "-"])
-        report.add_table(hist_in, col_widths=[2.5*cm, 6*cm, 3*cm, 3.2*cm, 2.5*cm])
+        report.add_table(hist_in, col_widths=[2.5*cm, 6.5*cm, 2.5*cm, 2.5*cm, 3.5*cm])
 
         # 4. Seção: Saídas
         report.story.append(Spacer(1, 1*cm))

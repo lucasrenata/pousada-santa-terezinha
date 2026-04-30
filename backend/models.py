@@ -90,6 +90,8 @@ class Tenant(Base):
     name = Column(String, index=True)
     subdomain = Column(String, unique=True, index=True, nullable=True)
     is_active = Column(Boolean, default=True)
+    cnpj = Column(String, nullable=True)
+    address = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
 
     users = relationship("User", back_populates="tenant")
