@@ -18,29 +18,49 @@ from agents.schemas.session_state import HotelBookingState
 
 logger = logging.getLogger("SUPERVISOR")
 
-def extract_state_from_history(messages: list) -> Dict[str, Any]:
-    from utils.date_parser import extract_dates_from_text, extract_group_size_from_text
-    state_update = {}
-    # Captura apenas mensagens humanas para extração de desejos do hóspede
-    full_text = " ".join([m.content for m in messages if isinstance(m, HumanMessage) and isinstance(m.content, str)])
+def extract_state_from_history(messages: List[Any]) -> Dict[str, Any]:
+    """
+    Extrai check-in, check-out, group_size e CPF das mensagens.
+    Foca nas mensagens recentes para evitar confusão com dados antigos.
+    """
+    from utils.date_parser import extract_dates_from_text
     
-    logger.debug(f"[EXTRACTOR] Texto para análise: {full_text}")
+    # Pega apenas as últimas 4 mensagens para contexto de extração
+    recent_messages = messages[-4:]
+    full_text = " ".join([m.content for m in recent_messages if isinstance(m, HumanMessage) and isinstance(m.content, str)])
     
-    check_in, check_out = extract_dates_from_text(full_text)
-    if check_in: state_update["check_in"] = check_in
-    if check_out: state_update["check_out"] = check_out
+    # Prioriza a ÚLTIMA mensagem para group_size para evitar "2" + "2" = 22
+    last_user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
     
-    group_size = extract_group_size_from_text(full_text)
-    if group_size: state_update["group_size"] = group_size
+    state = {}
     
-    cpf_match = re.search(r'\b(\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b', full_text)
-    if cpf_match: state_update["cpf"] = re.sub(r'\D', '', cpf_match.group(1))
+    # Datas
+    dates = extract_dates_from_text(full_text)
+    if dates:
+        state["check_in"] = dates[0]
+        if len(dates) > 1:
+            state["check_out"] = dates[1]
+            
+    # Group Size (Sanidade: 1 a 15 pessoas)
+    group_match = re.search(r"(\d+)\s*(pess|adult|hosp|alguém)", last_user_msg.lower())
+    if not group_match:
+        group_match = re.search(r"^\s*(\d+)\s*$", last_user_msg) # Match número isolado "2"
+        
+    if group_match:
+        val = int(group_match.group(1))
+        if 1 <= val <= 15: # Limite de sanidade
+            state["group_size"] = val
+            
+    # CPF
+    cpf_match = re.search(r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b", full_text)
+    if cpf_match:
+        state["cpf"] = cpf_match.group(0).replace(".", "").replace("-", "")
 
     # Detecção de room_id (ex: "quarto 102", "quarto número 101", "número 303")
     room_match = re.search(r'\b(?:quarto|número|room|nº|#)\s*[:#]?\s*(\d{3})\b', full_text, re.IGNORECASE)
-    if room_match: state_update["room_id"] = room_match.group(1)
+    if room_match: state["room_id"] = room_match.group(1)
     
-    return state_update
+    return state
 
 class SupervisorAgent:
     def __init__(self, tenant_id: int):
@@ -181,7 +201,19 @@ class SupervisorAgent:
             sm.update_state(session_id, updates)
 
             # Resposta
-            response = next((m.content for m in reversed(final_state["messages"]) if isinstance(m, AIMessage) and m.content and not m.tool_calls), "Olá!")
+            # Resposta: Busca a última mensagem de texto (AIMessage) de forma robusta
+            response = ""
+            for m in reversed(final_state["messages"]):
+                if isinstance(m, AIMessage) and m.content:
+                    # Priorizamos mensagens sem tool_calls, mas se tiver conteúdo, usamos
+                    content = m.content.strip()
+                    if content and not content.startswith("{"): # Evita vazar JSON bruto se houver
+                        response = content
+                        break
+
+            if not response:
+                response = "Encontrei as informações para você! Como podemos prosseguir?"
+                logger.error(f"[SUPERVISOR] Falha ao encontrar resposta de texto. Histórico: {final_state['messages'][-3:]}")
             
             db = SessionLocal()
             set_tenant_context(db, self.tenant_id)
@@ -193,7 +225,18 @@ class SupervisorAgent:
 
     def _extract_final_data(self, state: HotelBookingState) -> Dict[str, Any]:
         updates = {}
+        # 1. Inteligência via JSON (tool_calls) - PRECISÃO MÁXIMA
         for m in state["messages"]:
+            if isinstance(m, AIMessage) and m.tool_calls:
+                for call in m.tool_calls:
+                    args = call.get("args", {})
+                    if args.get("check_in"): updates["check_in"] = args["check_in"]
+                    if args.get("check_out"): updates["check_out"] = args["check_out"]
+                    if args.get("group_size"): updates["group_size"] = args["group_size"]
+                    if args.get("room_id"): updates["room_id"] = str(args["room_id"])
+                    if args.get("cpf"): updates["cpf"] = str(args["cpf"]).replace(".", "").replace("-", "")
+
+            # 2. Respostas das Ferramentas (ToolMessage)
             if isinstance(m, ToolMessage):
                 try:
                     d = json.loads(m.content)
@@ -202,19 +245,20 @@ class SupervisorAgent:
                     if d.get("options"): updates["quote_options"] = d["options"]
                 except: continue
         
-        # Herda do estado atual
+        # 3. Herda do estado atual (Fallback)
         for k in ["check_in", "check_out", "group_size", "room_id", "cpf"]:
-            if state.get(k): updates[k] = state[k]
+            if state.get(k) and not updates.get(k):
+                updates[k] = state[k]
         
-        # Inteligência: Se room_id está vazio, mas temos opções e a IA/Humano citou um número
+        # 4. Detecção de Room ID via Contexto se estiver vazio
         if not updates.get("room_id"):
-            options = state.get("quote_options") or updates.get("quote_options", [])
+            options = updates.get("quote_options") or state.get("quote_options", [])
             all_text = " ".join([m.content for m in state["messages"] if isinstance(m.content, str)]).lower()
             for opt in options:
                 rid = str(opt.get("room_id"))
                 if rid in all_text:
                     updates["room_id"] = rid
-                    logger.info(f"[FSM][EXTRACTOR] Room {rid} detectado via cotação e contexto.")
+                    logger.info(f"[FSM][EXTRACTOR] Room {rid} detectado via cotação.")
                     break
                     
         return updates
