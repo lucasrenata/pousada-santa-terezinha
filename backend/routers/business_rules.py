@@ -8,9 +8,8 @@ from .auth import get_current_admin
 router = APIRouter(prefix="/business-rules", tags=["Business Rules"])
 
 @router.get("/", response_model=List[schemas.BusinessRuleResponse])
-def list_rules(db: Session = Depends(get_db)):
-    from database import set_tenant_context
-    set_tenant_context(db, 1) # Define tenant 1 como padrão para visualização pública
+def list_rules(db: Session = Depends(get_db), admin: models.User = Depends(get_current_admin)):
+    # O contexto do tenant é setado automaticamente pelo get_current_admin/RLS
     return db.query(models.BusinessRule).all()
 
 @router.post("/", response_model=schemas.BusinessRuleResponse)
@@ -27,7 +26,9 @@ def upsert_rule(rule: schemas.BusinessRuleCreate, db: Session = Depends(get_db),
         db.refresh(existing)
         return existing
     
-    new_rule = models.BusinessRule(**rule.model_dump())
+    new_rule_data = rule.model_dump()
+    new_rule_data["tenant_id"] = admin.tenant_id
+    new_rule = models.BusinessRule(**new_rule_data)
     db.add(new_rule)
     db.commit()
     db.refresh(new_rule)

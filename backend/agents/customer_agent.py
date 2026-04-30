@@ -51,6 +51,9 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
         llm = ChatOpenAI(model="gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.2)
         print(f"[AI_LOG] Usando OpenAI: gpt-4o-mini")
 
+    # --- ATIVAÇÃO DO CONTEXTO DE TENANT (RLS) ---
+    set_tenant_context(db, tenant_id)
+
     # --- BUSCA NOME DA IA E REGRAS DINÂMICAS ---
     settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
     ai_name = settings.get("ai_receptionist_name", "Ana")

@@ -69,7 +69,7 @@ def list_categories(db: Session = Depends(get_db), user = Depends(get_current_st
         # Inicializa categorias padrão se estiver vazio
         defaults = ["Bebidas", "Alimentos", "Higiene", "Mercearia", "Limpeza"]
         for name in defaults:
-            db.add(models.ProductCategory(name=name))
+            db.add(models.ProductCategory(name=name, tenant_id=tid))
         db.commit()
         cats = db.query(models.ProductCategory).all()
     return cats

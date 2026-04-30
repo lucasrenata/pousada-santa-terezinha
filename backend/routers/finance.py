@@ -27,7 +27,8 @@ def add_revenue(revenue: schemas.RevenueCreate, db: Session = Depends(get_db), a
         category=revenue.category,
         payment_method=revenue.payment_method,
         booking_id=revenue.booking_id,
-        created_at=datetime.now()
+        created_at=datetime.now(),
+        tenant_id=admin.tenant_id
     )
     db.add(new_rev)
     db.commit()
@@ -138,7 +139,8 @@ def create_expense(
         due_date=data.due_date,
         notes=data.notes,
         created_by=admin.username,
-        created_at=datetime.now()
+        created_at=datetime.now(),
+        tenant_id=admin.tenant_id
     )
     db.add(expense)
     db.commit()

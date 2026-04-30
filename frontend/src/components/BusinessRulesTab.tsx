@@ -19,7 +19,7 @@ interface BusinessRule {
 export default function BusinessRulesTab() {
   const [rules, setRules] = useState<BusinessRule[]>([]);
   const [loading, setLoading] = useState(true);
-  
+
   // Estados para as Configurações Individuais
   const [settings, setSettings] = useState<any>({
     pousada_deposit_percentage: '100',
@@ -37,15 +37,15 @@ export default function BusinessRulesTab() {
         api.get('/business-rules/'),
         api.get('/settings/')
       ]);
-      
+
       setRules(rulesResp.data);
-      
+
       // Mapeia os valores vindo do banco para o estado local
       const dbSettings: any = {};
       settingsResp.data.forEach((s: any) => {
         dbSettings[s.key] = s.value;
       });
-      
+
       setSettings((prev: any) => ({ ...prev, ...dbSettings }));
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
@@ -121,7 +121,7 @@ export default function BusinessRulesTab() {
 
   return (
     <div className="space-y-6">
-      
+
       {/* CARD 1: REGRAS DA CASA (O CÉREBRO DA IA) */}
       <Card className="border-indigo-100 shadow-sm overflow-hidden">
         <CardHeader className="bg-gradient-to-r from-indigo-600 to-violet-600 text-white">
@@ -136,13 +136,13 @@ export default function BusinessRulesTab() {
         <CardContent className="pt-6 space-y-4">
           <div className="space-y-2">
             <label className="text-sm font-bold text-slate-700">Regras da Casa, Políticas de Cancelamento e Observações</label>
-            <textarea 
+            <textarea
               className="w-full h-32 p-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
               placeholder="Ex: Não aceitamos pets. Cancelamento grátis até 7 dias antes. Café da manhã incluso..."
               value={settings.house_rules_description}
-              onChange={(e) => setSettings({...settings, house_rules_description: e.target.value})}
+              onChange={(e) => setSettings({ ...settings, house_rules_description: e.target.value })}
             />
-            <Button 
+            <Button
               className="w-full bg-indigo-600 hover:bg-indigo-700"
               disabled={savingSettings === 'house_rules_description'}
               onClick={() => handleSaveSetting('house_rules_description', settings.house_rules_description, 'Regras da casa e políticas lidas pela IA')}
@@ -165,21 +165,21 @@ export default function BusinessRulesTab() {
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between">
               <label className="text-sm text-slate-600">Check-in Padrão</label>
-              <Input 
-                type="time" 
-                className="w-32" 
+              <Input
+                type="time"
+                className="w-32"
                 value={settings.check_in_time}
-                onChange={(e) => setSettings({...settings, check_in_time: e.target.value})}
+                onChange={(e) => setSettings({ ...settings, check_in_time: e.target.value })}
                 onBlur={() => handleSaveSetting('check_in_time', settings.check_in_time, 'Horário padrão de entrada')}
               />
             </div>
             <div className="flex items-center justify-between">
               <label className="text-sm text-slate-600">Check-out Padrão</label>
-              <Input 
-                type="time" 
-                className="w-32" 
+              <Input
+                type="time"
+                className="w-32"
                 value={settings.check_out_time}
-                onChange={(e) => setSettings({...settings, check_out_time: e.target.value})}
+                onChange={(e) => setSettings({ ...settings, check_out_time: e.target.value })}
                 onBlur={() => handleSaveSetting('check_out_time', settings.check_out_time, 'Horário padrão de saída')}
               />
             </div>
@@ -201,11 +201,11 @@ export default function BusinessRulesTab() {
               <p className="text-[10px] text-slate-500">Valor para garantia de reserva</p>
             </div>
             <div className="flex items-center gap-2">
-              <Input 
-                type="number" 
-                className="w-20" 
+              <Input
+                type="number"
+                className="w-20"
                 value={settings.pousada_deposit_percentage}
-                onChange={(e) => setSettings({...settings, pousada_deposit_percentage: e.target.value})}
+                onChange={(e) => setSettings({ ...settings, pousada_deposit_percentage: e.target.value })}
                 onBlur={() => handleSaveSetting('pousada_deposit_percentage', settings.pousada_deposit_percentage, 'Percentual de sinal')}
               />
               <span className="text-sm font-bold text-slate-400">%</span>
@@ -216,8 +216,8 @@ export default function BusinessRulesTab() {
           {getRule("Fim de Semana") && (
             <div className="flex items-center justify-between p-3 border rounded-lg">
               <div className="flex items-center gap-3">
-                <Switch 
-                  checked={getRule("Fim de Semana")?.is_active} 
+                <Switch
+                  checked={getRule("Fim de Semana")?.is_active}
                   onCheckedChange={(val) => {
                     toggleActive(getRule("Fim de Semana")!.name, val);
                     handleSaveRule({ ...getRule("Fim de Semana")!, is_active: val });
@@ -229,10 +229,10 @@ export default function BusinessRulesTab() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <Input 
-                  type="number" 
-                  step="0.1" 
-                  className="w-20" 
+                <Input
+                  type="number"
+                  step="0.1"
+                  className="w-20"
                   value={getRule("Fim de Semana")?.config.multiplier}
                   onChange={(e) => updateLocalConfig(getRule("Fim de Semana")!.name, "multiplier", e.target.value)}
                   onBlur={() => handleSaveRule(getRule("Fim de Semana")!)}
@@ -245,8 +245,8 @@ export default function BusinessRulesTab() {
           {getRule("Estadia Longa") && (
             <div className="flex items-center justify-between p-3 border rounded-lg">
               <div className="flex items-center gap-3">
-                <Switch 
-                  checked={getRule("Estadia Longa")?.is_active} 
+                <Switch
+                  checked={getRule("Estadia Longa")?.is_active}
                   onCheckedChange={(val) => {
                     toggleActive(getRule("Estadia Longa")!.name, val);
                     handleSaveRule({ ...getRule("Estadia Longa")!, is_active: val });
@@ -258,17 +258,17 @@ export default function BusinessRulesTab() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <Input 
-                  type="number" 
-                  className="w-16" 
+                <Input
+                  type="number"
+                  className="w-16"
                   value={getRule("Estadia Longa")?.config.min_days}
                   onChange={(e) => updateLocalConfig(getRule("Estadia Longa")!.name, "min_days", e.target.value)}
                   onBlur={() => handleSaveRule(getRule("Estadia Longa")!)}
                 />
                 <span className="text-xs">dias</span>
-                <Input 
-                  type="number" 
-                  className="w-16" 
+                <Input
+                  type="number"
+                  className="w-16"
                   value={getRule("Estadia Longa")?.config.discount_percent}
                   onChange={(e) => updateLocalConfig(getRule("Estadia Longa")!.name, "discount_percent", e.target.value)}
                   onBlur={() => handleSaveRule(getRule("Estadia Longa")!)}

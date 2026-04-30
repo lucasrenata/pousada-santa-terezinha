@@ -55,7 +55,9 @@ def list_events(year: int = 2026, db: Session = Depends(get_db), current_user = 
 
 @router.post("/")
 def create_event(data: EventCreate, db: Session = Depends(get_db), admin = Depends(get_current_admin)):
-    event = models.Event(**data.dict())
+    event_data = data.dict()
+    event_data["tenant_id"] = admin.tenant_id
+    event = models.Event(**event_data)
     db.add(event)
     db.commit()
     db.refresh(event)
@@ -137,7 +139,8 @@ def seed_events(year: int = 2026, db: Session = Depends(get_db), admin = Depends
     for name, start, end, color in events_data:
         db.add(models.Event(
             name=name, start_date=start, end_date=end,
-            location="Canção Nova - Cachoeira Paulista/SP", color=color
+            location="Canção Nova - Cachoeira Paulista/SP", color=color,
+            tenant_id=admin.tenant_id
         ))
     db.commit()
     return {"message": f"{len(events_data)} eventos inseridos para {year}"}

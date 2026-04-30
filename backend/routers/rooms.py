@@ -12,7 +12,7 @@ def create_room(room: schemas.RoomCreate, db: Session = Depends(get_db), admin: 
     set_tenant_context(db, admin.tenant_id)
     if db.query(models.Room).filter(models.Room.id == room.id).first():
         raise HTTPException(status_code=400, detail="Quarto já existe")
-    new_room = models.Room(status=models.RoomStatus.DISPONIVEL, **room.model_dump())
+    new_room = models.Room(status=models.RoomStatus.DISPONIVEL, **room.model_dump(), tenant_id=admin.tenant_id)
     db.add(new_room)
     db.commit()
     db.refresh(new_room)

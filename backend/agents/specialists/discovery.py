@@ -41,6 +41,11 @@ class DiscoverySpecialist(BaseSpecialist):
             group_size = context.get("group_size") or updated_ctx.get("group_size")
             guest_found = logic_results.get("guest", {}).get("found", False)
             guest_name  = updated_ctx.get("guest_name") or context.get("guest_name", "")
+            
+            # Preparação segura de nomes para evitar IndexError
+            name_parts = guest_name.split() if guest_name else []
+            name_short = name_parts[0] if name_parts else ""
+            name_greeting = f"Olá {name_short}!" if name_short else "Olá!"
 
             discovery_prompt = f"""
 Você é o Especialista de Atendimento da pousada (ID: {self.tenant_id}).
@@ -61,12 +66,12 @@ DIRETRIZES (SIGA NESTA ORDEM EXATA):
 PASSO 1 — CPF faltando → Peça o CPF de forma cordial para localizar o cadastro. Pare aqui.
 
 PASSO 2 — CPF ok, Hóspede identificado (✅), mas check-in/check-out/pessoas FALTANDO:
-   → Comece com: "Olá {guest_name.split()[0]}! Encontrei seu cadastro aqui." (ou similar)
+   → Comece com: "{name_greeting} Encontrei seu cadastro aqui." (ou similar)
    → Em seguida, peça as informações faltantes: "Para quando você deseja a reserva e para quantas pessoas?"
    → REGRA DE OURO: Se as datas já estão marcadas com ✅ acima, você está PROIBIDO de perguntar por elas.
 
 PASSO 3 — CPF ok, Hóspede identificado (✅), datas e pessoas PRESENTES (✅):
-   → Saudação inicial (se ainda não feita): "Olá {guest_name.split()[0]}!"
+   → Saudação inicial (se ainda não feita): "{name_greeting}"
    → NÃO repita a pergunta de datas. Elas já foram informadas.
    → SE há quartos disponíveis: Apresente as opções com preços e convide-o a escolher.
    → SE não há quartos: Informe educadamente que não há disponibilidade para essas datas e sugira outras datas próximas.
@@ -76,7 +81,7 @@ PASSO 4 — Quarto escolhido e dados completos:
 
 REGRAS DE OURO:
 - NUNCA pergunte algo que já está marcado com ✅.
-- SEMPRE use o nome do hóspede {guest_name.split()[0]} se ele estiver identificado (✅). 
+- SEMPRE use o nome do hóspede {name_short} se ele estiver identificado (✅). 
 - Se não houver quartos, NÃO pergunte as datas de novo. Apenas informe o hóspede.
 
 Contexto completo da sessão: {json.dumps({**context, **updated_ctx}, ensure_ascii=False)}
