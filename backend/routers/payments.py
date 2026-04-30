@@ -9,6 +9,7 @@ from utils.payment_helpers import _cpf_digits, _cpf_valid, prepare_payer_data, p
 from .auth import get_current_staff
 from core.crypto import CryptoService
 from pydantic import BaseModel
+from typing import Optional
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
