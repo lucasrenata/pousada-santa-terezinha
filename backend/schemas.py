@@ -492,7 +492,7 @@ class PDVSaleResponse(BaseModel):
     comanda_identificador: str
     total_amount: float
     discount: float
-    payment_method: models.PaymentMethod
+    payment_method: Optional[models.PaymentMethod] = None
     user_id: int
     session_id: Optional[int] = None
     created_at: datetime
