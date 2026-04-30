@@ -124,7 +124,8 @@ REGRAS DE OURO:
     
     # --- CONSTRUÇÃO DO GRAFO (AGENTE REATIVO) ---
     def call_model(state: MessagesState):
-        return llm.bind_tools(tools).invoke([sys_msg] + state["messages"])
+        response = llm.bind_tools(tools).invoke([sys_msg] + state["messages"])
+        return {"messages": [response]}
 
     workflow = StateGraph(MessagesState)
     workflow.add_node("agent", call_model)

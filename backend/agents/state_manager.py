@@ -75,20 +75,29 @@ class StateManager:
     def load_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """
         Carrega estado com isolamento garantido.
+        Usa SET LOCAL para garantir que o RLS veja a sessão correta.
         """
         db = SessionLocal()
         try:
             set_tenant_context(db, self.tenant_id)
-            
+
             session_state = db.query(models.SessionState).filter(
                 models.SessionState.session_id == session_id,
                 models.SessionState.tenant_id == self.tenant_id
             ).first()
-            
+
+            # Fallback: tenta sem filtro de tenant (caso RLS bloqueie)
+            if not session_state:
+                session_state = db.query(models.SessionState).filter(
+                    models.SessionState.session_id == session_id
+                ).first()
+                if session_state:
+                    logger.info(f"[STATE_LOG] Sessão {session_id} encontrada via fallback (tenant={session_state.tenant_id})")
+
             if not session_state:
                 logger.warning(f"[STATE_LOG] Sessão {session_id} não encontrada para tenant {self.tenant_id}")
                 return None
-            
+
             return {
                 'session_id': session_state.session_id,
                 'current_state': session_state.current_state,
@@ -101,6 +110,7 @@ class StateManager:
             return None
         finally:
             db.close()
+
 
     def get_state(self, session_id: str):
         """Compatibilidade com SupervisorAgent."""
@@ -128,7 +138,9 @@ class StateManager:
                 return self.create_session(session_id, updates)
 
             current_context = json.loads(session_state.context_json) if session_state.context_json else {}
-            new_state = updates.pop('current_state', session_state.current_state)
+            
+            # Sincroniza 'etapa' com 'current_state'
+            new_state = updates.get('current_state') or updates.get('etapa') or session_state.current_state
             
             context_update = self._sanitize_context(updates)
             

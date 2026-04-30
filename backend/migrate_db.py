@@ -1,9 +1,13 @@
-from database import engine
-from sqlalchemy import text
+import os
+from sqlalchemy import create_engine, text
 
 def migrate():
-    with engine.connect() as conn:
-        print("Iniciando migração do banco de dados completo...")
+    # Usa a URL de admin para migrações
+    db_url = os.getenv("ALEMBIC_DATABASE_URL") or os.getenv("DATABASE_URL")
+    engine_admin = create_engine(db_url)
+    
+    with engine_admin.connect() as conn:
+        print(f"Iniciando migração do banco com usuário: {db_url.split('://')[1].split(':')[0]}")
         try:
             # 1. Colunas de Horários e Preços base
             conn.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS check_in_time VARCHAR DEFAULT '14:00'"))

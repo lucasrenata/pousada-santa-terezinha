@@ -12,24 +12,12 @@ class CustomerEngineV2:
         self.tenant_id = tenant_id
 
     # -------------------------------------------------------------------------
-    # UTILS INTERNOS (SEM SHARED_TOOLS)
+    # UTILS INTERNOS
     # -------------------------------------------------------------------------
     def _parse_date(self, date_val: Any) -> Optional[date]:
-        """Parser de data atômico e resiliente."""
-        if not date_val: return None
-        if isinstance(date_val, (date, datetime)):
-            return date_val.date() if isinstance(date_val, datetime) else date_val
-        
-        date_str = str(date_val).strip()
-        try:
-            if "/" in date_str:
-                parts = date_str.split("/")
-                d = int(parts[0])
-                m = int(parts[1])
-                y = int(parts[2]) if len(parts) > 2 else datetime.now().year
-                return date(y, m, d)
-            return datetime.strptime(date_str, "%Y-%m-%d").date()
-        except: return None
+        """Delega ao parser centralizado e flexível."""
+        from utils.date_parser import parse_date
+        return parse_date(date_val)
 
     # -------------------------------------------------------------------------
     # ROBÔ 1: IDENTIFICADOR (CPF / CADASTRO)
@@ -93,35 +81,60 @@ class CustomerEngineV2:
         with SessionLocal() as db:
             set_tenant_context(db, self.tenant_id)
             
-            # 1. Busca Quarto mais barato disponível (Econômico) e o mais caro (Premium)
-            # Para cotação rápida, pegamos a média do tipo Standard se não houver ID específico
-            rooms = db.query(models.Room).filter(models.Room.status == "disponivel").all()
+            # Busca quartos disponíveis, ordenando do mais barato ao mais caro
+            rooms = db.query(models.Room).filter(
+                models.Room.status == "disponivel",
+                models.Room.max_capacity >= group_size
+            ).order_by(models.Room.price_per_night.asc()).all()
+            
             if not rooms: return {"success": False, "error": "Não há quartos disponíveis para estas datas."}
             
-            # 2. Busca Eventos no período
+            # Busca Eventos no período
             event = db.query(models.Event).filter(
                 models.Event.start_date <= co,
                 models.Event.end_date >= ci
             ).first()
             
-            # 3. Busca Regras de Preço (FDS, etc)
-            settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
             days = (co - ci).days
             if days <= 0: days = 1
             
             options = []
-            for r in rooms[:3]: # Oferece até 3 opções
-                base_price = r.price_per_night
-                if event and event.daily_rate > 0:
-                    base_price = event.daily_rate
-                
-                total = base_price * days * group_size
-                options.append({
-                    "room_id": r.id,
-                    "type": r.type,
-                    "total": total,
-                    "daily": base_price
-                })
+            seen_types = set()
+            
+            for r in rooms:
+                if r.type not in seen_types:
+                    seen_types.add(r.type)
+                    
+                    base_price = r.price_per_night
+                    if event and event.daily_rate > 0:
+                        base_price = event.daily_rate
+                    
+                    total = base_price * days * group_size
+                    options.append({
+                        "room_id": r.id,
+                        "type": r.type,
+                        "total": total,
+                        "daily": base_price
+                    })
+                    
+                if len(options) >= 3:
+                    break
+            
+            # Preenche até 3 se houver poucas categorias diferentes
+            if len(options) < 3:
+                for r in rooms:
+                    if not any(o['room_id'] == r.id for o in options):
+                        base_price = r.price_per_night
+                        if event and event.daily_rate > 0:
+                            base_price = event.daily_rate
+                        options.append({
+                            "room_id": r.id,
+                            "type": r.type,
+                            "total": base_price * days * group_size,
+                            "daily": base_price
+                        })
+                        if len(options) >= 3:
+                            break
             
             return {
                 "success": True,
@@ -180,49 +193,55 @@ class CustomerEngineV2:
         with SessionLocal() as db:
             set_tenant_context(db, self.tenant_id)
             
-            # 1. Validação Final de Disponibilidade (Lock)
-            existing = db.query(models.Booking).filter(
-                models.Booking.room_id == room_id,
-                models.Booking.status.in_(["confirmado", "ativo", "pendente"]),
-                models.Booking.check_out_date > ci,
-                models.Booking.check_in_date < co
-            ).first()
-            
-            if existing:
-                return {"success": False, "error": "Este quarto acaba de ser ocupado. Por favor, escolha outro."}
-            
-            # 2. Busca Preço Real do Quarto
-            room = db.query(models.Room).get(room_id)
-            days = (co - ci).days
-            total_amount = (room.price_per_night if room else 150) * days * group_size
-            
-            # 3. Cria a Reserva
-            booking = models.Booking(
-                tenant_id=self.tenant_id,
-                guest_id=guest_id,
-                room_id=room_id,
-                check_in_date=ci,
-                check_out_date=co,
-                total_guests=group_size,
-                total_amount=total_amount,
-                status="pendente"
-            )
-            db.add(booking)
-            db.commit()
-            db.refresh(booking)
-            
-            # 4. Calcula Sinal (Down Payment)
-            settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
-            deposit_pct = float(settings.get("pousada_deposit_percentage", 50))
-            down_payment = (total_amount * deposit_pct) / 100
-            
-            return {
-                "success": True,
-                "booking_id": booking.id,
-                "total_amount": total_amount,
-                "down_payment": down_payment,
-                "message": f"Reserva #{booking.id} criada! Valor total R$ {total_amount:.2f}. Sinal: R$ {down_payment:.2f}"
-            }
+            try:
+                with db.begin():
+                    # 1. Validação Final de Disponibilidade (Lock)
+                    existing = db.query(models.Booking).filter(
+                        models.Booking.room_id == room_id,
+                        models.Booking.status.in_(["confirmado", "ativo", "pendente"]),
+                        models.Booking.check_out_date > ci,
+                        models.Booking.check_in_date < co
+                    ).first()
+                    
+                    if existing:
+                        return {"success": False, "error": "Este quarto acaba de ser ocupado. Por favor, escolha outro."}
+                    
+                    # 2. Busca Preço Real do Quarto
+                    room = db.query(models.Room).get(room_id)
+                    days = (co - ci).days
+                    total_amount = (room.price_per_night if room else 150) * days * group_size
+                    
+                    # 3. Cria a Reserva
+                    booking = models.Booking(
+                        tenant_id=self.tenant_id,
+                        guest_id=guest_id,
+                        room_id=room_id,
+                        check_in_date=ci,
+                        check_out_date=co,
+                        total_guests=group_size,
+                        total_amount=total_amount,
+                        status="pendente"
+                    )
+                    db.add(booking)
+                    db.flush() # Sincroniza sem fechar a transação
+                    
+                    # 4. Calcula Sinal (Down Payment)
+                    settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
+                    deposit_pct = float(settings.get("pousada_deposit_percentage", 50))
+                    down_payment = (total_amount * deposit_pct) / 100
+                    
+                    logger.info(f"[ENGINE][ATOMIC] Reserva #{booking.id} criada com sucesso em transação.")
+                    
+                    return {
+                        "success": True,
+                        "booking_id": booking.id,
+                        "total_amount": total_amount,
+                        "down_payment": down_payment,
+                        "message": f"Reserva #{booking.id} criada! Valor total R$ {total_amount:.2f}. Sinal: R$ {down_payment:.2f}"
+                    }
+            except Exception as e:
+                logger.error(f"[ENGINE][ERROR] Falha atômica ao criar reserva: {e}")
+                return {"success": False, "error": f"Erro interno ao processar reserva: {str(e)}"}
 
     # -------------------------------------------------------------------------
     # ROBÔ 5: GERADOR DE PAGAMENTO
@@ -236,20 +255,50 @@ class CustomerEngineV2:
             booking = db.query(models.Booking).get(booking_id)
             if not booking: return {"success": False, "error": "Reserva não encontrada."}
             
-            settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
-            pix_key = settings.get("pix_key_manual", "financeiro@pousada.com.br")
+            # Busca credenciais e chave PIX manual do Tenant
+            tenant_config = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_id == self.tenant_id).first()
             
-            # Simulação de Link MP (Poderia chamar API real aqui)
-            mp_link = f"https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=TEST-{booking.id}"
+            has_mp = tenant_config and tenant_config.mp_access_token and tenant_config.mp_public_key
+            manual_pix_key = tenant_config.manual_pix_key if tenant_config and tenant_config.manual_pix_key else "Chave PIX não configurada"
             
-            return {
-                "success": True,
-                "payment_method": "PIX/MercadoPago",
-                "pix_qr": "Simulado_QR_Code_Base64",
-                "manual_key": pix_key,
-                "total": booking.total_amount,
-                "message": "Dados de pagamento gerados."
-            }
+            # Tenta Mercado Pago (Circuit Breaker)
+            if has_mp:
+                try:
+                    logger.info(f"[ENGINE][PAYMENT] Tentando gerar link Mercado Pago para reserva #{booking_id}")
+                    # Simulação de Link MP
+                    # Em produção, aqui haveria uma chamada httpx.post(...)
+                    mp_link = f"https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=TEST-{booking.id}"
+                    
+                    return {
+                        "success": True,
+                        "payment_method": "MercadoPago",
+                        "link": mp_link,
+                        "manual_key": manual_pix_key,
+                        "total": booking.total_amount,
+                        "message": f"Link de pagamento gerado com sucesso: {mp_link}"
+                    }
+                except Exception as e:
+                    logger.warning(f"[ENGINE][PAYMENT] Falha no Gateway Mercado Pago: {e}. Acionando FALLBACK PIX.")
+                    # Fallback imediato para PIX Manual em caso de erro na API
+                    return {
+                        "success": True,
+                        "payment_method": "PIX Manual (FALLBACK)",
+                        "link": "",
+                        "manual_key": manual_pix_key,
+                        "total": booking.total_amount,
+                        "message": f"⚠️ Gateway instável. Por favor, use a chave PIX Manual: {manual_pix_key}"
+                    }
+            else:
+                # Se MP não estiver configurado, vai direto para PIX Manual
+                logger.info(f"[ENGINE][PAYMENT] MP não configurado. Entregando PIX Manual.")
+                return {
+                    "success": True,
+                    "payment_method": "PIX Manual",
+                    "link": "",
+                    "manual_key": manual_pix_key,
+                    "total": booking.total_amount,
+                    "message": f"Chave PIX Manual: {manual_pix_key}"
+                }
 
     # -------------------------------------------------------------------------
     # ROBÔ 6: NOTIFICADOR PROATIVO
