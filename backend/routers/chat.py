@@ -68,7 +68,19 @@ def run_agent_task(message: str, session_id: str, tenant_id: int):
     asyncio.set_event_loop(loop)
     try:
         supervisor = SupervisorAgent(tenant_id)
-        return loop.run_until_complete(supervisor.process(message, session_id))
+        result = loop.run_until_complete(supervisor.process(message, session_id))
+        
+        # --- NOVO: Salva a resposta da IA no Banco para persistência ---
+        if result and result.get("response"):
+            from database import SessionLocal
+            from routers.chat import save_message
+            db = SessionLocal()
+            try:
+                save_message(session_id, "assistant", result["response"], tenant_id, db)
+            finally:
+                db.close()
+        
+        return result
     finally:
         loop.close()
 
