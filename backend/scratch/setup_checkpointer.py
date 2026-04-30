@@ -10,8 +10,8 @@ async def setup_checkpointer():
         raise ValueError("DATABASE_URL não configurada no .env")
     
     print(f"Iniciando setup do checkpointer em: {conn_string.split('://')[1].split(':')[0]}")
-    async with AsyncConnectionPool(conn_string) as pool:
-        checkpointer = AsyncPostgresSaver(pool)
+    # O setup do LangGraph exige autocommit para criar índices concorrentes
+    async with await AsyncPostgresSaver.aconnect(conn_string) as checkpointer:
         await checkpointer.setup()
         print("✅ Tabelas de checkpoint criadas com sucesso!")
 
