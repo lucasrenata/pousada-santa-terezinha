@@ -4,11 +4,12 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg_pool import AsyncConnectionPool
 
 async def setup_checkpointer():
-    conn_string = os.getenv("DATABASE_URL") or os.getenv("ALEMBIC_DATABASE_URL")
+    # Usa o usuário admin para ter permissão de criar tabelas
+    conn_string = os.getenv("ALEMBIC_DATABASE_URL") or os.getenv("DATABASE_URL")
     if not conn_string:
-        conn_string = "postgresql://pousada_app:ParcerIA19141919@db:5432/pousada_db"
+        raise ValueError("DATABASE_URL não configurada no .env")
     
-    print(f"Iniciando setup do checkpointer em: {conn_string}")
+    print(f"Iniciando setup do checkpointer em: {conn_string.split('://')[1].split(':')[0]}")
     async with AsyncConnectionPool(conn_string) as pool:
         checkpointer = AsyncPostgresSaver(pool)
         await checkpointer.setup()
