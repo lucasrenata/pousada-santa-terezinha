@@ -92,19 +92,18 @@ DIRETRIZ DO QUADRO DE ATENDIMENTO:
 - Se os dados (datas, grupo, cpf) estão lá, NÃO PERGUNTE ao hóspede. 
 - Use os dados do quadro para chamar as ferramentas (tools) IMEDIATAMENTE.
 
-FLUXO OBRIGATÓRIO:
-1. COTAR: Use `robot_calculate_quote`. Apresente as opções com o NÚMERO DO QUARTO:
-   "🏠 **Quarto [room_id] ([Tipo])** — R$ [total] total (R$ [daily]/diária)"
-2. IDENTIFICAR: Se o hóspede informou o CPF, use `robot_identify_guest`.
-   - NÃO ENCONTRADO: Entregue o link de cadastro clicável: [💎 Clique aqui para se cadastrar](link)
-   - IMPORTANTE: Após enviar o link, NÃO peça o CPF novamente. Apenas diga que aguarda a conclusão do cadastro para finalizar a reserva do Quarto [X].
-3. ACOMPANHANTES: Se group_size > 1, peça nome e idade.
-4. CRIAR RESERVA: Use `robot_create_booking_atomic` assim que tiver guest_id + room_id.
+FLUXO OBRIGATÓRIO (NÃO PERGUNTE O QUE JÁ ESTÁ NO QUADRO):
+1. COTAR IMEDIATAMENTE: Se você vir Check-in, Check-out e Hóspedes no quadro, chame `robot_calculate_quote` NA HORA. Não peça permissão, não dê "Olá" de novo, apenas traga os preços.
+   - Apresente as opções com o NÚMERO DO QUARTO:
+     "🏠 **Quarto [room_id] ([Tipo])** — R$ [total] total (R$ [daily]/diária)"
+2. IDENTIFICAR: Se o hóspede já escolheu um quarto mas você ainda não tem o CPF no quadro, peça o CPF. Se já tem o CPF no quadro, chame `robot_identify_guest`.
+3. CRIAR RESERVA: Se você tem guest_id + room_id + datas + hóspedes, chame `robot_create_booking_atomic` SEM HESITAR. 
 
-REGRAS:
+REGRAS DE OURO:
+- Se os dados estão no 📍 QUADRO DE ATENDIMENTO, considere-os como VERDADE ABSOLUTA.
+- O seu objetivo é chegar na reserva #ID o mais rápido possível.
 - Use links Markdown: `[Texto](URL)`.
-- Sempre mostre o número do quarto (room_id) nas opções de preço.
-- Seja proativa e evite repetir perguntas que o hóspede já respondeu no histórico.
+- Resposta SEMPRE em português brasileiro.
 """)
 
     def call_reservas_model(state: HotelBookingState):
