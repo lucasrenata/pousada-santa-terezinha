@@ -115,8 +115,8 @@ export default function BusinessRulesTab() {
     }));
   };
 
-  const getRule = (name: string) => {
-    return rules.find(r => r.name === name);
+  const getRule = (namePart: string) => {
+    return rules.find(r => r.name.toLowerCase().includes(namePart.toLowerCase()));
   };
 
   if (loading) return <div className="p-4 text-center">Carregando inteligência de negócio...</div>;
@@ -246,14 +246,14 @@ export default function BusinessRulesTab() {
           </div>
 
           {/* Tarifa FDS */}
-          {getRule("Tarifa Fim de Semana") && (
+          {getRule("Fim de Semana") && (
             <div className="flex items-center justify-between p-3 border rounded-lg">
               <div className="flex items-center gap-3">
                 <Switch 
-                  checked={getRule("Tarifa Fim de Semana")?.is_active} 
+                  checked={getRule("Fim de Semana")?.is_active} 
                   onCheckedChange={(val) => {
-                    toggleActive("Tarifa Fim de Semana", val);
-                    handleSaveRule({ ...getRule("Tarifa Fim de Semana")!, is_active: val });
+                    toggleActive(getRule("Fim de Semana")!.name, val);
+                    handleSaveRule({ ...getRule("Fim de Semana")!, is_active: val });
                   }}
                 />
                 <div>
@@ -266,23 +266,23 @@ export default function BusinessRulesTab() {
                   type="number" 
                   step="0.1" 
                   className="w-20" 
-                  value={getRule("Tarifa Fim de Semana")?.config.multiplier}
-                  onChange={(e) => updateLocalConfig("Tarifa Fim de Semana", "multiplier", e.target.value)}
-                  onBlur={() => handleSaveRule(getRule("Tarifa Fim de Semana")!)}
+                  value={getRule("Fim de Semana")?.config.multiplier}
+                  onChange={(e) => updateLocalConfig(getRule("Fim de Semana")!.name, "multiplier", e.target.value)}
+                  onBlur={() => handleSaveRule(getRule("Fim de Semana")!)}
                 />
               </div>
             </div>
           )}
 
           {/* Desconto Longa Estadia */}
-          {getRule("Desconto Estadia Longa") && (
+          {getRule("Estadia Longa") && (
             <div className="flex items-center justify-between p-3 border rounded-lg">
               <div className="flex items-center gap-3">
                 <Switch 
-                  checked={getRule("Desconto Estadia Longa")?.is_active} 
+                  checked={getRule("Estadia Longa")?.is_active} 
                   onCheckedChange={(val) => {
-                    toggleActive("Desconto Estadia Longa", val);
-                    handleSaveRule({ ...getRule("Desconto Estadia Longa")!, is_active: val });
+                    toggleActive(getRule("Estadia Longa")!.name, val);
+                    handleSaveRule({ ...getRule("Estadia Longa")!, is_active: val });
                   }}
                 />
                 <div>
@@ -294,17 +294,17 @@ export default function BusinessRulesTab() {
                 <Input 
                   type="number" 
                   className="w-16" 
-                  value={getRule("Desconto Estadia Longa")?.config.min_days}
-                  onChange={(e) => updateLocalConfig("Desconto Estadia Longa", "min_days", e.target.value)}
-                  onBlur={() => handleSaveRule(getRule("Desconto Estadia Longa")!)}
+                  value={getRule("Estadia Longa")?.config.min_days}
+                  onChange={(e) => updateLocalConfig(getRule("Estadia Longa")!.name, "min_days", e.target.value)}
+                  onBlur={() => handleSaveRule(getRule("Estadia Longa")!)}
                 />
                 <span className="text-xs">dias</span>
                 <Input 
                   type="number" 
                   className="w-16" 
-                  value={getRule("Desconto Estadia Longa")?.config.discount_percent}
-                  onChange={(e) => updateLocalConfig("Desconto Estadia Longa", "discount_percent", e.target.value)}
-                  onBlur={() => handleSaveRule(getRule("Desconto Estadia Longa")!)}
+                  value={getRule("Estadia Longa")?.config.discount_percent}
+                  onChange={(e) => updateLocalConfig(getRule("Estadia Longa")!.name, "discount_percent", e.target.value)}
+                  onBlur={() => handleSaveRule(getRule("Estadia Longa")!)}
                 />
                 <span className="text-xs">%</span>
               </div>
