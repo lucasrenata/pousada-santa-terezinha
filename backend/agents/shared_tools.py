@@ -44,8 +44,14 @@ def calculate_booking_quote(db, tenant_id, room_id, check_in_date, check_out_dat
     set_tenant_context(db, tenant_id)
     ci = check_in_date
     co = check_out_date
-    days = calculate_daily_rates_count(ci, co)
+    
     settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
+    
+    # Busca horários da política
+    policy_ci = settings.get("check_in_time", "14:00")
+    policy_co = settings.get("check_out_time", "12:00")
+    
+    days = calculate_daily_rates_count(ci, co, policy_check_in_time=policy_ci, policy_check_out_time=policy_co)
     active_rules = db.query(models.BusinessRule).filter(models.BusinessRule.is_active == True).all()
     room = db.query(models.Room).get(room_id)
     daily_base = room.price_per_night if room else 100.0
@@ -59,8 +65,13 @@ def calculate_booking_quote(db, tenant_id, room_id, check_in_date, check_out_dat
         full_ages += [18] * (group_size - len(full_ages))
 
     if event and (event.daily_rate_single > 0 or event.daily_rate_couple > 0):
-        adults = len([age for age in full_ages if age >= 13])
-        children = len([age for age in full_ages if 7 <= age < 13])
+        # Usa faixas etárias dinâmicas para o cálculo de evento também
+        age_child = int(settings.get('age_child_until', 12))
+        age_infant = int(settings.get('age_infant_until', 6))
+        
+        adults = len([age for age in full_ages if age > age_child])
+        children = len([age for age in full_ages if age_infant < age <= age_child])
+        
         if adults == 1 and event.daily_rate_single > 0:
             total_amount = (event.daily_rate_single + (children * event.daily_rate_child)) * days
             note_parts.append(f"Tarifa Single Evento: R${event.daily_rate_single}")
@@ -76,6 +87,7 @@ def calculate_booking_quote(db, tenant_id, room_id, check_in_date, check_out_dat
         total_amount = pricing["total"]
         note_parts.append(f"Tarifa Padrão: R${daily_base}")
 
+    # Regras Extras (FDS, Descontos)
     fds_rule = next((r for r in active_rules if r.name == "Tarifa Fim de Semana"), None)
     if fds_rule:
         has_weekend = any((ci + timedelta(days=i)).weekday() in [4, 5, 6] for i in range(days))
@@ -124,7 +136,9 @@ def availability_check_logic(tenant_id: int, check_in: str, check_out: str, grou
 
             settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
             active_rules = db.query(models.BusinessRule).filter(models.BusinessRule.is_active == True).all()
-            days = calculate_daily_rates_count(ci, co, settings.get("check_in_time", "14:00"), settings.get("check_out_time", "12:00"))
+            policy_ci = settings.get("check_in_time", "14:00")
+            policy_co = settings.get("check_out_time", "12:00")
+            days = calculate_daily_rates_count(ci, co, policy_check_in_time=policy_ci, policy_check_out_time=policy_co)
             
             # Bloqueio de Overbooking: Considera CONFIRMADO, ATIVO e PENDENTE (se não expirado)
             expiration_limit = datetime.now() - timedelta(hours=2)
@@ -412,6 +426,43 @@ def find_booking_logic(tenant_id: int, cpf: str = "", name: str = "", room_id: s
             })
             
         return {"count": len(results), "bookings": results}
+
+def get_combined_business_context(tenant_id: int) -> str:
+    """Gera um manual completo de regras de negócio para a IA."""
+    with SessionLocal() as db:
+        set_tenant_context(db, tenant_id)
+        
+        # 1. Configurações de Logística e Políticas
+        settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
+        
+        ci_time = settings.get("check_in_time", "14:00")
+        co_time = settings.get("check_out_time", "12:00")
+        age_infant = settings.get("age_infant_until", "6")
+        age_child = settings.get("age_child_until", "12")
+        deposit = settings.get("pousada_deposit_percentage", "100")
+        house_rules = settings.get("house_rules_description", "Não informado.")
+        
+        # 2. Regras de Negócio Ativas (Descontos, etc.)
+        active_rules = db.query(models.BusinessRule).filter(models.BusinessRule.is_active == True).all()
+        rules_text = ""
+        for r in active_rules:
+            rules_text += f"- {r.name}: {r.description}\n"
+        
+        # 3. Montagem do Manual
+        manual = f"""
+MANUAL DE REGRAS DA POUSADA (Siga rigorosamente):
+- HORÁRIOS: Check-in a partir das {ci_time}. Check-out até as {co_time}.
+- POLÍTICA DE IDADES: Bebês até {age_infant} anos. Crianças até {age_child} anos (acima disso é adulto).
+- PAGAMENTO: Exigimos {deposit}% de sinal para confirmar a reserva.
+- REGRAS DA CASA E CANCELAMENTO: {house_rules}
+
+REGRAS ADICIONAIS ATIVAS:
+{rules_text if rules_text else "- Nenhuma regra adicional ativa no momento."}
+
+MEMÓRIA OPERACIONAL E FATOS:
+{get_operational_memory_logic(tenant_id)}
+"""
+        return manual
 
 def get_operational_memory_logic(tenant_id: int, guest_id: int = None) -> str:
     """Recupera fatos e regras da memória operacional do tenant/hóspede."""

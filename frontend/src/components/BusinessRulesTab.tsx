@@ -19,31 +19,66 @@ interface BusinessRule {
 export default function BusinessRulesTab() {
   const [rules, setRules] = useState<BusinessRule[]>([]);
   const [loading, setLoading] = useState(true);
-  const [depositPercent, setDepositPercent] = useState('100');
-  const [savingDeposit, setSavingDeposit] = useState(false);
+  
+  // Estados para as Configurações Individuais
+  const [settings, setSettings] = useState<any>({
+    pousada_deposit_percentage: '100',
+    check_in_time: '14:00',
+    check_out_time: '12:00',
+    age_infant_until: '6',
+    age_child_until: '12',
+    house_rules_description: ''
+  });
+
+  const [savingSettings, setSavingSettings] = useState<string | null>(null);
   const { toast } = useToast();
 
-  const loadRules = async () => {
+  const loadData = async () => {
     try {
-      const response = await api.get('/business-rules/');
-      setRules(response.data);
+      const [rulesResp, settingsResp] = await Promise.all([
+        api.get('/business-rules/'),
+        api.get('/settings/')
+      ]);
       
-      // Carrega também a configuração de sinal do endpoint /settings
-      const settingsResp = await api.get('/settings/');
-      const depositSetting = settingsResp.data.find((s: any) => s.key === 'pousada_deposit_percentage');
-      if (depositSetting) {
-        setDepositPercent(depositSetting.value);
-      }
+      setRules(rulesResp.data);
+      
+      // Mapeia os valores vindo do banco para o estado local
+      const dbSettings: any = {};
+      settingsResp.data.forEach((s: any) => {
+        dbSettings[s.key] = s.value;
+      });
+      
+      setSettings((prev: any) => ({ ...prev, ...dbSettings }));
     } catch (error) {
-      console.error('Erro ao carregar regras:', error);
+      console.error('Erro ao carregar dados:', error);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadRules();
+    loadData();
   }, []);
+
+  const handleSaveSetting = async (key: string, value: string, description: string) => {
+    setSavingSettings(key);
+    try {
+      await api.post('/settings/', { key, value, description });
+      toast({
+        title: "Configuração Salva",
+        description: "As alterações foram aplicadas com sucesso.",
+      });
+      loadData();
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: "Falha ao salvar configuração.",
+        variant: "destructive"
+      });
+    } finally {
+      setSavingSettings(null);
+    }
+  };
 
   const handleSaveRule = async (rule: BusinessRule) => {
     try {
@@ -52,36 +87,13 @@ export default function BusinessRulesTab() {
         title: "Regra Salva",
         description: `A regra '${rule.name}' foi atualizada com sucesso.`,
       });
-      loadRules();
+      loadData();
     } catch (error) {
       toast({
         title: "Erro",
         description: "Falha ao salvar a regra de negócio.",
         variant: "destructive"
       });
-    }
-  };
-
-  const handleSaveDeposit = async () => {
-    setSavingDeposit(true);
-    try {
-      await api.post('/settings/', {
-        key: 'pousada_deposit_percentage',
-        value: depositPercent,
-        description: 'Porcentagem do valor total cobrada como sinal para garantir a reserva'
-      });
-      toast({
-        title: "Configuração Salva",
-        description: "Percentual de sinal atualizado com sucesso.",
-      });
-    } catch (error) {
-      toast({
-        title: "Erro",
-        description: "Falha ao salvar configuração de sinal.",
-        variant: "destructive"
-      });
-    } finally {
-      setSavingDeposit(false);
     }
   };
 
@@ -103,183 +115,201 @@ export default function BusinessRulesTab() {
     }));
   };
 
-  // Regras Padrão (Seed se não existirem)
-  const defaultRules = [
-    {
-      name: "Tarifa Fim de Semana",
-      description: "Aplica um multiplicador no valor da diária para Sexta, Sábado e Domingo.",
-      rule_type: "price_modifier",
-      config: { multiplier: 1.2 },
-      is_active: false
-    },
-    {
-      name: "Restrição de Casal",
-      description: "Restringe reservas de casal em quartos específicos em determinados dias.",
-      rule_type: "booking_restriction",
-      config: { room_ids: "", days: [5, 6, 0] },
-      is_active: false
-    },
-    {
-      name: "Desconto Estadia Longa",
-      description: "Aplica desconto para reservas acima de X dias.",
-      rule_type: "discount",
-      config: { min_days: 5, discount_percent: 10 },
-      is_active: false
-    }
-  ];
-
   const getRule = (name: string) => {
-    return rules.find(r => r.name === name) || defaultRules.find(r => r.name === name);
+    return rules.find(r => r.name === name);
   };
 
-  if (loading) return <div className="p-4 text-center">Carregando regras...</div>;
+  if (loading) return <div className="p-4 text-center">Carregando inteligência de negócio...</div>;
 
   return (
     <div className="space-y-6">
-      <Card className="border-indigo-100 shadow-sm">
-        <CardHeader className="bg-indigo-50/50">
+      
+      {/* CARD 1: REGRAS DA CASA (O CÉREBRO DA IA) */}
+      <Card className="border-indigo-100 shadow-sm overflow-hidden">
+        <CardHeader className="bg-gradient-to-r from-indigo-600 to-violet-600 text-white">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="w-5 h-5 text-indigo-600" />
-            <CardTitle className="text-lg">Inteligência de Negócio</CardTitle>
+            <ShieldCheck className="w-5 h-5" />
+            <CardTitle>Manual de Operação e Persona da IA</CardTitle>
           </div>
-          <CardDescription>
-            Estas regras alimentam os Robôs da IA e os cálculos automáticos do sistema.
+          <CardDescription className="text-indigo-100">
+            Descreva como a IA deve se comportar e quais as regras fundamentais da sua pousada.
           </CardDescription>
         </CardHeader>
-        <CardContent className="pt-6 space-y-8">
-          
-          {/* CONFIGURAÇÃO: PERCENTUAL DE SINAL */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 rounded-xl border-2 border-indigo-100 bg-indigo-50/30">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <p className="font-bold text-indigo-900">Percentual de Sinal (Depósito Inicial)</p>
-                <div className="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded text-[10px] font-bold uppercase">Pagamento</div>
-              </div>
-              <p className="text-xs text-indigo-700/70 max-w-md">Quanto o hóspede deve pagar para garantir a reserva (0 a 100%).</p>
+        <CardContent className="pt-6 space-y-4">
+          <div className="space-y-2">
+            <label className="text-sm font-bold text-slate-700">Regras da Casa, Políticas de Cancelamento e Observações</label>
+            <textarea 
+              className="w-full h-32 p-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+              placeholder="Ex: Não aceitamos pets. Cancelamento grátis até 7 dias antes. Café da manhã incluso..."
+              value={settings.house_rules_description}
+              onChange={(e) => setSettings({...settings, house_rules_description: e.target.value})}
+            />
+            <Button 
+              className="w-full bg-indigo-600 hover:bg-indigo-700"
+              disabled={savingSettings === 'house_rules_description'}
+              onClick={() => handleSaveSetting('house_rules_description', settings.house_rules_description, 'Regras da casa e políticas lidas pela IA')}
+            >
+              {savingSettings === 'house_rules_description' ? 'Salvando...' : 'Salvar Manual da Pousada'}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* CARD 2: LOGÍSTICA DE HORÁRIOS */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-md flex items-center gap-2">
+              <span className="p-1.5 bg-amber-100 text-amber-700 rounded-md">🕒</span>
+              Logística de Horários
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between">
+              <label className="text-sm text-slate-600">Check-in Padrão</label>
+              <Input 
+                type="time" 
+                className="w-32" 
+                value={settings.check_in_time}
+                onChange={(e) => setSettings({...settings, check_in_time: e.target.value})}
+                onBlur={() => handleSaveSetting('check_in_time', settings.check_in_time, 'Horário padrão de entrada')}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <label className="text-sm text-slate-600">Check-out Padrão</label>
+              <Input 
+                type="time" 
+                className="w-32" 
+                value={settings.check_out_time}
+                onChange={(e) => setSettings({...settings, check_out_time: e.target.value})}
+                onBlur={() => handleSaveSetting('check_out_time', settings.check_out_time, 'Horário padrão de saída')}
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* CARD 3: POLÍTICAS DE IDADE */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-md flex items-center gap-2">
+              <span className="p-1.5 bg-green-100 text-green-700 rounded-md">👶</span>
+              Políticas de Idade
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between">
+              <label className="text-sm text-slate-600">Bebê até (anos)</label>
+              <Input 
+                type="number" 
+                className="w-20" 
+                value={settings.age_infant_until}
+                onChange={(e) => setSettings({...settings, age_infant_until: e.target.value})}
+                onBlur={() => handleSaveSetting('age_infant_until', settings.age_infant_until, 'Idade máxima para tarifa de bebê')}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <label className="text-sm text-slate-600">Criança até (anos)</label>
+              <Input 
+                type="number" 
+                className="w-20" 
+                value={settings.age_child_until}
+                onChange={(e) => setSettings({...settings, age_child_until: e.target.value})}
+                onBlur={() => handleSaveSetting('age_child_until', settings.age_child_until, 'Idade máxima para tarifa de criança')}
+              />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* CARD 4: REGRAS FINANCEIRAS E DESCONTOS */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-md">Regras Financeiras e Descontos</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Sinal */}
+          <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
+            <div>
+              <p className="text-sm font-bold">Percentual de Sinal</p>
+              <p className="text-[10px] text-slate-500">Valor para garantia de reserva</p>
             </div>
             <div className="flex items-center gap-2">
-              <div className="relative">
-                <Input 
-                  className="w-24 pr-8 font-bold text-lg" 
-                  type="number" 
-                  min="0"
-                  max="100"
-                  value={depositPercent}
-                  onChange={(e) => setDepositPercent(e.target.value)}
-                />
-                <span className="absolute right-3 top-2.5 font-bold text-slate-400">%</span>
-              </div>
-              <Button 
-                onClick={handleSaveDeposit} 
-                className="bg-indigo-600 hover:bg-indigo-700"
-                disabled={savingDeposit}
-              >
-                {savingDeposit ? "..." : <Save className="w-4 h-4" />}
-              </Button>
+              <Input 
+                type="number" 
+                className="w-20" 
+                value={settings.pousada_deposit_percentage}
+                onChange={(e) => setSettings({...settings, pousada_deposit_percentage: e.target.value})}
+                onBlur={() => handleSaveSetting('pousada_deposit_percentage', settings.pousada_deposit_percentage, 'Percentual de sinal')}
+              />
+              <span className="text-sm font-bold text-slate-400">%</span>
             </div>
           </div>
 
-          <div className="h-px bg-slate-100 my-2" />
-          
-          {/* REGRA: TARIFA FDS */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 rounded-xl border border-slate-100 bg-white">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <p className="font-bold text-slate-800">Tarifa Fim de Semana (Sex-Dom)</p>
+          {/* Tarifa FDS */}
+          {getRule("Tarifa Fim de Semana") && (
+            <div className="flex items-center justify-between p-3 border rounded-lg">
+              <div className="flex items-center gap-3">
                 <Switch 
                   checked={getRule("Tarifa Fim de Semana")?.is_active} 
-                  onCheckedChange={(val) => toggleActive("Tarifa Fim de Semana", val)}
+                  onCheckedChange={(val) => {
+                    toggleActive("Tarifa Fim de Semana", val);
+                    handleSaveRule({ ...getRule("Tarifa Fim de Semana")!, is_active: val });
+                  }}
+                />
+                <div>
+                  <p className="text-sm font-bold">Tarifa Fim de Semana</p>
+                  <p className="text-[10px] text-slate-500">Multiplicador Sex-Dom</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Input 
+                  type="number" 
+                  step="0.1" 
+                  className="w-20" 
+                  value={getRule("Tarifa Fim de Semana")?.config.multiplier}
+                  onChange={(e) => updateLocalConfig("Tarifa Fim de Semana", "multiplier", e.target.value)}
+                  onBlur={() => handleSaveRule(getRule("Tarifa Fim de Semana")!)}
                 />
               </div>
-              <p className="text-xs text-slate-500 max-w-md">Multiplicador aplicado sobre o valor base da diária.</p>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-slate-600">Multiplicar por:</span>
-              <Input 
-                className="w-20" 
-                type="number" 
-                step="0.1"
-                value={getRule("Tarifa Fim de Semana")?.config.multiplier}
-                onChange={(e) => updateLocalConfig("Tarifa Fim de Semana", "multiplier", parseFloat(e.target.value))}
-              />
-              <Button size="sm" onClick={() => handleSaveRule(getRule("Tarifa Fim de Semana") as BusinessRule)}>
-                <Save className="w-4 h-4" />
-              </Button>
-            </div>
-          </div>
+          )}
 
-          {/* REGRA: DISCONTO LONGA ESTADIA */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 rounded-xl border border-slate-100 bg-white">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <p className="font-bold text-slate-800">Desconto Estadia Longa</p>
+          {/* Desconto Longa Estadia */}
+          {getRule("Desconto Estadia Longa") && (
+            <div className="flex items-center justify-between p-3 border rounded-lg">
+              <div className="flex items-center gap-3">
                 <Switch 
                   checked={getRule("Desconto Estadia Longa")?.is_active} 
-                  onCheckedChange={(val) => toggleActive("Desconto Estadia Longa", val)}
+                  onCheckedChange={(val) => {
+                    toggleActive("Desconto Estadia Longa", val);
+                    handleSaveRule({ ...getRule("Desconto Estadia Longa")!, is_active: val });
+                  }}
                 />
-              </div>
-              <p className="text-xs text-slate-500 max-w-md">Incentiva reservas de longa duração com descontos automáticos.</p>
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-600">Mín. Dias:</span>
-                <Input 
-                  className="w-16 h-8 text-xs" 
-                  type="number"
-                  value={getRule("Desconto Estadia Longa")?.config.min_days}
-                  onChange={(e) => updateLocalConfig("Desconto Estadia Longa", "min_days", parseInt(e.target.value))}
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-600">Desc %:</span>
-                <Input 
-                  className="w-16 h-8 text-xs" 
-                  type="number"
-                  value={getRule("Desconto Estadia Longa")?.config.discount_percent}
-                  onChange={(e) => updateLocalConfig("Desconto Estadia Longa", "discount_percent", parseInt(e.target.value))}
-                />
-              </div>
-              <Button size="sm" onClick={() => handleSaveRule(getRule("Desconto Estadia Longa") as BusinessRule)}>
-                <Save className="w-4 h-4" />
-              </Button>
-            </div>
-          </div>
-
-           {/* REGRA: RESTRIÇÃO DE CASAL */}
-           <div className="flex flex-col gap-4 p-4 rounded-xl border border-slate-100 bg-white">
-            <div className="flex items-center justify-between">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <p className="font-bold text-slate-800">Restrição de Casal em Quartos Específicos</p>
-                  <Switch 
-                    checked={getRule("Restrição de Casal")?.is_active} 
-                    onCheckedChange={(val) => toggleActive("Restrição de Casal", val)}
-                  />
+                <div>
+                  <p className="text-sm font-bold">Desconto Longa Estadia</p>
+                  <p className="text-[10px] text-slate-500">Acima de X dias</p>
                 </div>
-                <p className="text-xs text-slate-500">Bloqueia reservas de casal em quartos selecionados nos finais de semana.</p>
               </div>
-              <Button size="sm" onClick={() => handleSaveRule(getRule("Restrição de Casal") as BusinessRule)}>
-                <Save className="w-4 h-4" />
-              </Button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">IDs dos Quartos (separados por vírgula)</label>
+              <div className="flex items-center gap-2">
                 <Input 
-                  placeholder="Ex: 101, 102, 201" 
-                  value={getRule("Restrição de Casal")?.config.room_ids}
-                  onChange={(e) => updateLocalConfig("Restrição de Casal", "room_ids", e.target.value)}
+                  type="number" 
+                  className="w-16" 
+                  value={getRule("Desconto Estadia Longa")?.config.min_days}
+                  onChange={(e) => updateLocalConfig("Desconto Estadia Longa", "min_days", e.target.value)}
+                  onBlur={() => handleSaveRule(getRule("Desconto Estadia Longa")!)}
                 />
-              </div>
-              <div className="p-3 bg-amber-50 rounded-lg border border-amber-100 flex items-start gap-2">
-                <Info className="w-4 h-4 text-amber-600 mt-0.5" />
-                <p className="text-[10px] text-amber-800">
-                  Esta regra é comumente usada para priorizar grupos maiores em quartos de alta capacidade durante o pico do fim de semana.
-                </p>
+                <span className="text-xs">dias</span>
+                <Input 
+                  type="number" 
+                  className="w-16" 
+                  value={getRule("Desconto Estadia Longa")?.config.discount_percent}
+                  onChange={(e) => updateLocalConfig("Desconto Estadia Longa", "discount_percent", e.target.value)}
+                  onBlur={() => handleSaveRule(getRule("Desconto Estadia Longa")!)}
+                />
+                <span className="text-xs">%</span>
               </div>
             </div>
-          </div>
-
+          )}
         </CardContent>
       </Card>
     </div>
