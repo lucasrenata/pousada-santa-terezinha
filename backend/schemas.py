@@ -359,7 +359,7 @@ class BusinessRuleUpdate(BaseModel):
 
 class BusinessRuleResponse(BusinessRuleBase):
     id: int
-    created_at: datetime
+    created_at: Optional[datetime] = None
     class Config: from_attributes = True
 
 # --- DESPESAS (CONTAS A PAGAR) ---
@@ -390,7 +390,7 @@ class ExpenseResponse(BaseModel):
     is_paid: bool
     payment_method: Optional[models.PaymentMethod] = None
     notes: Optional[str] = None
-    created_at: datetime
+    created_at: Optional[datetime] = None
     created_by: Optional[str] = None
     tenant_id: Optional[int] = None
     class Config: from_attributes = True
