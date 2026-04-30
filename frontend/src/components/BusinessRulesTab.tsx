@@ -25,8 +25,6 @@ export default function BusinessRulesTab() {
     pousada_deposit_percentage: '100',
     check_in_time: '14:00',
     check_out_time: '12:00',
-    age_infant_until: '6',
-    age_child_until: '12',
     house_rules_description: ''
   });
 
@@ -188,37 +186,6 @@ export default function BusinessRulesTab() {
           </CardContent>
         </Card>
 
-        {/* CARD 3: POLÍTICAS DE IDADE */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-md flex items-center gap-2">
-              <span className="p-1.5 bg-green-100 text-green-700 rounded-md">👶</span>
-              Políticas de Idade
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
-              <label className="text-sm text-slate-600">Bebê até (anos)</label>
-              <Input 
-                type="number" 
-                className="w-20" 
-                value={settings.age_infant_until}
-                onChange={(e) => setSettings({...settings, age_infant_until: e.target.value})}
-                onBlur={() => handleSaveSetting('age_infant_until', settings.age_infant_until, 'Idade máxima para tarifa de bebê')}
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <label className="text-sm text-slate-600">Criança até (anos)</label>
-              <Input 
-                type="number" 
-                className="w-20" 
-                value={settings.age_child_until}
-                onChange={(e) => setSettings({...settings, age_child_until: e.target.value})}
-                onBlur={() => handleSaveSetting('age_child_until', settings.age_child_until, 'Idade máxima para tarifa de criança')}
-              />
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
       {/* CARD 4: REGRAS FINANCEIRAS E DESCONTOS */}
