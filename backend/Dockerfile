@@ -22,8 +22,8 @@ RUN mkdir -p /app/reports /app/static /app/logs
 
 EXPOSE 8000
 
-# Garante permissão de execução para o entrypoint
-RUN chmod +x /app/entrypoint.sh
+# Garante que o script tenha fins de linha Linux (LF) e permissão de execução
+RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Inicia com o script de automação de banco
 ENTRYPOINT ["/app/entrypoint.sh"]

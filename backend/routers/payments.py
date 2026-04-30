@@ -13,7 +13,7 @@ from pydantic import BaseModel
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
 class TokenTestRequest(BaseModel):
-    token: str
+    token: Optional[str] = None
 
 class ManualPixSaveRequest(BaseModel):
     manual_pix_key: str
