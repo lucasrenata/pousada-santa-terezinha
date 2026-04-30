@@ -109,7 +109,22 @@ REGRAS:
 
     def call_reservas_model(state: HotelBookingState):
         logger.info(f"[RESERVAS_AGENT] Processando turno para tenant {tenant_id}")
-        response = llm_with_tools.invoke([sys_msg] + state["messages"])
+        
+        # --- INJEÇÃO DE CONTEXTO DO BLACKBOARD ---
+        blackboard = []
+        if state.get("check_in"): blackboard.append(f"Check-in: {state['check_in']}")
+        if state.get("check_out"): blackboard.append(f"Check-out: {state['check_out']}")
+        if state.get("group_size"): blackboard.append(f"Hóspedes: {state['group_size']}")
+        if state.get("cpf"): blackboard.append(f"CPF: {state['cpf']}")
+        if state.get("guest_id"): blackboard.append(f"Guest ID: {state['guest_id']}")
+        if state.get("room_id"): blackboard.append(f"Quarto Escolhido: {state['room_id']}")
+        
+        context_text = "📍 QUADRO DE ATENDIMENTO (DADOS ATUAIS NO BANCO):\n" + ("\n".join(blackboard) if blackboard else "Nenhum dado capturado ainda.")
+        
+        # Adiciona o contexto como uma mensagem de sistema temporária para orientar o modelo
+        context_msg = SystemMessage(content=context_text)
+        
+        response = llm_with_tools.invoke([sys_msg, context_msg] + state["messages"])
         return {"messages": [response]}
 
     workflow = StateGraph(HotelBookingState)

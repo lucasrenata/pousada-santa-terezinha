@@ -60,7 +60,17 @@ REGRAS DE OURO:
 
     def call_faq_model(state: HotelBookingState):
         logger.info(f"[FAQ_AGENT] Processando turno para tenant {tenant_id}")
-        response = llm_with_tools.invoke([sys_msg] + state["messages"])
+        
+        # --- INJEÇÃO DE CONTEXTO DO BLACKBOARD ---
+        blackboard = []
+        if state.get("check_in"): blackboard.append(f"Check-in: {state['check_in']}")
+        if state.get("check_out"): blackboard.append(f"Check-out: {state['check_out']}")
+        if state.get("group_size"): blackboard.append(f"Hóspedes: {state['group_size']}")
+        
+        context_text = "📍 QUADRO DE ATENDIMENTO (DADOS ATUAIS NO BANCO):\n" + ("\n".join(blackboard) if blackboard else "Nenhum dado capturado ainda.")
+        context_msg = SystemMessage(content=context_text)
+        
+        response = llm_with_tools.invoke([sys_msg, context_msg] + state["messages"])
         return {"messages": [response]}
 
     workflow = StateGraph(HotelBookingState)

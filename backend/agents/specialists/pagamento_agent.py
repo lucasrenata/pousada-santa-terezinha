@@ -80,8 +80,18 @@ REGRAS:
 - Resposta em Português Brasileiro.""")
 
     def call_pagamento_model(state: HotelBookingState):
-        logger.info(f"[PAGAMENTO_AGENT] Entregando instruções de pagamento | booking_id={booking_id}")
-        response = llm_with_tools.invoke([sys_msg] + state["messages"])
+        current_bid = booking_id or state.get("booking_id")
+        logger.info(f"[PAGAMENTO_AGENT] Entregando instruções de pagamento | booking_id={current_bid}")
+        
+        # --- INJEÇÃO DE CONTEXTO DO BLACKBOARD ---
+        blackboard = []
+        if current_bid: blackboard.append(f"Booking ID: {current_bid}")
+        if state.get("room_id"): blackboard.append(f"Quarto: {state['room_id']}")
+        
+        context_text = "📍 QUADRO DE ATENDIMENTO (DADOS ATUAIS NO BANCO):\n" + ("\n".join(blackboard) if blackboard else "Nenhum dado capturado ainda.")
+        context_msg = SystemMessage(content=context_text)
+        
+        response = llm_with_tools.invoke([sys_msg, context_msg] + state["messages"])
         return {"messages": [response]}
 
     workflow = StateGraph(HotelBookingState)
