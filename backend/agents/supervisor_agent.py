@@ -86,7 +86,13 @@ class SupervisorAgent:
 
     def fsm_router(self, state: HotelBookingState) -> str:
         last_msg = state["messages"][-1].content.lower()
-        if any(kw in last_msg for kw in ["pet", "animal", "horário", "piscina"]): return "faq"
+        # Palavras-chave para o FAQ (Regras, Pets, etc)
+        faq_keywords = [
+            "pet", "animal", "animais", "gato", "cachorro", "dog", "cat",
+            "horário", "piscina", "café", "estacionamento", "regra", "política", "cancelamento"
+        ]
+        if any(kw in last_msg for kw in faq_keywords): return "faq"
+        
         if state.get("booking_id"): return "pagamento"
         return "reservas"
 
