@@ -1,17 +1,17 @@
 import json
 import os
+import traceback
+import logging
+from typing import Optional, List, Any, Dict
+from datetime import datetime, date, timedelta
 from sqlalchemy.orm import Session
+
 import models
 from database import SessionLocal, set_tenant_context
 from utils.pricing import calculate_daily_rates_count, calculate_reservation_total
-from datetime import datetime, date, timedelta
-from typing import Optional, List, Any
-import traceback
 from utils.payment_helpers import prepare_payer_data, process_mp_response
 
-from agents import shared_tools
 from langchain_core.tools import tool
-from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -58,7 +58,8 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
 
     # =========================================================================
     # DEFINIÇÃO DE FERRAMENTAS (OS ROBÔS)
-    # =================================================================    @tool
+    # =================================================================        
+    @tool
     async def robot_identify_guest(cpf: str) -> dict:
         """Robô 1: Identifica hóspede ou gera link de cadastro. Use sempre que o CPF for fornecido."""
         return await engine.robot_identify_guest(cpf, session_id)
@@ -88,8 +89,6 @@ async def handle_customer_query(message: str, history: list, db: Session, tenant
         """Robô 7: Consulta Regras de Negócio, Manual e Calendário de Eventos. Use para saber sobre datas especiais, pets, horários e políticas."""
         return await engine.robot_business_intelligence()
 
-    # O Blackboard já foi carregado no início da função
-    
     sys_msg = SystemMessage(content=f"""
 Você é a ANA, a RECEPCIONISTA VIRTUAL da Pousada. Sua missão é encantar o hóspede com um atendimento caloroso, profissional e eficiente, típico de uma hotelaria de excelência.
 
@@ -111,6 +110,7 @@ REGRAS DE OURO:
 - NUNCA envie links por extenso (URLs). Sempre use o formato de botão Markdown em uma nova linha: [Texto do Botão](URL).
 - Se o hóspede não tiver cadastro, entregue o botão de cadastro IMEDIATAMENTE após a Ana se apresentar.
 - Mantenha o foco em converter a conversa em uma reserva feliz!
+- **REGRA DE OURO DE SÍNTESE:** Após usar qualquer ferramenta (robô), você DEVE obrigatoriamente processar os dados recebidos e fornecer uma resposta final para o hóspede. Nunca encerre o turno sem uma mensagem textual calorosa.
 """)
 
     tools = [
@@ -136,43 +136,49 @@ REGRAS DE OURO:
     app = workflow.compile()
     
     try:
-        # Registramos quantas mensagens tínhamos antes para pegar apenas as NOVAS
-        initial_msg_count = len(history) + 1 # +1 pela HumanMessage que vamos enviar
+        # --- UNIFICAÇÃO DO HISTÓRICO (EVITA DUPLICAÇÃO) ---
+        lc_history = convert_history_to_langchain(history)
+        # Se a última mensagem do histórico já for a mensagem atual, não adicionamos de novo
+        if not lc_history or (lc_history[-1].content != message):
+            lc_history.append(HumanMessage(content=message))
         
-        final_state = await app.ainvoke({"messages": convert_history_to_langchain(history) + [HumanMessage(content=message)]})
+        initial_msg_count = len(lc_history)
+        final_state = await app.ainvoke({"messages": lc_history})
         
-        # --- COLETA DE TODAS AS RESPOSTAS DA IA NESTE TURNO ---
-        # Queremos todas as AIMessages que surgiram após a nossa HumanMessage
+        # --- LOG DE DIAGNÓSTICO ---
+        print(f"[AI_DIAGNOSTIC] Turno finalizado para tenant {tenant_id}. Novas mensagens: {len(final_state['messages']) - initial_msg_count}")
+        
+        # --- COLETA DE RESPOSTAS ---
         new_messages = final_state["messages"][initial_msg_count:]
         ai_responses = [m.content for m in new_messages if isinstance(m, AIMessage) and m.content]
-        
         response_content = " ".join(ai_responses).strip()
-        
-        # --- NORMALIZAÇÃO ROBUSTA ---
-        if isinstance(response_content, list):
-            response_content = " ".join([p.get("text", "") if isinstance(p, dict) else str(p) for p in response_content]).strip()
         
         # --- VÁLVULA DE ESCAPE INTELIGENTE ---
         if not response_content or response_content.strip() == "":
-            print(f"[AI_DEBUG] IA silenciou. Recuperando dados dos robôs...")
+            print(f"[AI_DEBUG] IA silenciou ou retornou apenas ferramentas. Iniciando recuperação...")
             for m in reversed(final_state["messages"]):
                 if isinstance(m, ToolMessage):
                     try:
                         res = json.loads(m.content)
-                        # Se foi cotação
-                        if "total" in res and "breakdown" in res:
-                            response_content = f"Para esse período, o valor total fica em R$ {res['total']:.2f}. Qual desses quartos você prefere reservar?"
+                        # Caso 1: Cotação/Preços
+                        if "options" in res and res.get("success"):
+                            response_content = f"Localizei opções para você! O valor total fica a partir de R$ {res['options'][0]['total']:.2f}. Qual dessas opções mais te agrada?"
                             break
-                        # Se foi identificação
+                        # Caso 2: Cadastro
                         if res.get("registration_link"):
-                            response_content = f"Notei que você ainda não tem cadastro conosco. Será um prazer te receber! Para continuarmos, basta clicar no botão abaixo:\n\n[💎 Clique aqui para se Cadastrar]({res['registration_link']})"
+                            response_content = f"Notei que você ainda não tem cadastro conosco. Para continuarmos com sua reserva, basta clicar no botão abaixo:\n\n[💎 Clique aqui para se Cadastrar]({res['registration_link']})"
+                            break
+                        # Caso 3: Regras de Negócio/Manual
+                        if res.get("manual") or res.get("rules"):
+                            response_content = "Localizei as informações da nossa pousada! O que exatamente você gostaria de saber sobre nossas regras, horários ou eventos?"
                             break
                     except: continue
             
             if not response_content:
-                response_content = "Entendido! Como posso te ajudar a prosseguir com o seu atendimento?"
+                response_content = "Com certeza! Estou consultando aqui os melhores detalhes para você. Como posso te ajudar agora?"
 
         return {"response": response_content}
     except Exception as e:
+        print(f"[AI_ERROR] Erro no processamento do Customer Agent: {str(e)}")
         traceback.print_exc()
-        return {"response": f"Erro técnico na ponte: {str(e)}"}
+        return {"response": "Desculpe, tive um pequeno problema técnico ao consultar meus robôs. Pode repetir sua solicitação?"}
