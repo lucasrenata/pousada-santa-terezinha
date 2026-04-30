@@ -74,13 +74,18 @@ def run_agent_task(message: str, session_id: str, tenant_id: int):
 
 @router.post("/customer")
 async def chat_customer(request: ChatRequest, db: Session = Depends(get_db)):
-    """Recebe a mensagem e delega para o Worker retornar um Job ID."""
+    """Recebe a mensagem, salva imediatamente e delega para o Worker."""
+    set_tenant_context(db, request.tenant_id)
+    
+    # Salva a mensagem do usuário AGORA para garantir persistência imediata
+    save_message(request.session_id, "user", request.message, request.tenant_id, db)
+    
     job = q.enqueue(
         run_agent_task, 
         request.message, 
         request.session_id, 
         request.tenant_id,
-        job_timeout='2m' # Aumentamos o tempo limite para agentes complexos
+        job_timeout='2m'
     )
     return {"job_id": job.id, "status": "queued"}
 

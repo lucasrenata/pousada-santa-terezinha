@@ -5,7 +5,7 @@ import models
 from database import SessionLocal, set_tenant_context
 from utils.pricing import calculate_daily_rates_count, calculate_reservation_total
 from datetime import datetime, date, timedelta
-from typing import Optional, List
+from typing import Optional, List, Any
 import traceback
 from utils.payment_helpers import prepare_payer_data, process_mp_response
 
@@ -35,123 +35,94 @@ def convert_history_to_langchain(history: list):
     return lc_messages
 
 # =============================================================================
-# ORQUESTRADOR CENTRAL (AGENTE CUSTOMER)
+# ORQUESTRADOR CENTRAL (AGENTE CUSTOMER - A PONTE)
 # =============================================================================
 
-async def handle_customer_query(message: str, history: list, db: Session, tenant_id: int, base_url: str = ""):
-    # --- SELEÇÃO DE MODELO (OPENAI VS GEMINI) ---
-    google_key = os.getenv("GOOGLE_API_KEY")
-    gemini_model = os.getenv("GEMINI_MODEL")
+async def handle_customer_query(message: str, history: list, db: Session, tenant_id: int, session_id: str = ""):
+    from agents.customer_engine import CustomerEngineV2
+    engine = CustomerEngineV2(tenant_id)
     
-    if google_key:
-        model_name = gemini_model or "gemini-2.5-flash-lite-preview"
-        llm = ChatGoogleGenerativeAI(model=model_name, google_api_key=google_key, temperature=0.1)
-        print(f"[AI_LOG] Ativando Modelo Experimental: {model_name}")
-    else:
-        llm = ChatOpenAI(model="gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.2)
-        print(f"[AI_LOG] Usando OpenAI: gpt-4o-mini")
-
-    # --- ATIVAÇÃO DO CONTEXTO DE TENANT (RLS) ---
+    # --- SELEÇÃO DE MODELO ---
+    google_key = os.getenv("GOOGLE_API_KEY")
+    gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+    
+    llm = ChatGoogleGenerativeAI(model=gemini_model, google_api_key=google_key, temperature=0.1)
+    
+    # --- ATIVAÇÃO DO CONTEXTO ---
     set_tenant_context(db, tenant_id)
+    
+    # --- BLACKBOARD (Quadro Negro) ---
+    from agents.state_manager import StateManager
+    sm = StateManager(tenant_id)
+    blackboard = sm.get_context(session_id)
 
-    # --- BUSCA NOME DA IA E REGRAS DINÂMICAS ---
-    settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
-    ai_name = settings.get("ai_receptionist_name", "Ana")
-    business_manual = shared_tools.get_combined_business_context(tenant_id)
-
-    @tool
-    def robot_check_availability(check_in: str, check_out: str, group_size: int = 1, ages: List[int] = []) -> dict:
-        """Micro-robô para consultar vagas e preços. Use sempre que o hóspede perguntar datas, valores ou disponibilidade."""
-        return shared_tools.availability_check_logic(tenant_id, check_in, check_out, group_size, ages)
-
-    @tool
-    def robot_find_guest(cpf: str = "", name: str = "") -> dict:
-        """Micro-robô para identificar hóspedes no banco de dados."""
-        return shared_tools.find_guest_logic(tenant_id, cpf, name, base_url)
+    # =========================================================================
+    # DEFINIÇÃO DE FERRAMENTAS (OS ROBÔS)
+    # =================================================================    @tool
+    async def robot_identify_guest(cpf: str) -> dict:
+        """Robô 1: Identifica hóspede ou gera link de cadastro. Use sempre que o CPF for fornecido."""
+        return await engine.robot_identify_guest(cpf, session_id)
 
     @tool
-    def robot_pre_validate_checklist(group_size: int, companions: List[dict] = []) -> dict:
-        """Micro-robô de validação: Verifique se os dados de todos os acompanhantes foram coletados."""
-        # Nota: pre_validation_logic foi movido para o shared_tools mas não foi exportado no script anterior
-        # Vou usar a lógica direta aqui por enquanto para não quebrar.
-        missing = []
-        total_expected = group_size - 1
-        if len(companions) < total_expected: missing.append(f"Mais {total_expected - len(companions)} acompanhantes")
-        return {"status": "ready" if not missing else "incomplete", "missing": missing}
+    async def robot_calculate_quote(check_in: str, check_out: str, group_size: int = 1) -> dict:
+        """Robô 2: Consulta preços e disponibilidade geral. Use na primeira pergunta sobre valores."""
+        return await engine.robot_calculate_quote(check_in, check_out, group_size)
 
     @tool
-    def robot_search_events(query: str = "", month: int = None, year: int = None) -> dict:
-        """Micro-robô de consulta de eventos locais da Canção Nova. 
-        Use 'query' se o hóspede buscar por nome (Ex: Hosana Brasil). 
-        Use 'month' e 'year' se o hóspede quiser saber quais são os eventos de um mês específico."""
-        if query:
-            return shared_tools.search_events_logic(tenant_id, query)
-        else:
-            return shared_tools.event_listing_logic(tenant_id, month, year)
+    async def robot_search_available_rooms(check_in: str, check_out: str, group_size: int) -> dict:
+        """Robô 3: Busca quartos específicos que comportam o grupo. Use após o hóspede confirmar interesse na reserva."""
+        return await engine.robot_search_available_rooms(check_in, check_out, group_size)
 
     @tool
-    def robot_book_with_payment(guest_id: int, room_id: str, check_in: str, check_out: str, group_size: int, companions: List[dict] = []) -> dict:
-        """Micro-robô FINALIZADOR: Realiza a reserva e gera a cobrança PIX."""
-        return shared_tools.unified_booking_flow(tenant_id, guest_id, room_id, check_in, check_out, group_size, companions)
+    async def robot_create_booking_atomic(guest_id: int, room_id: str, check_in: str, check_out: str, group_size: int) -> dict:
+        """Robô 4: Cria a reserva no banco e calcula o valor do sinal. Use apenas após confirmação total dos dados."""
+        return await engine.robot_create_booking_atomic(guest_id, room_id, check_in, check_out, group_size)
 
     @tool
-    def robot_confirm_payment(booking_id: int, method: str = "pix") -> dict:
-        """Micro-robô financeiro: Confirma pagamentos e libera a reserva."""
-        return shared_tools.confirm_payment_logic(tenant_id, booking_id, method)
+    async def robot_get_payment_info(booking_id: int) -> dict:
+        """Robô 5: Gera o link do Mercado Pago ou Chave PIX. Use após a reserva ser criada."""
+        return await engine.robot_get_payment_info(booking_id)
 
     @tool
-    def robot_get_payment_info(booking_id: int) -> dict:
-        """Micro-robô de COBRANÇA: Gera ou recupera o QR Code PIX e dados de pagamento para uma reserva existente."""
-        return shared_tools.payment_info_logic(tenant_id, booking_id)
+    async def robot_business_intelligence() -> dict:
+        """Robô 7: Consulta Regras de Negócio, Manual e Calendário de Eventos. Use para saber sobre datas especiais, pets, horários e políticas."""
+        return await engine.robot_business_intelligence()
 
-    @tool
-    def robot_find_booking(cpf: str = "", name: str = "", room_id: str = "", booking_id: int = None) -> dict:
-        """Micro-robô de INVESTIGAÇÃO: Localiza detalhes de uma reserva pelo ID, CPF, Nome ou Quarto. Use para validar IDs."""
-        return shared_tools.find_booking_logic(tenant_id, cpf, name, room_id, booking_id)
+    # O Blackboard já foi carregado no início da função
+    
+    sys_msg = SystemMessage(content=f"""
+Você é a ANA, a RECEPCIONISTA VIRTUAL da Pousada. Sua missão é encantar o hóspede com um atendimento caloroso, profissional e eficiente, típico de uma hotelaria de excelência.
 
-    @tool
-    def robot_record_knowledge(content: str, category: str = "geral", importance: int = 1, guest_id: int = None) -> dict:
-        """Micro-robô de Memória: Salva fatos ou preferências aprendidas para uso futuro."""
-        return shared_tools.store_operational_memory_logic(tenant_id, content, category, guest_id, importance)
+PERSONA:
+- Seja comunicativa, gentil e use frases de acolhimento (ex: "Será um prazer receber vocês!", "Excelente escolha!", "Deixe-me verificar o melhor para o seu conforto").
+- Você NÃO é um robô travado; você é uma profissional de hotelaria que usa ferramentas tecnológicas para garantir dados precisos.
 
-    # --- MEMÓRIA E DIAGNÓSTICO ---
-    # Tenta identificar o hóspede no histórico para carregar a memória específica
-    current_guest_id = None
-    for h in reversed(history):
-        if h.get("guest_id"): 
-            current_guest_id = h["guest_id"]
-            break
-            
-    op_memory = shared_tools.get_operational_memory_logic(tenant_id, current_guest_id)
-    if op_memory: print(f"[AI_MEMORY] Carregados fatos da memória operacional.")
+ESTADO ATUAL (QUADRO NEGRO): {json.dumps(blackboard)}
 
-    # --- PERSONA TRANSAIONAL (PROMPT DINÂMICO) ---
-    current_date_str = date.today().strftime("%A, %d de %B de %Y")
-    sys_msg = SystemMessage(content=f"""Hoje é {current_date_str}.
-Você é {ai_name}, o Orquestrador de Recepção Virtual. Sua prioridade é PRECISÃO TRANSAIONAL.
+ROTEIRO DE ENCANTAMENTO:
+1. CONTEXTO: Use 'robot_business_intelligence' para tirar dúvidas sobre a pousada, pets, horários ou eventos locais. Mostre que você conhece a casa!
+2. COTAÇÃO: Use 'robot_calculate_quote' para preços. Ao responder, apresente os valores com entusiasmo e pergunte qual opção mais agrada.
+3. IDENTIFICAÇÃO: Se houver interesse, use 'robot_identify_guest'. Peça o CPF com gentileza para localizar o cadastro ou criar um novo.
+4. ESCOLHA: Use 'robot_search_available_rooms' para mostrar as fotos e detalhes dos quartos.
+5. FINALIZAÇÃO: Use 'robot_create_booking_atomic' para selar a reserva e 'robot_get_payment_info' para facilitar o pagamento.
 
-{business_manual}
-
-DIRETRIZES DE COMPORTAMENTO:
-1. VALIDAÇÃO: Nunca reserve sem confirmar se todos os dados (nomes e idades) foram coletados.
-2. PROTOCOLO: Apresente o resumo (Quarto, Datas, Valor) e peça confirmação ("Podemos seguir?") antes de gerar o PIX.
-3. VERDADE FINANCEIRA: Só confirme pagamentos se a ferramenta 'robot_confirm_payment' ou 'robot_get_payment_info' retornar sucesso.
-4. EVENTOS: Se o hóspede citar um evento, busque-o com 'robot_search_events' para sugerir as datas corretas.
-5. ZERO ALUCINAÇÃO: Use apenas valores e IDs retornados pelos robôs.
-
-ESTILO: Profissional, acolhedor e focado na conversão da reserva.
+REGRAS DE OURO:
+- NUNCA responda de forma mecânica. Transforme os dados dos robôs em uma conversa fluida.
+- Se o hóspede der datas e pessoas, sua PRIORIDADE é dar o preço e já começar a planejar a estadia deles.
+- Mantenha o foco em converter a conversa em uma reserva feliz!
 """)
 
     tools = [
-        robot_check_availability, robot_find_guest, robot_search_events, 
-        robot_pre_validate_checklist, robot_book_with_payment, robot_confirm_payment,
-        robot_record_knowledge, robot_get_payment_info, robot_find_booking
+        robot_identify_guest, robot_calculate_quote, robot_search_available_rooms,
+        robot_create_booking_atomic, robot_get_payment_info, robot_business_intelligence
     ]
+    
     llm_with_tools = llm.bind_tools(tools)
 
-    def call_model(state: MessagesState):
+    # --- EXECUÇÃO DO GRAFO ---
+    async def call_model(state: MessagesState):
         messages = [sys_msg] + state["messages"]
-        response = llm_with_tools.invoke(messages)
+        response = await llm_with_tools.ainvoke(messages)
         return {"messages": [response]}
 
     workflow = StateGraph(MessagesState)
@@ -162,7 +133,6 @@ ESTILO: Profissional, acolhedor e focado na conversão da reserva.
     workflow.add_edge("tools", "agent")
     app = workflow.compile()
 
-    # Conversão Inteligente de Histórico
     lc_messages = convert_history_to_langchain(history)
     lc_messages.append(HumanMessage(content=message))
 
@@ -171,8 +141,7 @@ ESTILO: Profissional, acolhedor e focado na conversão da reserva.
         response_msg = final_state["messages"][-1]
         response_content = response_msg.content
         
-        # --- NORMALIZAÇÃO NATIVA (THE GEMINI WAY) ---
-        # Extrai o texto de blocos complexos ou serializa para String para o banco
+        # --- NORMALIZAÇÃO ROBUSTA (THE GEMINI WAY) ---
         if isinstance(response_content, list):
             full_text = ""
             for part in response_content:
@@ -183,23 +152,27 @@ ESTILO: Profissional, acolhedor e focado na conversão da reserva.
                     full_text += part
             response_content = full_text.strip()
         
-        # Se for um AIMessage com chamadas de ferramenta mas sem texto, o Gemini às vezes retorna vazio
-        if not response_content and hasattr(response_msg, 'tool_calls') and response_msg.tool_calls:
-            response_content = "Processando informações com meus robôs... 🤖"
+        # --- VÁLVULA DE ESCAPE INTELIGENTE ---
+        if not response_content or response_content.strip() == "":
+            print(f"[AI_DEBUG] IA silenciou. Recuperando dados dos robôs...")
+            for m in reversed(final_state["messages"]):
+                if isinstance(m, ToolMessage):
+                    try:
+                        res = json.loads(m.content)
+                        # Se foi cotação
+                        if "total" in res and "breakdown" in res:
+                            response_content = f"Para esse período, o valor total fica em R$ {res['total']:.2f}. Qual desses quartos você prefere reservar?"
+                            break
+                        # Se foi identificação
+                        if res.get("registration_link"):
+                            response_content = f"Notei que você ainda não tem cadastro. Clique aqui para preencher rapidinho: [💎 Cadastrar Agora]({res['registration_link']})"
+                            break
+                    except: continue
+            
+            if not response_content:
+                response_content = "Entendido! Como posso te ajudar a prosseguir com a reserva?"
 
         return {"response": response_content}
     except Exception as e:
-        import traceback
-        # --- LOG DE DIAGNÓSTICO SÊNIOR (ERROR 404 DETECT) ---
-        error_msg = str(e)
-        if "404" in error_msg or "NOT_FOUND" in error_msg:
-            print(f"\n[AI_DIAGNOSTIC_ERROR] Erro 404 Detectado ao chamar o modelo {gemini_model or 'gemini-2.0-flash-001'}")
-            print(f"Detalhes Técnicos: {error_msg}")
-            # Tenta extrair informações extras se vierem do Google GenAI
-            if hasattr(e, 'response'):
-                try:
-                    print(f"Resposta Bruta da API: {e.response.json if hasattr(e.response, 'json') else e.response}")
-                except: pass
-        
         traceback.print_exc()
-        return {"response": f"Ops! Tive um pequeno tropeço técnico aqui: {str(e)}. Mas já estou me levantando, pode tentar de novo?"}
+        return {"response": f"Erro técnico na ponte: {str(e)}"}

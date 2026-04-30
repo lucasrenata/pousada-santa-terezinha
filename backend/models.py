@@ -224,8 +224,8 @@ class Booking(Base, TenantMixin):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     room = relationship("Room", back_populates="bookings")
     guest = relationship("Guest", back_populates="bookings")
-    consumptions = relationship("Consumption", back_populates="booking")
-    companions = relationship("Companion", back_populates="booking")
+    consumptions = relationship("Consumption", back_populates="booking", cascade="all, delete-orphan")
+    companions = relationship("Companion", back_populates="booking", cascade="all, delete-orphan")
     # Relacionamento com Revenue (opcional, se quiser linkar pagamentos)
     revenues = relationship("Revenue", back_populates="booking")
     
@@ -254,7 +254,7 @@ class Companion(Base, TenantMixin):
 class Consumption(Base, TenantMixin):
     __tablename__ = "consumptions"
     id = Column(Integer, primary_key=True, index=True)
-    booking_id = Column(Integer, ForeignKey("bookings.id"))
+    booking_id = Column(Integer, ForeignKey("bookings.id", ondelete='SET NULL'))
     product_id = Column(Integer, ForeignKey("products.id"))
     quantity = Column(Integer, default=1)
     unit_price = Column(Float)
@@ -274,7 +274,7 @@ class Revenue(Base, TenantMixin):
     payment_method = Column(Enum(PaymentMethod))
     created_at = Column(DateTime, default=datetime.now)
     
-    booking_id = Column(Integer, ForeignKey("bookings.id"), nullable=True)
+    booking_id = Column(Integer, ForeignKey("bookings.id", ondelete='SET NULL'), nullable=True)
     booking = relationship("Booking", back_populates="revenues")
     created_by_user = Column(String, nullable=True) 
 # ... (Mantenha todo o resto igual) ...
@@ -436,7 +436,7 @@ class Comanda(Base, TenantMixin):
     status = Column(Enum(ComandaStatus), default=ComandaStatus.ABERTA)
     total = Column(Float, default=0.0)
     
-    booking_id = Column(Integer, ForeignKey("bookings.id"), nullable=True)
+    booking_id = Column(Integer, ForeignKey("bookings.id", ondelete='SET NULL'), nullable=True)
     session_id = Column(Integer, ForeignKey("caixa_sessions.id"), nullable=True)
     
     created_at = Column(DateTime, default=datetime.now)

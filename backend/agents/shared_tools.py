@@ -791,7 +791,8 @@ async def execute_business_logic(tenant_id: int, message: str, context: dict, se
         
         # 1. LOGICA DE BUSCA DE HÓSPEDE (Prioridade Macro)
         cpf_to_search = context.get("cpf")
-        guest_lookup = find_guest_logic(tenant_id, cpf=cpf_to_search, session_id=session_id)
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5174")
+        guest_lookup = find_guest_logic(tenant_id, cpf=cpf_to_search, base_url=frontend_url, session_id=session_id)
         results["guest"] = guest_lookup
         if guest_lookup.get("found"):
             updated_context["guest_id"] = guest_lookup["id"]

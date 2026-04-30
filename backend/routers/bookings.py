@@ -671,7 +671,7 @@ def delete_booking(booking_id: int, db: Session = Depends(get_db), current_user 
     if not booking:
         raise HTTPException(status_code=404, detail="Reserva não encontrada")
     
-    db.query(models.Companion).filter(models.Companion.booking_id == booking_id).delete()
+    # O banco agora cuida das dependências via CASCADE e SET NULL configurados no models.py
     db.delete(booking)
     db.commit()
     return {"message": "Reserva deletada com sucesso"}
