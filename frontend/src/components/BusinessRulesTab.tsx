@@ -288,3 +288,8 @@ export default function BusinessRulesTab() {
               <span className="text-xs">%</span>
             </div>
           </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
