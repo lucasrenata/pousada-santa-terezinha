@@ -173,16 +173,19 @@ def criar_comanda(
     if comanda_existente:
         return comanda_existente
 
-    # 2. Caso contrário, cria uma nova branquinha
+    # 2. Caso contrário, exige caixa aberto para criar nova comanda
     sessao = db.query(models.CaixaSession).filter(
         models.CaixaSession.user_id == current_user.id,
         models.CaixaSession.status == models.CaixaStatus.ABERTO
     ).first()
     
+    if not sessao:
+        raise HTTPException(status_code=400, detail="Operação negada: O caixa precisa estar ABERTO para lançar vendas.")
+
     nova_comanda = models.Comanda(
         identificador=request.identificador,
         booking_id=request.booking_id,
-        session_id=sessao.id if sessao else None,
+        session_id=sessao.id,
         status=models.ComandaStatus.ABERTA,
         tenant_id=current_user.tenant_id
     )
@@ -208,7 +211,14 @@ def adicionar_item_comanda(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    """Adiciona um item à comanda"""
+    # Verifica se o caixa continua aberto
+    sessao = db.query(models.CaixaSession).filter(
+        models.CaixaSession.user_id == current_user.id,
+        models.CaixaSession.status == models.CaixaStatus.ABERTO
+    ).first()
+    if not sessao:
+        raise HTTPException(status_code=400, detail="O caixa foi fechado. Abra-o para continuar lançando itens.")
+
     comanda = db.query(models.Comanda).filter(models.Comanda.id == comanda_id).first()
     if not comanda or comanda.status != models.ComandaStatus.ABERTA:
         raise HTTPException(status_code=400, detail="Comanda não encontrada ou já finalizada.")
@@ -373,6 +383,14 @@ def finalizar_comanda(
     current_user: models.User = Depends(get_current_user)
 ):
     """Finaliza a comanda: Lança no quarto ou registra pagamento direto"""
+    # Verifica caixa aberto (obrigatório para vendas diretas e lançamentos no quarto)
+    sessao = db.query(models.CaixaSession).filter(
+        models.CaixaSession.user_id == current_user.id,
+        models.CaixaSession.status == models.CaixaStatus.ABERTO
+    ).first()
+    if not sessao:
+        raise HTTPException(status_code=400, detail="Não é possível finalizar vendas com o caixa fechado.")
+
     comanda = db.query(models.Comanda).filter(models.Comanda.id == comanda_id).first()
     if not comanda or comanda.status != models.ComandaStatus.ABERTA:
         raise HTTPException(status_code=400, detail="Comanda inválida ou já finalizada.")

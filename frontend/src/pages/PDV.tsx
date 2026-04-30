@@ -60,8 +60,8 @@ interface ActiveReservation {
 }
 
 // --- UI COMPONENTS: ACTION CARDS ---
-const ActionCard = ({ title, icon: Icon, color, children, onAdd }: any) => (
-  <Card className="border-slate-200 shadow-sm overflow-hidden hover:border-slate-300 transition-all">
+const ActionCard = ({ title, icon: Icon, color, children, onAdd, disabled }: any) => (
+  <Card className={`border-slate-200 shadow-sm overflow-hidden transition-all ${disabled ? 'opacity-50 grayscale' : 'hover:border-slate-300'}`}>
     <CardHeader className="p-4 bg-slate-50/50 flex flex-row items-center gap-2 border-b border-slate-100">
       <div className={`p-1.5 rounded-lg ${color} bg-white shadow-sm`}>
         <Icon size={16} />
@@ -71,7 +71,12 @@ const ActionCard = ({ title, icon: Icon, color, children, onAdd }: any) => (
     <CardContent className="p-4 flex gap-2">
       {children}
       {onAdd && (
-        <Button variant="secondary" className="font-bold text-xs px-4 rounded-xl" onClick={onAdd}>
+        <Button 
+          variant="secondary" 
+          className="font-bold text-xs px-4 rounded-xl" 
+          onClick={onAdd}
+          disabled={disabled}
+        >
           Adicionar
         </Button>
       )}
@@ -428,7 +433,7 @@ export default function PDV() {
                 <Barcode size={22} />
               </div>
               <Input 
-                 ref={comandaInputRef}
+                 ref={comandaInputRef} disabled={!caixa}
                  placeholder="Ler código da COMANDA ou nome avulso..." 
                  className="h-14 pl-14 text-xl font-bold bg-slate-100/50 border-none rounded-2xl focus:bg-white focus:ring-2 focus:ring-blue-400 transition-all shadow-inner"
                  value={comandaScannerValue}
@@ -445,7 +450,7 @@ export default function PDV() {
             <div className="flex items-center gap-2 pl-6 border-l border-slate-100">
              <Button 
                 variant={isMultiMode ? "default" : "outline"}
-                className={`rounded-xl font-bold gap-2 h-12 border-orange-200 transition-all ${isMultiMode ? 'bg-orange-600 hover:bg-orange-700 text-white shadow-orange-100 shadow-lg' : 'text-orange-600 hover:bg-orange-50'}`}
+                disabled={!caixa}
                 onClick={() => {
                   setIsMultiMode(!isMultiMode);
                   if (!isMultiMode) {
@@ -484,6 +489,7 @@ export default function PDV() {
                title="Lançar Prato por Peso" 
                icon={Weight} 
                color="text-orange-500" 
+               disabled={!caixa}
                onAdd={() => {
                  const val = parseFloat(pesoValue);
                  if (val > 0) addItemToComanda(null, { price: val, desc: 'Prato por Peso', type: 'peso' });
@@ -512,6 +518,7 @@ export default function PDV() {
                title="Lançar Marmitex" 
                icon={Utensils} 
                color="text-emerald-500" 
+               disabled={!caixa}
                onAdd={() => {
                  const val = parseFloat(marmitexValue);
                  if (val > 0) addItemToComanda(null, { price: val, desc: 'Marmitex', type: 'marmitex' });
@@ -536,7 +543,7 @@ export default function PDV() {
              </ActionCard>
 
              {/* Adicionar por Código de Barras */}
-             <ActionCard title="Adicionar por Código" icon={Barcode} color="text-blue-500">
+             <ActionCard title="Adicionar por Código" icon={Barcode} color="text-blue-500" disabled={!caixa}>
                <Input 
                  ref={productBarcodeRef}
                  placeholder="Leia o código de barras do produto aqui..." 
@@ -548,7 +555,7 @@ export default function PDV() {
              </ActionCard>
 
              {/* Buscar por Nome */}
-             <ActionCard title="Buscar por Nome" icon={Search} color="text-slate-500">
+             <ActionCard title="Buscar por Nome" icon={Search} color="text-slate-500" disabled={!caixa}>
                 <div className="relative w-full">
                   <Input 
                     placeholder="Digite o nome do produto..." 
@@ -588,7 +595,7 @@ export default function PDV() {
                  Escolher Atalhos
                </Button>
             </CardHeader>
-            <CardContent className="p-4 flex-1 flex flex-col overflow-hidden">
+            <CardContent className={`p-4 flex-1 flex flex-col overflow-hidden ${!caixa && 'opacity-50 grayscale pointer-events-none'}`}>
                <ScrollArea className="h-full pr-4">
                   {searchProductName ? (
                     // MODO BUSCA
