@@ -47,6 +47,12 @@ class TenantResponse(TenantBase):
     created_at: datetime
     class Config: from_attributes = True
 
+class TenantPublicResponse(BaseModel):
+    name: str
+    cnpj: Optional[str] = None
+    address: Optional[str] = None
+    class Config: from_attributes = True
+
 class SignupRequest(BaseModel):
     pousada_name: str
     admin_username: str
