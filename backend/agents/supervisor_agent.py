@@ -114,12 +114,17 @@ class SupervisorAgent:
         ]
         if any(kw in last_msg for kw in faq_keywords): return "faq"
         
-        # 2. Rota de PAGAMENTO (Se já existe reserva criada) - DETERMINÍSTICO
-        if state.get("booking_id"): 
-            logger.info(f"[FSM][ROUTER] Reserva #{state['booking_id']} detectada. Direcionando para PAGAMENTO.")
-            return "pagamento"
+        # 2. Rota de PAGAMENTO (Se existe reserva E intenção de pagar)
+        if state.get("booking_id"):
+            payment_keywords = ["pagar", "pagamento", "pix", "comprovante", "cartão", "link", "valor", "sinal", "depósito", "como eu pago"]
+            is_payment_intent = any(kw in last_msg for kw in payment_keywords) or \
+                               last_msg in ["sim", "quero", "ok", "pode ser", "claro", "manda", "envia", "por favor", "com certeza", "bora"]
+            
+            if is_payment_intent:
+                logger.info(f"[FSM][ROUTER] Reserva #{state['booking_id']} + Intenção detectada. Direcionando para PAGAMENTO.")
+                return "pagamento"
         
-        # 3. Rota de RESERVAS (Fluxo padrão de venda/seleção)
+        # 3. Rota de RESERVAS (Fluxo padrão de venda/seleção ou ajustes)
         return "reservas"
 
     async def reservas_node(self, state: HotelBookingState):
