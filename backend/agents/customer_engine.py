@@ -267,19 +267,35 @@ class CustomerEngineV2:
             # Tenta Mercado Pago (Circuit Breaker)
             if has_mp:
                 try:
-                    logger.info(f"[ENGINE][PAYMENT] Tentando gerar link Mercado Pago para reserva #{booking_id}")
-                    # Simulação de Link MP
-                    # Em produção, aqui haveria uma chamada httpx.post(...)
-                    mp_link = f"https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=TEST-{booking.id}"
+                    logger.info(f"[ENGINE][PAYMENT] Gerando link Mercado Pago real para reserva #{booking_id}")
+                    from payments.mercadopago_service import MercadoPagoService
+                    mp_service = MercadoPagoService()
                     
-                    return {
-                        "success": True,
-                        "payment_method": "MercadoPago",
-                        "link": mp_link,
-                        "manual_key": manual_pix_key,
-                        "total": booking.total_amount,
-                        "message": f"Link de pagamento gerado com sucesso: {mp_link}"
-                    }
+                    # Calcula o valor do sinal
+                    settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
+                    deposit_pct = float(settings.get("pousada_deposit_percentage", 50))
+                    down_payment = (booking.total_amount * deposit_pct) / 100
+                    
+                    pref = mp_service.create_card_preference(
+                        access_token=tenant_config.mp_access_token,
+                        tenant_id=self.tenant_id,
+                        amount=down_payment,
+                        title=f"Sinal Reserva #{booking.id}",
+                        metadata={"booking_id": booking.id}
+                    )
+                    
+                    if pref.get("status") == 201:
+                        mp_link = pref["response"]["init_point"]
+                        return {
+                            "success": True,
+                            "payment_method": "MercadoPago",
+                            "link": mp_link,
+                            "manual_key": manual_pix_key,
+                            "total": booking.total_amount,
+                            "message": f"Link de pagamento gerado com sucesso: {mp_link}"
+                        }
+                    else:
+                        raise Exception(f"Falha na criação da preferência MP: {pref.get('message')}")
                 except Exception as e:
                     logger.warning(f"[ENGINE][PAYMENT] Falha no Gateway Mercado Pago: {e}. Acionando FALLBACK PIX.")
                     # Fallback imediato para PIX Manual em caso de erro na API
