@@ -1,11 +1,14 @@
 import json
 import os
+import logging
 from typing import Optional, List, Any, Dict
 from datetime import datetime, date, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_, text
 from database import SessionLocal, set_tenant_context
 import models
+
+logger = logging.getLogger("AI_ENGINE")
 
 class CustomerEngineV2:
     def __init__(self, tenant_id: int):
@@ -27,8 +30,6 @@ class CustomerEngineV2:
         Busca hóspede pelo CPF ou gera link de cadastro (com Instrumentação e Retry).
         """
         import asyncio
-        import logging
-        logger = logging.getLogger("AI_ENGINE")
         
         clean_cpf = "".join(filter(str.isdigit, cpf))
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5174")
