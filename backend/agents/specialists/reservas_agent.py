@@ -1,20 +1,5 @@
 """
 Sub-Agente de Reservas — Especialista em Cotação, Identificação e Criação da Reserva.
-
-RESPONSABILIDADE EXCLUSIVA:
-  1. Coletar datas e número de pessoas.
-  2. Apresentar opções de quartos do mais barato ao mais caro.
-  3. Identificar o hóspede pelo CPF (ou gerar link de cadastro).
-  4. Coletar dados dos acompanhantes (nome e idade).
-  5. Criar a reserva como PENDENTE no banco → gera o booking_id.
-
-FERRAMENTAS:
-  - robot_calculate_quote        → cotação inicial (ordena por preço)
-  - robot_search_available_rooms → quartos disponíveis para o grupo
-  - robot_identify_guest         → busca CPF ou gera link de cadastro
-  - robot_create_booking_atomic  → CRIA a reserva como PENDENTE
-
-ISOLAMENTO: Não importa nada de admin_agent.py.
 """
 import os
 import logging
@@ -31,59 +16,7 @@ from agents.customer_engine import CustomerEngineV2
 
 logger = logging.getLogger("RESERVAS_AGENT")
 
-
-def build_reservas_graph(tenant_id: int, session_id: str):
-    """
-    Constrói e retorna o grafo LangGraph do Agente de Reservas compilado.
-    """
-    engine = CustomerEngineV2(tenant_id)
-    google_key = os.getenv("GOOGLE_API_KEY")
-    gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
-    llm = ChatGoogleGenerativeAI(model=gemini_model, google_api_key=google_key, temperature=0.1)
-
-    # --- FERRAMENTAS EXCLUSIVAS DE RESERVAS ---
-
-    @tool
-    async def robot_calculate_quote(check_in: str, check_out: str, group_size: int = 1) -> dict:
-        """Consulta preços e disponibilidade geral para o período e número de pessoas informados.
-        Retorna opções ordenadas do mais barato ao mais caro.
-        Formatos de data aceitos: DD/MM/YYYY, DD/MM ou YYYY-MM-DD."""
-        return await engine.robot_calculate_quote(check_in, check_out, group_size)
-
-    @tool
-    async def robot_search_available_rooms(check_in: str, check_out: str, group_size: int) -> dict:
-        """Busca quartos específicos disponíveis para o grupo nas datas informadas.
-        Use para confirmar disponibilidade de uma categoria específica escolhida pelo hóspede."""
-        return await engine.robot_search_available_rooms(check_in, check_out, group_size)
-
-    @tool
-    async def robot_identify_guest(cpf: str) -> dict:
-        """Identifica o hóspede pelo CPF no banco de dados.
-        Se não encontrado, retorna um link de cadastro para o hóspede se registrar.
-        Use SEMPRE que o hóspede informar o CPF."""
-        return await engine.robot_identify_guest(cpf, session_id)
-
-    @tool
-    async def robot_create_booking_atomic(
-        guest_id: int,
-        room_id: str,
-        check_in: str,
-        check_out: str,
-        group_size: int
-    ) -> dict:
-        """Cria a reserva no banco de dados com status PENDENTE, de forma atômica e segura.
-        Use SOMENTE após ter TODOS os dados confirmados:
-          - guest_id: ID do hóspede (retornado por robot_identify_guest)
-          - room_id: número do quarto escolhido pelo hóspede
-          - check_in / check_out: datas no formato DD/MM/YYYY
-          - group_size: número total de hóspedes (incluindo o titular)
-        Retorna booking_id, total_amount e down_payment (valor do sinal a pagar)."""
-        return await engine.robot_create_booking_atomic(guest_id, room_id, check_in, check_out, group_size)
-
-    tools = [robot_calculate_quote, robot_search_available_rooms, robot_identify_guest, robot_create_booking_atomic]
-    llm_with_tools = llm.bind_tools(tools)
-
-    sys_msg = SystemMessage(content="""Você é a ANA, recepcionista virtual da Pousada.
+RESERVAS_SYSTEM_PROMPT = """Você é a ANA, recepcionista virtual da Pousada.
 
 FUNÇÃO: Conduzir o hóspede até a criação da reserva PENDENTE.
 
@@ -104,12 +37,47 @@ REGRAS DE OURO:
 - O seu objetivo é chegar na reserva #ID o mais rápido possível.
 - Use links Markdown: `[Texto](URL)`.
 - Resposta SEMPRE em português brasileiro.
-""")
+"""
 
-    def call_reservas_model(state: HotelBookingState):
-        logger.info(f"[RESERVAS_AGENT] Processando turno para tenant {tenant_id}")
-        
-        # --- INJEÇÃO DE CONTEXTO DO BLACKBOARD ---
+def build_reservas_graph(tenant_id: int, session_id: str):
+    """
+    Constrói e retorna o grafo LangGraph do Agente de Reservas compilado.
+    """
+    engine = CustomerEngineV2(tenant_id)
+    google_key = os.getenv("GOOGLE_API_KEY")
+    gemini_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    llm = ChatGoogleGenerativeAI(model=gemini_model, google_api_key=google_key, temperature=0.1)
+
+    @tool
+    async def robot_calculate_quote(check_in: str, check_out: str, group_size: int = 1) -> dict:
+        """Consulta preços e disponibilidade geral para o período e número de pessoas informados."""
+        return await engine.robot_calculate_quote(check_in, check_out, group_size)
+
+    @tool
+    async def robot_search_available_rooms(check_in: str, check_out: str, group_size: int) -> dict:
+        """Busca quartos específicos disponíveis para o grupo nas datas informadas."""
+        return await engine.robot_search_available_rooms(check_in, check_out, group_size)
+
+    @tool
+    async def robot_identify_guest(cpf: str) -> dict:
+        """Identifica o hóspede pelo CPF no banco de dados."""
+        return await engine.robot_identify_guest(cpf, session_id)
+
+    @tool
+    async def robot_create_booking_atomic(
+        guest_id: int,
+        room_id: str,
+        check_in: str,
+        check_out: str,
+        group_size: int
+    ) -> dict:
+        """Cria a reserva no banco de dados com status PENDENTE."""
+        return await engine.robot_create_booking_atomic(guest_id, room_id, check_in, check_out, group_size)
+
+    tools = [robot_calculate_quote, robot_search_available_rooms, robot_identify_guest, robot_create_booking_atomic]
+    llm_with_tools = llm.bind_tools(tools)
+
+    def _build_blackboard_msg(state: HotelBookingState) -> SystemMessage:
         blackboard = []
         if state.get("check_in"): blackboard.append(f"Check-in: {state['check_in']}")
         if state.get("check_out"): blackboard.append(f"Check-out: {state['check_out']}")
@@ -123,7 +91,6 @@ REGRAS DE OURO:
 
     def call_reservas_model(state: HotelBookingState):
         logger.info(f"[RESERVAS_AGENT] Processando turno para tenant {tenant_id}")
-        
         try:
             sys_msg = SystemMessage(content=RESERVAS_SYSTEM_PROMPT)
             context_msg = _build_blackboard_msg(state)

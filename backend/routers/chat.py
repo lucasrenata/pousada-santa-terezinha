@@ -98,7 +98,17 @@ async def chat_customer(request: ChatRequest, db: Session = Depends(get_db)):
         # PROCESSAMENTO DIRETO E ASSÍNCRONO
         result = await supervisor.process(request.message, request.session_id)
         
+        # Simula um Job concluído no Redis para compatibilidade com o Frontend
+        dummy_job_id = f"sync_{hashlib.md5(request.session_id.encode()).hexdigest()}"
+        job_data = {
+            "status": "finished",
+            "result": json.dumps(result)
+        }
+        redis_conn.hset(f"rq:job:{dummy_job_id}", mapping=job_data)
+        redis_conn.expire(f"rq:job:{dummy_job_id}", 300) # Expira em 5 min
+        
         return {
+            "job_id": dummy_job_id,
             "status": "finished",
             "result": result
         }
@@ -109,7 +119,16 @@ async def chat_customer(request: ChatRequest, db: Session = Depends(get_db)):
 
 @router.get("/job/{job_id}")
 async def get_job_status(job_id: str):
-    """Endpoint de Polling para verificar o status e o resultado do agente."""
+    """Endpoint de Polling compatível com Jobs Sync e Async."""
+    # Primeiro verifica se é um Job Síncrono (Fake Job)
+    if job_id.startswith("sync_"):
+        data = redis_conn.hgetall(f"rq:job:{job_id}")
+        if data:
+            return {
+                "status": data.get(b"status", b"finished").decode(),
+                "result": json.loads(data.get(b"result", b"{}").decode())
+            }
+    
     try:
         job = Job.fetch(job_id, connection=redis_conn)
     except Exception:
