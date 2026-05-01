@@ -68,19 +68,7 @@ def run_agent_task(message: str, session_id: str, tenant_id: int):
     asyncio.set_event_loop(loop)
     try:
         supervisor = SupervisorAgent(tenant_id)
-        result = loop.run_until_complete(supervisor.process(message, session_id))
-        
-        # --- NOVO: Salva a resposta da IA no Banco para persistência ---
-        if result and result.get("response"):
-            from database import SessionLocal
-            from routers.chat import save_message
-            db = SessionLocal()
-            try:
-                save_message(session_id, "assistant", result["response"], tenant_id, db)
-            finally:
-                db.close()
-        
-        return result
+        return loop.run_until_complete(supervisor.process(message, session_id))
     finally:
         loop.close()
 
@@ -100,7 +88,7 @@ async def chat_customer(request: ChatRequest, db: Session = Depends(get_db)):
     # Trava por 10 segundos (tempo suficiente para o worker começar)
     redis_conn.setex(lock_key, 10, "1")
     
-    # Salva a mensagem do usuário
+    # Salva a mensagem do usuário imediatamente para o histórico
     save_message(request.session_id, "user", request.message, request.tenant_id, db)
     
     job = q.enqueue(
