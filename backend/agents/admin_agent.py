@@ -226,6 +226,15 @@ def expense_logic(tenant_id: int, description: str, amount: float, category: str
         if cat_val not in valid_categories:
             cat_val = "outros"
 
+        today = date.today()
+        d_due = today
+        if due_date:
+            d_due = shared_tools.universal_date_parser(due_date) or today
+        
+        # Regra de Segurança: Se o vencimento é futuro, a despesa NÃO PODE ser lançada como paga.
+        if d_due > today:
+            is_paid = False
+
         t_payment = None
         if is_paid:
             for pm in models.PaymentMethod:
@@ -234,18 +243,13 @@ def expense_logic(tenant_id: int, description: str, amount: float, category: str
                     break
             if not t_payment: t_payment = models.PaymentMethod.PIX
 
-        d_due = date.today()
-        if due_date:
-            try: d_due = datetime.strptime(due_date, "%Y-%m-%d").date()
-            except: pass
-
         exp = models.Expense(
             description=description,
             amount=amount,
             category=cat_val,
             is_paid=is_paid,
             payment_method=t_payment if is_paid else None,
-            paid_date=date.today() if is_paid else None,
+            paid_date=today if is_paid else None,
             due_date=d_due
         )
         db.add(exp)
@@ -557,6 +561,8 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
     llm_with_tools = llm.bind_tools(tools)
     
     sys_msg = SystemMessage(content=f"""Você é o ORQUESTRADOR MESTRE e GERENTE GERAL do estabelecimento.
+Hoje é {datetime.now().strftime('%A, %d de %B de %Y')}.
+
 DIRETRIZES DE COMUNICAÇÃO:
 1. **NARRATIVA DE PROGRESSO**: Seja transparente. Se for acionar um motor de relatórios ou estoque, avise brevemente: "Entendido, estou acessando os dados financeiros agora..." ou "Vou verificar a disponibilidade nos quartos para você...".
 2. **FEEDBACK OBRIGATÓRIO**: Após o retorno de qualquer ferramenta, você DEVE confirmar o resultado ao usuário. NUNCA envie respostas vazias.
