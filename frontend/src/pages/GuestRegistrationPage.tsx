@@ -111,7 +111,7 @@ export default function GuestRegistrationPage() {
       setSuccess(true);
       // Redirecionamento automático mais rápido
       setTimeout(() => {
-        const target = `/${tenant_id || "1"}/atendimento`;
+        const target = `/${tenant_id || "1"}/atendimento?registered=true`;
         navigate(target);
       }, 2000);
     } catch (err: any) {
@@ -139,7 +139,7 @@ export default function GuestRegistrationPage() {
         <h2 className="text-3xl font-black text-slate-800 mb-2">Tudo Pronto!</h2>
         <p className="text-slate-500 font-medium mb-10 text-lg">Cadastro realizado com sucesso. Estamos te levando de volta para o chat...</p>
         <button 
-          onClick={() => navigate(`/${tenant_id || "1"}/atendimento`)}
+          onClick={() => navigate(`/${tenant_id || "1"}/atendimento?registered=true`)}
           className="w-full bg-slate-900 text-white py-5 rounded-3xl font-black text-xl flex items-center justify-center gap-3 hover:scale-105 active:scale-95 transition-all shadow-xl shadow-slate-200"
         >
           Voltar para o Chat <ArrowRight size={24} />

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Send, User, Check, ShieldCheck, Phone, Paperclip, Loader2 } from 'lucide-react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import api from '../services/api';
 import { toast } from 'sonner';
@@ -15,6 +15,7 @@ interface Message {
 export default function GuestChatPage() {
   const { tenant_id } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
@@ -108,7 +109,16 @@ export default function GuestChatPage() {
     setSessionId(sid);
     loadHistory(sid);
     loadSettings();
-  }, []);
+
+    // Se o usuário acabou de vir do cadastro, faz polling por 10s aguardando a IA falar
+    if (searchParams.get('registered') === 'true') {
+      const interval = setInterval(() => {
+        loadHistory(sid);
+      }, 2500);
+      setTimeout(() => clearInterval(interval), 10000);
+      return () => clearInterval(interval);
+    }
+  }, [searchParams]);
 
   const loadSettings = async () => {
     try {

@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+import asyncio
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import models, schemas
@@ -6,6 +7,19 @@ from database import get_db, set_tenant_context
 from .auth import get_current_receptionist
 
 router = APIRouter(prefix="/guests", tags=["Guests"])
+
+async def trigger_ai_registration_ack(tenant_id: int, session_id: str, guest_name: str):
+    from agents.supervisor_agent import SupervisorAgent
+    import logging
+    logger = logging.getLogger("AI_ACK")
+    try:
+        supervisor = SupervisorAgent(tenant_id)
+        sys_msg = f"SYSTEM_EVENT: O hóspede {guest_name} acabou de concluir o formulário de cadastro. O ID dele já está no contexto. Agradeça pelo cadastro chamando-o pelo nome e dê o próximo passo do atendimento."
+        await asyncio.sleep(1) # Aguarda state_manager terminar de persistir por segurança
+        await supervisor.process(sys_msg, session_id)
+        logger.info(f"ACK gerado para sessão {session_id}")
+    except Exception as e:
+        logger.error(f"Falha ao gerar ACK do AI: {e}")
 
 @router.post("/", response_model=schemas.GuestResponse)
 def create_guest(guest: schemas.GuestCreate, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
@@ -23,7 +37,7 @@ def create_guest(guest: schemas.GuestCreate, db: Session = Depends(get_db), curr
     return new_guest
 
 @router.post("/public", response_model=schemas.GuestResponse)
-def create_guest_public(guest_data: schemas.GuestPublicCreate, db: Session = Depends(get_db)):
+def create_guest_public(guest_data: schemas.GuestPublicCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     # 0. Ativa RLS context a partir do payload
     set_tenant_context(db, guest_data.tenant_id)
 
@@ -59,6 +73,8 @@ def create_guest_public(guest_data: schemas.GuestPublicCreate, db: Session = Dep
                 cpf=guest_data.document,
                 session_id=guest_data.session_id
             )
+            if guest_to_return:
+                background_tasks.add_task(trigger_ai_registration_ack, guest_data.tenant_id, guest_data.session_id, guest_to_return.name)
         except Exception as e:
             print(f"[WEBHOOK ERROR] Falha ao notificar agente: {e}")
 
