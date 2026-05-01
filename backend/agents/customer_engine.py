@@ -58,13 +58,13 @@ class CustomerEngineV2:
             if attempt < 2:
                 await asyncio.sleep(2.0)
         
-        link = f"{frontend_url}/{self.tenant_id}/registrar?cpf={clean_cpf}&sid={session_id}"
-        logger.error(f"[ROBOT_ID] ❌ Falha definitiva após 3 tentativas. Gerando link: {link}")
+        link = f"{frontend_url}/{self.tenant_id}/registrar?cpf={clean_cpf}&sid={session_id}".replace(" ", "")
+        logger.info(f"[ROBOT_ID] Link gerado: {link}")
         return {
             "success": False,
             "needs_registration": True,
             "registration_link": link,
-            "message": "CPF não cadastrado ou invisível por RLS após múltiplas tentativas."
+            "message": f"CPF não cadastrado. Por favor, clique no link para se registrar: {link}"
         }
 
     # -------------------------------------------------------------------------
