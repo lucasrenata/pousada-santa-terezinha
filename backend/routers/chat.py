@@ -4,6 +4,7 @@ from database import get_db, set_tenant_context
 from .auth import get_current_staff, get_current_admin
 from pydantic import BaseModel
 import os
+import json
 from openai import OpenAI
 from typing import List
 
@@ -124,9 +125,12 @@ async def get_job_status(job_id: str):
     if job_id.startswith("sync_"):
         data = redis_conn.hgetall(f"rq:job:{job_id}")
         if data:
+            status = data.get(b"status", b"finished").decode()
+            result_raw = data.get(b"result")
+            result = json.loads(result_raw.decode()) if result_raw else {}
             return {
-                "status": data.get(b"status", b"finished").decode(),
-                "result": json.loads(data.get(b"result", b"{}").decode())
+                "status": status,
+                "result": result
             }
     
     try:
