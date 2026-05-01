@@ -30,7 +30,8 @@ export default function GuestChatPage() {
     // Percorre as mensagens da mais recente para a mais antiga
     for (let i = messages.length - 1; i >= 0; i--) {
       const content = messages[i].content;
-      const match = content.match(/ID #(\d+)/);
+      // Procura por "Reserva #123", "ID #123" ou apenas "#123" num contexto de reserva
+      const match = content.match(/(?:reserva|id)?\s*#(\d+)/i);
       if (match) return match[1];
     }
     return null;
