@@ -86,10 +86,21 @@ def run_agent_task(message: str, session_id: str, tenant_id: int):
 
 @router.post("/customer")
 async def chat_customer(request: ChatRequest, db: Session = Depends(get_db)):
-    """Recebe a mensagem, salva imediatamente e delega para o Worker."""
+    """Recebe a mensagem, aplica trava de idempotência e delega para o Worker."""
     set_tenant_context(db, request.tenant_id)
     
-    # Salva a mensagem do usuário AGORA para garantir persistência imediata
+    # --- TRAVA DE IDEMPOTÊNCIA (Diretriz do Arquiteto) ---
+    import hashlib
+    msg_hash = hashlib.md5(f"{request.session_id}:{request.message}".encode()).hexdigest()
+    lock_key = f"lock:chat:{msg_hash}"
+    
+    if redis_conn.get(lock_key):
+        return {"status": "processing", "detail": "Mensagem já está sendo processada. Aguarde."}
+    
+    # Trava por 10 segundos (tempo suficiente para o worker começar)
+    redis_conn.setex(lock_key, 10, "1")
+    
+    # Salva a mensagem do usuário
     save_message(request.session_id, "user", request.message, request.tenant_id, db)
     
     job = q.enqueue(

@@ -106,14 +106,20 @@ class SupervisorAgent:
 
     def fsm_router(self, state: HotelBookingState) -> str:
         last_msg = state["messages"][-1].content.lower()
-        # Palavras-chave para o FAQ (Regras, Pets, etc)
+        
+        # 1. Rota de FAQ (Prioridade de dúvida do hóspede)
         faq_keywords = [
             "pet", "animal", "animais", "gato", "cachorro", "dog", "cat",
             "horário", "piscina", "café", "estacionamento", "regra", "política", "cancelamento"
         ]
         if any(kw in last_msg for kw in faq_keywords): return "faq"
         
-        if state.get("booking_id"): return "pagamento"
+        # 2. Rota de PAGAMENTO (Se já existe reserva criada) - DETERMINÍSTICO
+        if state.get("booking_id"): 
+            logger.info(f"[FSM][ROUTER] Reserva #{state['booking_id']} detectada. Direcionando para PAGAMENTO.")
+            return "pagamento"
+        
+        # 3. Rota de RESERVAS (Fluxo padrão de venda/seleção)
         return "reservas"
 
     async def reservas_node(self, state: HotelBookingState):
@@ -156,12 +162,22 @@ class SupervisorAgent:
 
     def _build_blackboard_msg(self, state: HotelBookingState) -> SystemMessage:
         b = []
-        if state.get("check_in"): b.append(f"- PERÍODO: {state['check_in']} a {state['check_out']}")
-        if state.get("room_id"): b.append(f"- QUARTO: {state['room_id']}")
-        if state.get("guest_id"): b.append(f"- HÓSPEDE ID: {state['guest_id']}")
-        if state.get("cpf") and not state.get("guest_id"): b.append(f"- CPF: {state['cpf']}")
-        if state.get("booking_id"): b.append(f"- RESERVA: #{state['booking_id']}")
-        return SystemMessage(content="📍 QUADRO DE ATENDIMENTO:\n" + ("\n".join(b) if b else "(Vazio)") + "\n\nAVISO: Use estes fatos. Se o período está lá, não pergunte.")
+        is_complete = False
+        if state.get("check_in") and state.get("check_out") and state.get("group_size"):
+            is_complete = True
+            b.append(f"- PERÍODO: {state['check_in']} a {state['check_out']}")
+            b.append(f"- HÓSPEDES: {state['group_size']}")
+        
+        if state.get("room_id"): b.append(f"- QUARTO SELECIONADO: {state['room_id']}")
+        if state.get("guest_id"): b.append(f"- HÓSPEDE CADASTRADO ID: {state['guest_id']}")
+        if state.get("booking_id"): b.append(f"- RESERVA CRIADA: #{state['booking_id']}")
+        
+        content = "📍 QUADRO DE ATENDIMENTO:\n" + ("\n".join(b) if b else "(Vazio)")
+        
+        if is_complete:
+            content += "\n\n⚠️ INSTRUÇÃO CRÍTICA: Você já tem os dados da reserva. NÃO dê boas-vindas, NÃO pergunte datas. Chame a ferramenta de cotação ou avance para identificação do CPF imediatamente."
+            
+        return SystemMessage(content=content)
 
     async def process(self, message: str, session_id: str) -> Dict[str, Any]:
         # Configuração do Checkpointer Nativo
