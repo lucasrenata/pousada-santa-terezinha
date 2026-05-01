@@ -130,66 +130,68 @@ export default function AdminUsers() {
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <table className="w-full text-left">
-          <thead className="bg-slate-50 border-b border-slate-200">
-            <tr>
-              <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Usuário</th>
-              <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Contato</th>
-              <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Nível de Acesso</th>
-              <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Ações</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-200">
-            {users.map((user) => (
-              <tr key={user.id} className="hover:bg-slate-50 transition-colors">
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-3">
-                    <div className="bg-slate-100 p-2 rounded-full text-slate-500">
-                      <User size={18} />
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="font-semibold text-slate-700">{user.full_name || 'Não informado'}</span>
-                      <span className="text-xs text-slate-400">@{user.username}</span>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-6 py-4">
-                  <span className="text-sm text-slate-600">{user.email || '-'}</span>
-                </td>
-                <td className="px-6 py-4">
-                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium capitalize 
-                    ${user.role === 'admin' ? 'bg-purple-100 text-purple-700' : 
-                      user.role === 'recepcionista' ? 'bg-blue-100 text-blue-700' : 
-                      user.role === 'servico' ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-700'}`}>
-                    {user.role === 'admin' ? 'Gerente' : 
-                     user.role === 'recepcionista' ? 'Recepcionista' : 
-                     user.role === 'servico' ? 'Serviços' : user.role}
-                  </span>
-                </td>
-                <td className="px-6 py-4 text-right flex justify-end gap-3">
-                  {user.username !== 'admin' && (
-                    <button 
-                      onClick={() => openForm(user)}
-                      className="text-blue-500 hover:text-blue-700 transition"
-                      title="Editar usuário"
-                    >
-                      <Edit2 size={18} />
-                    </button>
-                  )}
-                  {user.username !== 'admin' && (
-                    <button 
-                      onClick={() => handleDeleteUser(user.id)}
-                      className="text-red-400 hover:text-red-600 transition"
-                      title="Excluir usuário"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  )}
-                </td>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="bg-slate-50 border-b border-slate-200">
+              <tr>
+                <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Usuário</th>
+                <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Contato</th>
+                <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Nível de Acesso</th>
+                <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Ações</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {users.map((user) => (
+                <tr key={user.id} className="hover:bg-slate-50 transition-colors">
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="bg-slate-100 p-2 rounded-full text-slate-500">
+                        <User size={18} />
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="font-semibold text-slate-700">{user.full_name || 'Não informado'}</span>
+                        <span className="text-xs text-slate-400">@{user.username}</span>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className="text-sm text-slate-600">{user.email || '-'}</span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium capitalize 
+                      ${user.role === 'admin' ? 'bg-purple-100 text-purple-700' : 
+                        user.role === 'recepcionista' ? 'bg-blue-100 text-blue-700' : 
+                        user.role === 'servico' ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-700'}`}>
+                      {user.role === 'admin' ? 'Gerente' : 
+                       user.role === 'recepcionista' ? 'Recepcionista' : 
+                       user.role === 'servico' ? 'Serviços' : user.role}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-right flex justify-end gap-3">
+                    {user.username !== 'admin' && (
+                      <button 
+                        onClick={() => openForm(user)}
+                        className="text-blue-500 hover:text-blue-700 transition"
+                        title="Editar usuário"
+                      >
+                        <Edit2 size={18} />
+                      </button>
+                    )}
+                    {user.username !== 'admin' && (
+                      <button 
+                        onClick={() => handleDeleteUser(user.id)}
+                        className="text-red-400 hover:text-red-600 transition"
+                        title="Excluir usuário"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* MODAL DE CRIAÇÃO */}

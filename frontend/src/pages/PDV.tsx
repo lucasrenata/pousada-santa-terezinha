@@ -410,13 +410,13 @@ export default function PDV() {
   const categories = useMemo(() => Array.from(new Set(products.map(p => p.category))), [products]);
 
   return (
-    <div className="flex flex-col h-screen bg-slate-50 -m-8 relative overflow-hidden font-sans">
+    <div className="flex flex-col h-[calc(100vh-64px)] md:h-screen bg-slate-50 -mx-4 sm:-mx-6 lg:-mx-8 -my-4 md:-my-8 relative overflow-hidden font-sans">
       
       {/* ── TOP BAR: SCANNER GLOBAL ── */}
-      <div className="bg-white border-b border-slate-200 px-8 py-4 z-40 shadow-sm">
+      <div className="bg-white border-b border-slate-200 px-4 md:px-8 py-4 z-40 shadow-sm flex-shrink-0">
         <div className="max-w-[1600px] mx-auto flex items-center gap-6">
            <div className="flex items-center gap-3 pr-6 border-r border-slate-100">
-             <div className="p-2 bg-blue-600 rounded-xl text-white shadow-lg shadow-blue-100">
+             <div className="p-2 bg-blue-600 rounded-xl text-white shadow-lg shadow-blue-100 hidden sm:block">
                <Receipt size={24} />
              </div>
              <div>
@@ -478,10 +478,10 @@ export default function PDV() {
         </div>
       </div>
 
-      <div className="flex flex-1 overflow-hidden max-w-[1600px] mx-auto w-full p-8 gap-8">
+      <div className="flex flex-col lg:flex-row flex-1 overflow-y-auto lg:overflow-hidden max-w-[1600px] mx-auto w-full p-4 lg:p-8 gap-4 lg:gap-8">
         
         {/* ── LEFT COLUMN: INPUTS (60%) ── */}
-        <div className="flex-[3] flex flex-col gap-6 overflow-hidden">
+        <div className="flex-[3] flex flex-col gap-4 lg:gap-6 overflow-visible lg:overflow-hidden min-h-[500px] lg:min-h-0">
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
              {/* Lançar Prato por Peso */}
@@ -654,7 +654,7 @@ export default function PDV() {
         </div>
 
         {/* ── RIGHT COLUMN: SUMMARY (40%) ── */}
-        <div className="flex-[2] flex flex-col h-full bg-white rounded-[2.5rem] border border-slate-200 shadow-xl overflow-hidden shadow-slate-200/50">
+        <div className="flex-[2] flex flex-col min-h-[600px] lg:min-h-0 lg:h-full bg-white rounded-3xl lg:rounded-[2.5rem] border border-slate-200 shadow-xl overflow-hidden shadow-slate-200/50">
            
            {(!selectedComanda && !isMultiMode) || (isMultiMode && selectedMultiComandas.length === 0) ? (
               <div className="flex-1 flex flex-col items-center justify-center text-center p-12 opacity-40">

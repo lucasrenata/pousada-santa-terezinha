@@ -1,11 +1,13 @@
-import { useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 
 import { LayoutDashboard, BedDouble, CalendarDays, CalendarHeart, Package, DollarSign, LogOut, Menu, Settings, Users, Wrench, MessageSquare, ShieldCheck, ShoppingCart } from 'lucide-react';
+import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 
 export default function MainLayout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const role = localStorage.getItem('role');
   const menuItems = [
     { label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard', roles: ['admin', 'recepcionista', 'servico'] },
@@ -52,9 +54,69 @@ export default function MainLayout() {
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           
-          {/* LOGO E NOME */}
-          <div className="flex items-center gap-2">
-            <div className="bg-blue-600 text-white p-1.5 rounded-lg">
+          {/* LOGO E NOME / MENU HAMBURGUER (MOBILE) */}
+          <div className="flex items-center gap-3">
+            {/* Menu Hamburguer (Aparece só no Mobile) */}
+            <div className="md:hidden">
+              <Sheet open={isMobileMenuOpen} onOpenChange={setIsMobileMenuOpen}>
+                <SheetTrigger asChild>
+                  <button className="bg-blue-600 text-white p-2 rounded-lg hover:bg-blue-700 transition">
+                    <Menu size={24} />
+                  </button>
+                </SheetTrigger>
+                <SheetContent side="left" className="w-[300px] sm:w-[400px] p-0 flex flex-col">
+                  <div className="p-6 border-b border-slate-100 flex items-center gap-3 bg-slate-50">
+                    <div className="bg-blue-600 text-white p-2 rounded-lg">
+                      <Menu size={20} />
+                    </div>
+                    <div>
+                      <h2 className="text-xl font-bold text-slate-900 tracking-tight leading-none">ParcerIA</h2>
+                      <p className="text-xs text-slate-500 font-medium uppercase tracking-wider mt-1">Hotelaria</p>
+                    </div>
+                  </div>
+                  
+                  <nav className="flex-1 overflow-y-auto p-4 space-y-1">
+                    {filteredMenu.map((item) => {
+                      const isActive = location.pathname === item.path;
+                      const Icon = item.icon;
+                      
+                      return (
+                        <button
+                          key={item.path}
+                          onClick={() => {
+                            navigate(item.path);
+                            setIsMobileMenuOpen(false); // Fecha o menu ao clicar
+                          }}
+                          className={`w-full flex items-center px-4 py-3.5 rounded-xl text-sm font-bold transition-all duration-200
+                            ${isActive 
+                              ? 'bg-blue-50 text-blue-700 shadow-sm ring-1 ring-blue-200' 
+                              : item.path === '/pdv' 
+                                ? 'bg-yellow-50 text-yellow-700 border border-yellow-200'
+                                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                            }`}
+                        >
+                          <Icon size={20} className={`mr-3 ${isActive ? 'text-blue-600' : item.path === '/pdv' ? 'text-yellow-600' : 'text-slate-400'}`} />
+                          {item.label}
+                        </button>
+                      );
+                    })}
+                  </nav>
+
+                  <div className="p-4 border-t border-slate-100">
+                    <button 
+                      onClick={handleLogout}
+                      className="w-full flex items-center justify-center text-red-600 hover:bg-red-50 transition-colors text-sm font-bold px-4 py-3 rounded-xl border border-red-100"
+                    >
+                      <LogOut size={20} className="mr-2" />
+                      Sair do Sistema
+                    </button>
+                  </div>
+                </SheetContent>
+              </Sheet>
+            </div>
+
+            {/* LOGO Desktop */}
+            <div className="hidden md:flex bg-blue-600 text-white p-1.5 rounded-lg">
               <Menu size={24} />
             </div>
             <div>
@@ -115,7 +177,7 @@ export default function MainLayout() {
       </header>
 
       {/* CONTEÚDO DA PÁGINA (AQUI VAI O DASHBOARD, ETC) */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 md:py-8">
         <Outlet /> 
       </main>
     </div>
