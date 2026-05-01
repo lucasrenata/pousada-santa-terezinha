@@ -195,52 +195,54 @@ class CustomerEngineV2:
             set_tenant_context(db, self.tenant_id)
             
             try:
-                with db.begin():
-                    # 1. Validação Final de Disponibilidade (Lock)
-                    existing = db.query(models.Booking).filter(
-                        models.Booking.room_id == room_id,
-                        models.Booking.status.in_(["confirmado", "ativo", "pendente"]),
-                        models.Booking.check_out_date > ci,
-                        models.Booking.check_in_date < co
-                    ).first()
-                    
-                    if existing:
-                        return {"success": False, "error": "Este quarto acaba de ser ocupado. Por favor, escolha outro."}
-                    
-                    # 2. Busca Preço Real do Quarto
-                    room = db.query(models.Room).get(room_id)
-                    days = (co - ci).days
-                    total_amount = (room.price_per_night if room else 150) * days * group_size
-                    
-                    # 3. Cria a Reserva
-                    booking = models.Booking(
-                        tenant_id=self.tenant_id,
-                        guest_id=guest_id,
-                        room_id=room_id,
-                        check_in_date=ci,
-                        check_out_date=co,
-                        total_guests=group_size,
-                        total_amount=total_amount,
-                        status="pendente"
-                    )
-                    db.add(booking)
-                    db.flush() # Sincroniza sem fechar a transação
-                    
-                    # 4. Calcula Sinal (Down Payment)
-                    settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
-                    deposit_pct = float(settings.get("pousada_deposit_percentage", 50))
-                    down_payment = (total_amount * deposit_pct) / 100
-                    
-                    logger.info(f"[ENGINE][ATOMIC] Reserva #{booking.id} criada com sucesso em transação.")
-                    
-                    return {
-                        "success": True,
-                        "booking_id": booking.id,
-                        "total_amount": total_amount,
-                        "down_payment": down_payment,
-                        "message": f"Reserva #{booking.id} criada! Valor total R$ {total_amount:.2f}. Sinal: R$ {down_payment:.2f}"
-                    }
+                # 1. Validação Final de Disponibilidade (Lock)
+                existing = db.query(models.Booking).filter(
+                    models.Booking.room_id == room_id,
+                    models.Booking.status.in_(["confirmado", "ativo", "pendente"]),
+                    models.Booking.check_out_date > ci,
+                    models.Booking.check_in_date < co
+                ).first()
+                
+                if existing:
+                    return {"success": False, "error": "Este quarto acaba de ser ocupado. Por favor, escolha outro."}
+                
+                # 2. Busca Preço Real do Quarto
+                room = db.query(models.Room).get(room_id)
+                days = (co - ci).days
+                total_amount = (room.price_per_night if room else 150) * days * group_size
+                
+                # 3. Cria a Reserva
+                booking = models.Booking(
+                    tenant_id=self.tenant_id,
+                    guest_id=guest_id,
+                    room_id=room_id,
+                    check_in_date=ci,
+                    check_out_date=co,
+                    total_guests=group_size,
+                    total_amount=total_amount,
+                    status="pendente"
+                )
+                db.add(booking)
+                db.flush() # Sincroniza para obter o ID
+                
+                # 4. Calcula Sinal (Down Payment)
+                settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
+                deposit_pct = float(settings.get("pousada_deposit_percentage", 50))
+                down_payment = (total_amount * deposit_pct) / 100
+                
+                logger.info(f"[ENGINE][ATOMIC] Reserva #{booking.id} criada com sucesso.")
+                
+                db.commit()
+                
+                return {
+                    "success": True,
+                    "booking_id": booking.id,
+                    "total_amount": total_amount,
+                    "down_payment": down_payment,
+                    "message": f"Reserva #{booking.id} criada! Valor total R$ {total_amount:.2f}. Sinal: R$ {down_payment:.2f}"
+                }
             except Exception as e:
+                db.rollback()
                 logger.error(f"[ENGINE][ERROR] Falha atômica ao criar reserva: {e}")
                 return {"success": False, "error": f"Erro interno ao processar reserva: {str(e)}"}
 
