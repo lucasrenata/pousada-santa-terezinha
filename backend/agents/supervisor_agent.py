@@ -175,7 +175,7 @@ class SupervisorAgent:
         content = "📍 QUADRO DE ATENDIMENTO:\n" + ("\n".join(b) if b else "(Vazio)")
         
         if is_complete:
-            content += "\n\n⚠️ INSTRUÇÃO CRÍTICA: Você já tem os dados da reserva. NÃO dê boas-vindas, NÃO pergunte datas. Chame a ferramenta de cotação ou avance para identificação do CPF imediatamente."
+            content += "\n\n💡 DICA DE ATENDIMENTO: Você já tem dados da reserva no quadro. Se o hóspede te saudar, seja educado, retribua brevemente e já mostre os próximos passos ou preços. Não finja que não sabe das datas."
             
         return SystemMessage(content=content)
 
@@ -221,14 +221,26 @@ class SupervisorAgent:
             response = ""
             for m in reversed(final_state["messages"]):
                 if isinstance(m, AIMessage) and m.content:
-                    # Priorizamos mensagens sem tool_calls, mas se tiver conteúdo, usamos
-                    content = m.content.strip()
-                    if content and not content.startswith("{"): # Evita vazar JSON bruto se houver
-                        response = content
+                    # Garante que 'content' seja uma string, mesmo que venha como lista do Gemini
+                    content = ""
+                    if isinstance(m.content, str):
+                        content = m.content.strip()
+                    elif isinstance(m.content, list):
+                        content = " ".join([c["text"] for c in m.content if isinstance(c, dict) and "text" in c]).strip()
+                    
+                    if content and not content.startswith("{"):
+                        # --- FILTRO ANTI-REPETIÇÃO ---
+                        sentences = content.replace("!", "!|").replace("?", "?|").replace(".", ".|").split("|")
+                        unique_sentences = []
+                        for s in sentences:
+                            s_clean = s.strip()
+                            if s_clean and s_clean not in unique_sentences:
+                                unique_sentences.append(s_clean)
+                        response = " ".join(unique_sentences)
                         break
 
             if not response:
-                response = "Encontrei as informações para você! Como podemos prosseguir?"
+                response = "Olá! Encontrei as informações da sua reserva. Como posso te ajudar a finalizar?"
                 logger.error(f"[SUPERVISOR] Falha ao encontrar resposta de texto. Histórico: {final_state['messages'][-3:]}")
             
             db = SessionLocal()
