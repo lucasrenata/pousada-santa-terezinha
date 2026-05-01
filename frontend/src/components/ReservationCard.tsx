@@ -81,7 +81,13 @@ export function ReservationCard({ reservation, onEdit, onDelete, onCheckIn, onCh
     
   // Remove barras duplicadas para evitar links como //static
   const cleanBaseUrl = apiBaseUrl.endsWith('/') ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
-  const receiptFullUrl = reservation.payment_receipt_url ? `${cleanBaseUrl}${reservation.payment_receipt_url}` : null;
+  
+  // Limpa a barra inicial do url salvo no banco se existir
+  const receiptPath = reservation.payment_receipt_url?.startsWith('/') 
+    ? reservation.payment_receipt_url.slice(1) 
+    : reservation.payment_receipt_url;
+    
+  const receiptFullUrl = reservation.payment_receipt_url ? `${cleanBaseUrl}/${receiptPath}` : null;
 
   return (
     <Card className={`w-full hover:shadow-lg transition-all duration-300 relative overflow-hidden bg-white ${
