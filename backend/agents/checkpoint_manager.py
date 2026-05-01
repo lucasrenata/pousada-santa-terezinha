@@ -12,21 +12,31 @@ class CheckpointManager:
     @classmethod
     async def get_instance(cls):
         if cls._instance is None:
-            db_url = os.getenv("DATABASE_URL_ASYNCPG") or os.getenv("DATABASE_URL")
+            # Prioriza a URL de Admin para o checkpointer, pois ele precisa criar/gerir tabelas próprias
+            db_url = os.getenv("ALEMBIC_DATABASE_URL") or os.getenv("DATABASE_URL_ASYNCPG") or os.getenv("DATABASE_URL")
+            
             # Converte para formato psycopg se necessário
             if db_url and db_url.startswith("postgresql://"):
-                db_url = db_url.replace("postgresql://", "postgresql://", 1) # psycopg3 aceita postgresql://
+                db_url = db_url.replace("postgresql://", "postgresql://", 1)
             
             # Garante que usamos o host 'db' se estiver no docker
             if "localhost" in db_url and os.getenv("DOCKER_ENV"):
                 db_url = db_url.replace("localhost", "db")
 
-            cls._pool = AsyncConnectionPool(conninfo=db_url, max_size=20, kwargs={"autocommit": True})
-            cls._saver = AsyncPostgresSaver(cls._pool)
-            
-            # Inicializa as tabelas se necessário
-            await cls._saver.setup()
-            cls._instance = cls._saver
+            try:
+                cls._pool = AsyncConnectionPool(conninfo=db_url, max_size=10, kwargs={"autocommit": True})
+                cls._saver = AsyncPostgresSaver(cls._pool)
+                
+                # Inicializa as tabelas se necessário
+                await cls._saver.setup()
+                cls._instance = cls._saver
+            except Exception as e:
+                import logging
+                logger = logging.getLogger("CheckpointManager")
+                logger.error(f"Erro ao inicializar CheckpointManager: {e}")
+                if "permission denied" in str(e).lower():
+                    logger.error("DICA: Execute 'GRANT ALL ON SCHEMA public TO pousada_app;' no banco de dados.")
+                raise e
             
         return cls._instance
 
