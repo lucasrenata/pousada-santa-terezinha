@@ -119,12 +119,21 @@ REGRAS DE OURO:
         if state.get("room_id"): blackboard.append(f"Quarto Escolhido: {state['room_id']}")
         
         context_text = "📍 QUADRO DE ATENDIMENTO (DADOS ATUAIS NO BANCO):\n" + ("\n".join(blackboard) if blackboard else "Nenhum dado capturado ainda.")
+        return SystemMessage(content=context_text)
+
+    def call_reservas_model(state: HotelBookingState):
+        logger.info(f"[RESERVAS_AGENT] Processando turno para tenant {tenant_id}")
         
-        # Adiciona o contexto como uma mensagem de sistema temporária para orientar o modelo
-        context_msg = SystemMessage(content=context_text)
-        
-        response = llm_with_tools.invoke([sys_msg, context_msg] + state["messages"])
-        return {"messages": [response]}
+        try:
+            sys_msg = SystemMessage(content=RESERVAS_SYSTEM_PROMPT)
+            context_msg = _build_blackboard_msg(state)
+            
+            # Chama o modelo com as ferramentas
+            response = llm_with_tools.invoke([sys_msg, context_msg] + state["messages"])
+            return {"messages": [response]}
+        except Exception as e:
+            logger.error(f"[RESERVAS_AGENT] Erro crítico na chamada do modelo: {e}")
+            return {"messages": [AIMessage(content="Desculpe, tive um problema técnico momentâneo. Pode repetir sua solicitação em alguns segundos?")]}
 
     workflow = StateGraph(HotelBookingState)
     workflow.add_node("reservas_agent", call_reservas_model)
