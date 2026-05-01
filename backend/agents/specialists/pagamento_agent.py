@@ -65,8 +65,11 @@ FLUXO OBRIGATÓRIO:
 2. Apresente as instruções de forma clara:
    - **Se for PIX**: Informe a chave exata e o valor do sinal.
    - **REGRA OBRIGATÓRIA**: Você DEVE solicitar que o hóspede envie o **comprovante do PIX aqui mesmo no chat**. Explique que isso é necessário para que a equipe de hospedagem possa conferir o pagamento e confirmar a reserva definitivamente.
-   - **Se for Mercado Pago**: Informe o link e avise que a confirmação é automática.
-
+   - **Se for Mercado Pago**: Você DEVE fornecer o link EXATAMENTE como retornado pela ferramenta, sem adicionar espaços. Coloque o link no formato Markdown em uma linha isolada para que o sistema gere um botão:
+     
+     [💳 Pagar com Mercado Pago](URL_DO_LINK_SEM_ESPAÇOS)
+     
+     ⚠️ NUNCA coloque espaços dentro da URL (ex: NUNCA escreva "mercadopago. com. br"). Avise que a confirmação é automática.
 Exemplo para PIX:
 "💚 **Pagamento via PIX**
 **Chave PIX:** `[chave]`
