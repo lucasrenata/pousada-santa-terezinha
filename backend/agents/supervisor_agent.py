@@ -243,6 +243,16 @@ class SupervisorAgent:
                 response = "Olá! Encontrei as informações da sua reserva. Como posso te ajudar a finalizar?"
                 logger.error(f"[SUPERVISOR] Falha ao encontrar resposta de texto. Histórico: {final_state['messages'][-3:]}")
             
+            # --- SANITIZAÇÃO DE LINKS MARKDOWN ---
+            # Remove qualquer espaço vazio dentro da sintaxe de link do markdown [texto]( ur l ) -> [texto](url)
+            # Isso garante que a UI frontend (react-markdown) renderize corretamente como Botão.
+            import re
+            response = re.sub(
+                r'\[(.*?)\]\(\s*(.*?)\s*\)', 
+                lambda m: f"[{m.group(1)}]({m.group(2).replace(' ', '')})", 
+                response
+            )
+            
             db = SessionLocal()
             set_tenant_context(db, self.tenant_id)
             db.add(models.ChatMessage(tenant_id=self.tenant_id, session_id=session_id, role="assistant", content=response))
