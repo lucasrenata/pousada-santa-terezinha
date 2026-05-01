@@ -11,7 +11,6 @@ from collections import defaultdict
 from database import SessionLocal, set_tenant_context
 from agents.state_manager import StateManager
 from agents.supervisor_agent import SupervisorAgent
-from agents.specialists.discovery import DiscoverySpecialist
 import models
 
 logging.basicConfig(level=logging.INFO)
