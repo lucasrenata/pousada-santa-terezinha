@@ -10,6 +10,9 @@ from typing import List
 
 import models
 from datetime import datetime
+import logging
+
+logger = logging.getLogger("CHAT_ROUTER")
 
 router = APIRouter(prefix="/chat", tags=["AI Chat Agents"])
 
@@ -114,8 +117,7 @@ async def chat_customer(request: ChatRequest, db: Session = Depends(get_db)):
             "result": result
         }
     except Exception as e:
-        import logging
-        logging.error(f"Erro no processamento direto da IA: {e}")
+        logger.error(f"Erro no processamento direto da IA: {e}")
         raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
 
 @router.get("/job/{job_id}")
