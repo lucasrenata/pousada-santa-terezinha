@@ -74,31 +74,38 @@ def run_agent_task(message: str, session_id: str, tenant_id: int):
 
 @router.post("/customer")
 async def chat_customer(request: ChatRequest, db: Session = Depends(get_db)):
-    """Recebe a mensagem, aplica trava de idempotência e delega para o Worker."""
+    """Processa a IA diretamente no backend assíncrono e retorna a resposta."""
     set_tenant_context(db, request.tenant_id)
     
-    # --- TRAVA DE IDEMPOTÊNCIA (Diretriz do Arquiteto) ---
+    # --- TRAVA DE IDEMPOTÊNCIA ---
     import hashlib
     msg_hash = hashlib.md5(f"{request.session_id}:{request.message}".encode()).hexdigest()
     lock_key = f"lock:chat:{msg_hash}"
     
     if redis_conn.get(lock_key):
-        return {"status": "processing", "detail": "Mensagem já está sendo processada. Aguarde."}
+        raise HTTPException(status_code=429, detail="Mensagem já está sendo processada. Aguarde.")
     
-    # Trava por 10 segundos (tempo suficiente para o worker começar)
-    redis_conn.setex(lock_key, 10, "1")
+    # Trava curta apenas para evitar cliques duplos rápidos
+    redis_conn.setex(lock_key, 5, "1")
     
-    # Salva a mensagem do usuário imediatamente para o histórico
+    # Salva a mensagem do usuário
     save_message(request.session_id, "user", request.message, request.tenant_id, db)
     
-    job = q.enqueue(
-        run_agent_task, 
-        request.message, 
-        request.session_id, 
-        request.tenant_id,
-        job_timeout='2m'
-    )
-    return {"job_id": job.id, "status": "queued"}
+    try:
+        from agents.supervisor_agent import SupervisorAgent
+        supervisor = SupervisorAgent(request.tenant_id)
+        
+        # PROCESSAMENTO DIRETO E ASSÍNCRONO
+        result = await supervisor.process(request.message, request.session_id)
+        
+        return {
+            "status": "finished",
+            "result": result
+        }
+    except Exception as e:
+        import logging
+        logging.error(f"Erro no processamento direto da IA: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
 
 @router.get("/job/{job_id}")
 async def get_job_status(job_id: str):
