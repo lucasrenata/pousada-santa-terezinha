@@ -257,6 +257,9 @@ def refresh(refresh_token: str = Cookie(None), db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token inválido ou expirado")
     
     user = db_token.user
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuário associado ao token não existe mais")
+        
     set_tenant_context(db, user.tenant_id) # Ativa contexto para o usuário
     
     access_token = create_access_token(data={"sub": user.username, "role": user.role, "tenant_id": user.tenant_id})
