@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_, text
 from database import SessionLocal, set_tenant_context
 import models
+from utils.pricing import calculate_reservation_total, calculate_daily_rates_count
 
 logger = logging.getLogger("AI_ENGINE")
 
@@ -148,17 +149,21 @@ class CustomerEngineV2:
     # -------------------------------------------------------------------------
     # ROBÔ 3: BUSCADOR DE QUARTOS (AVAILABILITY)
     # -------------------------------------------------------------------------
-    async def robot_search_available_rooms(self, check_in: str, check_out: str, group_size: int) -> Dict[str, Any]:
+    async def robot_search_available_rooms(self, check_in: str, check_out: str, group_size: int = 1) -> Dict[str, Any]:
         """
-        Busca quartos específicos que comportam o grupo e estão livres.
+        Busca quartos específicos que estão livres para o período.
+        Nota: Removido filtro rígido de capacidade para permitir que a IA sugira múltiplos quartos.
         """
         ci = self._parse_date(check_in)
         co = self._parse_date(check_out)
         
+        if not ci or not co:
+            return {"success": False, "message": "Datas de check-in ou check-out inválidas."}
+
         with SessionLocal() as db:
             set_tenant_context(db, self.tenant_id)
             
-            # Subquery para achar quartos ocupados
+            # Subquery para achar quartos ocupados ou reservados
             occupied_ids = db.query(models.Booking.room_id).filter(
                 models.Booking.status.in_(["confirmado", "ativo", "pendente"]),
                 models.Booking.check_out_date > ci,
@@ -166,84 +171,136 @@ class CustomerEngineV2:
             ).all()
             occupied_list = [r[0] for r in occupied_ids]
             
-            # Filtra quartos livres e com capacidade
+            # Também verifica na tabela de associação multi-quarto
+            multi_occupied = db.query(models.BookingRoom.room_id).join(models.Booking).filter(
+                models.Booking.status.in_(["confirmado", "ativo", "pendente"]),
+                models.Booking.check_out_date > ci,
+                models.Booking.check_in_date < co
+            ).all()
+            occupied_list += [r[0] for r in multi_occupied]
+
+            # Filtra quartos livres
             available = db.query(models.Room).filter(
                 ~models.Room.id.in_(occupied_list),
-                models.Room.max_capacity >= group_size,
                 models.Room.status == "disponivel"
             ).all()
             
             if not available:
-                return {"success": False, "message": "Nenhum quarto disponível com esta capacidade para estas datas."}
+                return {"success": False, "message": "Nenhum quarto disponível para estas datas."}
             
             return {
                 "success": True,
-                "rooms": [{"id": r.id, "type": r.type, "price": r.price_per_night, "floor": r.floor} for r in available]
+                "rooms": [{"id": r.id, "type": r.type, "price": r.price_per_night, "capacity": r.max_capacity, "floor": r.floor} for r in available],
+                "instructions": "Se o grupo for maior que a capacidade de um quarto, sugira a reserva de múltiplos quartos."
             }
 
     # -------------------------------------------------------------------------
     # ROBÔ 4: CRIADOR DE RESERVA (ATÔMICO)
     # -------------------------------------------------------------------------
-    async def robot_create_booking_atomic(self, guest_id: int, room_id: str, check_in: str, check_out: str, group_size: int) -> Dict[str, Any]:
+    async def robot_create_booking_atomic(self, guest_id: int, room_ids: Any, check_in: str, check_out: str, group_size: int) -> Dict[str, Any]:
         """
-        Cria a reserva no banco de dados e retorna o ID e valor do sinal.
+        Cria a reserva no banco de dados para um ou mais quartos e retorna o ID e valor do sinal.
+        `room_ids` pode ser uma string (ex: "101") ou uma lista/string separada por vírgula (ex: "101,102").
         """
         ci = self._parse_date(check_in)
         co = self._parse_date(check_out)
         
+        # Normaliza room_ids para lista
+        if isinstance(room_ids, str):
+            rooms_list = [r.strip() for r in room_ids.split(",") if r.strip()]
+        elif isinstance(room_ids, list):
+            rooms_list = room_ids
+        else:
+            rooms_list = [str(room_ids)]
+
         with SessionLocal() as db:
             set_tenant_context(db, self.tenant_id)
             
             try:
-                # 1. Validação Final de Disponibilidade (Lock)
-                existing = db.query(models.Booking).filter(
-                    models.Booking.room_id == room_id,
-                    models.Booking.status.in_(["confirmado", "ativo", "pendente"]),
-                    models.Booking.check_out_date > ci,
-                    models.Booking.check_in_date < co
-                ).first()
+                # 1. Validação Final de Disponibilidade para todos os quartos
+                for r_id in rooms_list:
+                    existing = db.query(models.Booking).filter(
+                        or_(models.Booking.room_id == r_id, 
+                            models.Booking.room_associations.any(models.BookingRoom.room_id == r_id)),
+                        models.Booking.status.in_(["confirmado", "ativo", "pendente"]),
+                        models.Booking.check_out_date > ci,
+                        models.Booking.check_in_date < co
+                    ).first()
+                    
+                    if existing:
+                        return {"success": False, "error": f"O quarto {r_id} acaba de ser ocupado. Por favor, escolha outro."}
                 
-                if existing:
-                    return {"success": False, "error": "Este quarto acaba de ser ocupado. Por favor, escolha outro."}
+                # 2. Busca Configurações e Calcula Preço Real
+                settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
+                pricing_model = settings.get("pousada_pricing_model", "per_person")
                 
-                # 2. Busca Preço Real do Quarto
-                room = db.query(models.Room).get(room_id)
+                # Resolve os objetos dos quartos
+                rooms_objs = db.query(models.Room).filter(models.Room.id.in_(rooms_list)).all()
+                if not rooms_objs:
+                    return {"success": False, "error": "Nenhum dos quartos informados foi encontrado."}
+                
+                # Média das diárias dos quartos escolhidos (para base de cálculo se necessário)
+                avg_daily_rate = sum([r.price_per_night for r in rooms_objs]) / len(rooms_objs)
                 days = (co - ci).days
-                total_amount = (room.price_per_night if room else 150) * days * group_size
+                if days <= 0: days = 1
+
+                total_amount = 0.0
+                if pricing_model == "per_room":
+                    # Soma o valor individual de cada quarto pelas diárias
+                    total_amount = sum([r.price_per_night for r in rooms_objs]) * days
+                else:
+                    # Lógica Per Person: Assume 18 anos para todos se não souber (ANA pode ser ensinada a perguntar ages depois)
+                    # Por enquanto, usamos a média da diária dos quartos escolhidos
+                    ages = [18] * group_size
+                    calc = calculate_reservation_total(avg_daily_rate, days, ages, settings=settings)
+                    total_amount = calc["total"]
                 
-                # 3. Cria a Reserva
+                # 3. Cria a Reserva Principal
+                # O campo room_id da tabela bookings fica com o primeiro quarto (para compatibilidade legada)
                 booking = models.Booking(
                     tenant_id=self.tenant_id,
                     guest_id=guest_id,
-                    room_id=room_id,
+                    room_id=rooms_list[0],
                     check_in_date=ci,
                     check_out_date=co,
                     total_guests=group_size,
                     total_amount=total_amount,
+                    daily_rate=avg_daily_rate,
                     status="pendente"
                 )
                 db.add(booking)
-                db.flush() # Sincroniza para obter o ID
+                db.flush() 
                 
-                # 4. Calcula Sinal (Down Payment)
-                settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
+                # 4. Cria as associações Multi-Quarto
+                for r_id in rooms_list:
+                    assoc = models.BookingRoom(
+                        tenant_id=self.tenant_id,
+                        booking_id=booking.id,
+                        room_id=r_id
+                    )
+                    db.add(assoc)
+                
+                # 5. Calcula Sinal (Down Payment)
                 deposit_pct = float(settings.get("pousada_deposit_percentage", 50))
                 down_payment = (total_amount * deposit_pct) / 100
+                booking.deposit_amount = down_payment
                 
-                logger.info(f"[ENGINE][ATOMIC] Reserva #{booking.id} criada com sucesso.")
-                
+                logger.info(f"[ENGINE][ATOMIC] Reserva Multi-Quarto #{booking.id} ({len(rooms_list)} quartos) criada.")
                 db.commit()
                 
+                rooms_str = ", ".join(rooms_list)
                 return {
                     "success": True,
                     "booking_id": booking.id,
                     "total_amount": total_amount,
                     "down_payment": down_payment,
-                    "message": f"Reserva #{booking.id} criada! Valor total R$ {total_amount:.2f}. Sinal: R$ {down_payment:.2f}"
+                    "message": f"Reserva #{booking.id} criada nos quartos {rooms_str}! Valor total R$ {total_amount:.2f}. Sinal de {int(deposit_pct)}%: R$ {down_payment:.2f}"
                 }
             except Exception as e:
                 db.rollback()
                 logger.error(f"[ENGINE][ERROR] Falha atômica ao criar reserva: {e}")
+                import traceback
+                traceback.print_exc()
                 return {"success": False, "error": f"Erro interno ao processar reserva: {str(e)}"}
 
     # -------------------------------------------------------------------------

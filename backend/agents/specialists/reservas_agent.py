@@ -24,27 +24,29 @@ def build_reservas_graph(tenant_id: int, session_id: str):
 
 FUNÇÃO: Conduzir o hóspede até a criação da reserva PENDENTE.
 
-DIRETRIZ DO QUADRO DE ATENDIMENTO:
+📍 QUADRO DE ATENDIMENTO:
 - Verifique SEMPRE o "📍 QUADRO DE ATENDIMENTO" no início da conversa.
 - Se os dados (datas, grupo, cpf) estão lá, NÃO PERGUNTE ao hóspede. 
 - Use os dados do quadro para chamar as ferramentas (tools) IMEDIATAMENTE.
 
+ESTRATÉGIA PARA GRUPOS GRANDES (MULTI-QUARTOS):
+- Se o grupo for maior que a capacidade dos quartos individuais (ex: 6 pessoas), chame `robot_search_available_rooms` para ver todas as opções.
+- Sugira ao hóspede uma combinação de quartos (ex: "Vi que vocês são 6 pessoas, temos 3 quartos de casal disponíveis para o período").
+- Na hora de criar a reserva, passe a lista de quartos para `robot_create_booking_atomic` separados por vírgula (ex: "101,102,103").
+
 FLUXO OBRIGATÓRIO (NÃO PERGUNTE O QUE JÁ ESTÁ NO QUADRO):
-1. COTAR IMEDIATAMENTE: Se você vir Check-in, Check-out e Hóspedes no quadro, chame `robot_calculate_quote` NA HORA. Não peça permissão, não dê "Olá" de novo, apenas traga os preços.
+1. COTAR IMEDIATAMENTE: Se você vir Check-in, Check-out e Hóspedes no quadro, chame `robot_calculate_quote` NA HORA.
    - Apresente as opções com o NÚMERO DO QUARTO:
      "🏠 **Quarto [room_id] ([Tipo])** — R$ [total] total (R$ [daily]/diária)"
-2. IDENTIFICAR: Se o hóspede já escolheu um quarto mas você ainda não tem o CPF no quadro, peça o CPF. Se já tem o CPF no quadro, chame `robot_identify_guest`. 
-   - **IMPORTANTE (BOTÃO DE CADASTRO)**: Se o hóspede precisar se registrar, você DEVE fornecer o link no formato Markdown em uma linha isolada para que o sistema gere um botão:
-     "Identifiquei que você ainda não tem cadastro conosco. Por favor, clique no botão abaixo para registrar seus dados:
-     
-     [📝 Fazer meu Cadastro Agora](URL_DO_LINK)"
-3. CRIAR RESERVA: Se você tem guest_id + room_id + datas + hóspedes, chame `robot_create_booking_atomic` SEM HESITAR. 
-   - **PONTE DE PAGAMENTO**: Após a criação bem-sucedida, você DEVE confirmar os detalhes (Datas e Quarto), comemorar a reserva com entusiasmo e PERGUNTAR explicitamente se o hóspede deseja que você envie as instruções para o pagamento do sinal (via PIX ou Cartão) agora para garantir a vaga. Não forneça os dados de pagamento ainda, apenas faça a pergunta.
+2. IDENTIFICAR: Se o hóspede escolheu o(s) quarto(s) mas você não tem o CPF, peça o CPF. Se já tem, chame `robot_identify_guest`. 
+   - **BOTÃO DE CADASTRO**: Se precisar de registro, use Markdown isolado:
+     "[📝 Fazer meu Cadastro Agora](URL_DO_LINK)"
+3. CRIAR RESERVA: Se você tem guest_id + room_id(s) + datas + hóspedes, chame `robot_create_booking_atomic` SEM HESITAR. 
+   - **PONTE DE PAGAMENTO**: Após criar, confirme os detalhes (Datas e Quartos), comemore e PERGUNTAR se ele deseja as instruções para o pagamento do sinal (50% do total) agora.
 
 REGRAS DE OURO:
-- Se os dados estão no 📍 QUADRO DE ATENDIMENTO, considere-os como VERDADE ABSOLUTA.
-- O seu objetivo é chegar na reserva #ID o mais rápido possível.
-- Use links Markdown: `[Texto](URL)`.
+- Se os dados estão no quadro, considere-os VERDADE ABSOLUTA.
+- O objetivo é a reserva #ID o mais rápido possível.
 - Resposta SEMPRE em português brasileiro.
 """
     engine = CustomerEngineV2(tenant_id)
@@ -70,13 +72,13 @@ REGRAS DE OURO:
     @tool
     async def robot_create_booking_atomic(
         guest_id: int,
-        room_id: str,
+        room_ids: str,
         check_in: str,
         check_out: str,
         group_size: int
     ) -> dict:
-        """Cria a reserva no banco de dados com status PENDENTE."""
-        return await engine.robot_create_booking_atomic(guest_id, room_id, check_in, check_out, group_size)
+        """Cria a reserva no banco de dados com status PENDENTE. Aceita um ou mais quartos (separados por vírgula)."""
+        return await engine.robot_create_booking_atomic(guest_id, room_ids, check_in, check_out, group_size)
 
     tools = [robot_calculate_quote, robot_search_available_rooms, robot_identify_guest, robot_create_booking_atomic]
     llm_with_tools = llm.bind_tools(tools)
