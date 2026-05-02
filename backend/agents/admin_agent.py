@@ -385,7 +385,7 @@ def event_manager_logic(tenant_id: int, action: str = "query") -> dict:
 async def handle_admin_query(message: str, history: list, db: Session, tenant_id: int, session_id: str = None): # Adicionado session_id
     # --- SELEÇÃO DE MOTOR (GEMINI PREVIEW) ---
     google_key = os.getenv("GOOGLE_API_KEY")
-    gemini_model = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
+    gemini_model = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash-lite"
     
     if google_key:
         llm = ChatGoogleGenerativeAI(model=gemini_model, google_api_key=google_key, temperature=0.1)

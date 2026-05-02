@@ -53,38 +53,37 @@ def build_pagamento_graph(tenant_id: int, session_id: str, booking_id: int = Non
     tools = [robot_get_payment_info]
     llm_with_tools = llm.bind_tools(tools)
 
-    # Injeta o booking_id no prompt se disponível
-    booking_context = f"\n\nCONTEXTO: A reserva #{booking_id} já foi criada com status PENDENTE." if booking_id else ""
-
-    sys_msg = SystemMessage(content=f"""Você é a ANA, recepcionista virtual da Pousada.
-
-FUNÇÃO: Entregar as instruções de pagamento para a reserva que acaba de ser criada.{booking_context}
-
-FLUXO OBRIGATÓRIO:
-1. Use `robot_get_payment_info` para obter a chave PIX ou o link de pagamento real.
-2. Apresente as instruções de forma clara:
-   - **Se for PIX**: Informe a chave exata e o valor do sinal.
-   - **REGRA OBRIGATÓRIA**: Você DEVE solicitar que o hóspede envie o **comprovante do PIX aqui mesmo no chat**. Explique que isso é necessário para que a equipe de hospedagem possa conferir o pagamento e confirmar a reserva definitivamente.
-   - **Se for Mercado Pago**: Você DEVE fornecer o link EXATAMENTE como retornado pela ferramenta, sem adicionar espaços. Coloque o link no formato Markdown em uma linha isolada para que o sistema gere um botão:
-     
-     [💳 Pagar com Mercado Pago](URL_DO_LINK_SEM_ESPAÇOS)
-     
-     ⚠️ NUNCA coloque espaços dentro da URL (ex: NUNCA escreva "mercadopago. com. br"). Avise que a confirmação é automática.
-Exemplo para PIX:
-"💚 **Pagamento via PIX**
-**Chave PIX:** `[chave]`
-**Valor do Sinal:** R$ [valor]
-
-⚠️ **IMPORTANTE**: Após realizar o pagamento, por favor, **envie o comprovante aqui pelo chat**. Nossa equipe precisa dele para conferir o recebimento e confirmar sua reserva imediatamente!"
-
-REGRAS:
-- Nunca invente dados de pagamento.
-- Se não houver booking_id no quadro ou no histórico, peça ao hóspede o número da reserva.
-- Resposta em Português Brasileiro.""")
-
-    def call_pagamento_model(state: HotelBookingState):
+    async def call_pagamento_model(state: HotelBookingState):
         current_bid = booking_id or state.get("booking_id")
         logger.info(f"[PAGAMENTO_AGENT] Entregando instruções de pagamento | booking_id={current_bid}")
+        
+        custom_persona = await engine.get_ai_persona()
+        booking_context = f"\n\nCONTEXTO: A reserva #{current_bid} já foi criada com status PENDENTE." if current_bid else ""
+        
+        base_prompt = f"""Você é a ANA, recepcionista virtual da Pousada.
+        
+        FUNÇÃO: Entregar as instruções de pagamento para a reserva que acaba de ser criada.{booking_context}
+        
+        FLUXO OBRIGATÓRIO:
+        1. Use `robot_get_payment_info` para obter a chave PIX ou o link de pagamento real.
+        2. Apresente as instruções de forma clara:
+           - **Se for PIX**: Informe a chave exata e o valor do sinal.
+           - **REGRA OBRIGATÓRIA**: Você DEVE solicitar que o hóspede envie o **comprovante do PIX aqui mesmo no chat**. Explique que isso é necessário para que a equipe de hospedagem possa conferir o pagamento e confirmar a reserva definitivamente.
+           - **Se for Mercado Pago**: Você DEVE fornecer o link EXATAMENTE como retornado pela ferramenta, sem adicionar espaços. Coloque o link no formato Markdown em uma linha isolada para que o sistema gere um botão:
+             [💳 Pagar com Mercado Pago](URL_DO_LINK_SEM_ESPAÇOS)
+             
+             ⚠️ NUNCA coloque espaços dentro da URL (ex: NUNCA escreva "mercadopago. com. br"). Avise que a confirmação é automática.
+        
+        REGRAS:
+        - Nunca invente dados de pagamento.
+        - Se não houver booking_id no quadro ou no histórico, peça ao hóspede o número da reserva.
+        - Resposta em Português Brasileiro."""
+
+        full_prompt = base_prompt
+        if custom_persona:
+            full_prompt = f"### PERSONALIDADE E TOM DE VOZ (DEFINIDO PELO PROPRIETÁRIO):\n{custom_persona}\n\n" + base_prompt
+            
+        sys_msg = SystemMessage(content=full_prompt)
         
         # --- INJEÇÃO DE CONTEXTO DO BLACKBOARD ---
         blackboard = []
@@ -94,7 +93,7 @@ REGRAS:
         context_text = "📍 QUADRO DE ATENDIMENTO (DADOS ATUAIS NO BANCO):\n" + ("\n".join(blackboard) if blackboard else "Nenhum dado capturado ainda.")
         context_msg = SystemMessage(content=context_text)
         
-        response = llm_with_tools.invoke([sys_msg, context_msg] + state["messages"])
+        response = await llm_with_tools.ainvoke([sys_msg, context_msg] + state["messages"])
         return {"messages": [response]}
 
     workflow = StateGraph(HotelBookingState)

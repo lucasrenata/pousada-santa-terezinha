@@ -406,9 +406,18 @@ def handle_mercadopago_payment(pid: int, db: Session):
             # 2. Automação de Reserva
             if booking_id:
                 booking = db.query(models.Booking).filter(models.Booking.id == int(booking_id)).first()
-                if booking and booking.status != models.BookingStatus.CONFIRMADO:
+                if booking:
+                    # Mudança de Status da Reserva e Pagamento
                     booking.status = models.BookingStatus.CONFIRMADO
+                    booking.payment_status = models.PaymentStatus.PARCIAL
                     
+                    # Adiciona nota automática de confirmação
+                    auto_note = f"\n[SISTEMA] Pagamento via Mercado Pago confirmado (R$ {float(amount):.2f}). Conferir no painel do Mercado Pago."
+                    if booking.notes:
+                        booking.notes += auto_note
+                    else:
+                        booking.notes = auto_note.strip()
+
                     # Automação Financeira: Registro de Receita
                     method = models.PaymentMethod.PIX
                     m_id = (response.get("payment_method_id") or "").lower()
@@ -426,7 +435,7 @@ def handle_mercadopago_payment(pid: int, db: Session):
                     )
                     db.add(revenue_entry)
                     db.commit()
-                    print(f"[WEBHOOK SUCCESS] Tenant {tenant_id}: Reserva {booking_id} paga e receita lançada.")
+                    print(f"[WEBHOOK SUCCESS] Tenant {tenant_id}: Reserva {booking_id} paga, status atualizado e receita lançada.")
 
             # Checkout Automático se for do tipo 'checkout'
             if (metadata.get("type") or "") == "checkout":

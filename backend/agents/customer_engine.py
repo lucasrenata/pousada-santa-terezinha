@@ -197,7 +197,7 @@ class CustomerEngineV2:
     # -------------------------------------------------------------------------
     # ROBÔ 4: CRIADOR DE RESERVA (ATÔMICO)
     # -------------------------------------------------------------------------
-    async def robot_create_booking_atomic(self, guest_id: int, room_ids: Any, check_in: str, check_out: str, group_size: int) -> Dict[str, Any]:
+    async def robot_create_booking_atomic(self, guest_id: int, room_ids: Any, check_in: str, check_out: str, group_size: int, companions: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
         Cria a reserva no banco de dados para um ou mais quartos e retorna o ID e valor do sinal.
         `room_ids` pode ser uma string (ex: "101") ou uma lista/string separada por vírgula (ex: "101,102").
@@ -249,9 +249,22 @@ class CustomerEngineV2:
                     # Soma o valor individual de cada quarto pelas diárias
                     total_amount = sum([r.price_per_night for r in rooms_objs]) * days
                 else:
-                    # Lógica Per Person: Assume 18 anos para todos se não souber (ANA pode ser ensinada a perguntar ages depois)
-                    # Por enquanto, usamos a média da diária dos quartos escolhidos
-                    ages = [18] * group_size
+                    # Lógica Per Person: Usa idades REAIS se disponíveis
+                    guest = db.query(models.Guest).get(guest_id)
+                    guest_age = guest.age if guest and guest.age else 18
+                    
+                    # Coleta idades dos acompanhantes informados
+                    comp_ages = []
+                    if companions:
+                        comp_ages = [c.get("age", 18) for c in companions]
+                    
+                    # Se faltarem acompanhantes na lista mas o group_size for maior, completa com 18
+                    missing_count = (group_size - 1) - len(comp_ages)
+                    if missing_count > 0:
+                        comp_ages.extend([18] * missing_count)
+                    
+                    ages = [guest_age] + comp_ages[:group_size-1] # Garante que não passe do group_size
+                    
                     calc = calculate_reservation_total(avg_daily_rate, days, ages, settings=settings)
                     total_amount = calc["total"]
                 
@@ -279,6 +292,17 @@ class CustomerEngineV2:
                         room_id=r_id
                     )
                     db.add(assoc)
+                
+                # 4.1 Adiciona os acompanhantes no banco
+                if companions:
+                    for comp_data in companions:
+                        new_comp = models.Companion(
+                            booking_id=booking.id,
+                            name=comp_data.get("name", "Acompanhante"),
+                            age=comp_data.get("age", 18),
+                            tenant_id=self.tenant_id
+                        )
+                        db.add(new_comp)
                 
                 # 5. Calcula Sinal (Down Payment)
                 deposit_pct = float(settings.get("pousada_deposit_percentage", 50))
@@ -415,3 +439,10 @@ class CustomerEngineV2:
                 "events": events_list,
                 "message": "Inteligência operacional carregada."
             }
+
+    async def get_ai_persona(self) -> str:
+        """Busca a personalização de tom de voz e cumprimentos do banco."""
+        with SessionLocal() as db:
+            set_tenant_context(db, self.tenant_id)
+            setting = db.query(models.SystemSetting).filter(models.SystemSetting.key == "ai_persona_customization").first()
+            return setting.value if setting and setting.value else ""

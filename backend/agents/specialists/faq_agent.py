@@ -9,7 +9,7 @@ ISOLAMENTO: Não importa nada de admin_agent.py.
 """
 import os
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from langchain_core.tools import tool
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
@@ -44,22 +44,29 @@ def build_faq_graph(tenant_id: int, session_id: str):
     tools = [robot_business_intelligence]
     llm_with_tools = llm.bind_tools(tools)
 
-    sys_msg = SystemMessage(content="""Você é a ANA, recepcionista virtual da Pousada, especialista em atendimento e hospitalidade.
-
-FUNÇÃO NESTE TURNO: Responder dúvidas sobre a pousada com simpatia e precisão.
-
-PERSONA:
-- Tom acolhedor, caloroso e profissional.
-- Use frases de hospitalidade: "Com prazer!", "Ótima pergunta!", "Será um prazer esclarecer!"
-
-REGRAS DE OURO:
-1. Use SEMPRE a ferramenta `robot_business_intelligence` antes de responder qualquer dúvida sobre regras ou políticas. NUNCA invente informações.
-2. Se a dúvida for sobre PREÇOS ou RESERVAS, informe que pode verificar disponibilidade e pergunte as datas de interesse.
-3. NUNCA mencione CPF, cadastro ou pagamento neste contexto.
-4. Resposta SEMPRE em português brasileiro.""")
-
-    def call_faq_model(state: HotelBookingState):
+    async def call_faq_model(state: HotelBookingState):
         logger.info(f"[FAQ_AGENT] Processando turno para tenant {tenant_id}")
+        
+        custom_persona = await engine.get_ai_persona()
+        base_prompt = """Você é a ANA, recepcionista virtual da Pousada, especialista em atendimento e hospitalidade.
+        
+        FUNÇÃO NESTE TURNO: Responder dúvidas sobre a pousada com simpatia e precisão.
+        
+        PERSONA:
+        - Tom acolhedor, caloroso e profissional.
+        - Use frases de hospitalidade: "Com prazer!", "Ótima pergunta!", "Será um prazer esclarecer!"
+        
+        REGRAS DE OURO:
+        1. Use SEMPRE a ferramenta `robot_business_intelligence` antes de responder qualquer dúvida sobre regras ou políticas. NUNCA invente informações.
+        2. Se a dúvida for sobre PREÇOS ou RESERVAS, informe que pode verificar disponibilidade e pergunte as datas de interesse.
+        3. NUNCA mencione CPF, cadastro ou pagamento neste contexto.
+        4. Resposta SEMPRE em português brasileiro."""
+
+        full_prompt = base_prompt
+        if custom_persona:
+            full_prompt = f"### PERSONALIDADE E TOM DE VOZ (DEFINIDO PELO PROPRIETÁRIO):\n{custom_persona}\n\n" + base_prompt
+            
+        sys_msg = SystemMessage(content=full_prompt)
         
         # --- INJEÇÃO DE CONTEXTO DO BLACKBOARD ---
         blackboard = []
@@ -70,7 +77,7 @@ REGRAS DE OURO:
         context_text = "📍 QUADRO DE ATENDIMENTO (DADOS ATUAIS NO BANCO):\n" + ("\n".join(blackboard) if blackboard else "Nenhum dado capturado ainda.")
         context_msg = SystemMessage(content=context_text)
         
-        response = llm_with_tools.invoke([sys_msg, context_msg] + state["messages"])
+        response = await llm_with_tools.ainvoke([sys_msg, context_msg] + state["messages"])
         return {"messages": [response]}
 
     workflow = StateGraph(HotelBookingState)

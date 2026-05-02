@@ -177,7 +177,13 @@ export default function GuestChatPage() {
         tenant_id: parseInt(tenant_id || "1")
       });
 
-      const { job_id } = res.data;
+      const { job_id, status } = res.data;
+      
+      // Se estiver apenas acumulando mensagens (debouncing), não iniciamos o polling
+      if (status === 'buffering') {
+        setLoading(false);
+        return;
+      }
 
       // 2. Inicia Polling para aguardar a resposta do Worker
       const pollJob = async () => {

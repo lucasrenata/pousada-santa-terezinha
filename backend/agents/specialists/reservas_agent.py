@@ -3,7 +3,7 @@ Sub-Agente de Reservas — Especialista em Cotação, Identificação e Criaçã
 """
 import os
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 
 from langchain_core.tools import tool
 from langchain_core.messages import SystemMessage, AIMessage
@@ -38,11 +38,17 @@ FLUXO OBRIGATÓRIO (NÃO PERGUNTE O QUE JÁ ESTÁ NO QUADRO):
 1. COTAR IMEDIATAMENTE: Se você vir Check-in, Check-out e Hóspedes no quadro, chame `robot_calculate_quote` NA HORA.
    - Apresente as opções com o NÚMERO DO QUARTO:
      "🏠 **Quarto [room_id] ([Tipo])** — R$ [total] total (R$ [daily]/diária)"
-2. IDENTIFICAR: Se o hóspede escolheu o(s) quarto(s) mas você não tem o CPF, peça o CPF. Se já tem, chame `robot_identify_guest`. 
-   - **BOTÃO DE CADASTRO**: Se precisar de registro, use Markdown isolado:
+2. IDENTIFICAR: 
+   - Se você não tem o CPF, peça o CPF. Se já tem, chame `robot_identify_guest`.
+   - Se o `group_size` > 1 e você ainda não tem os dados de TODOS os acompanhantes (nome e idade), VOCÊ DEVE PERGUNTAR antes de criar a reserva.
+   - Pergunte de forma gentil: "Para garantir o valor correto e agilizar seu check-in, poderia me informar o nome e a idade de quem vai com você?"
+   - **BOTÃO DE CADASTRO**: Se precisar de registro para o hóspede principal, use Markdown isolado:
      "[📝 Fazer meu Cadastro Agora](URL_DO_LINK)"
-3. CRIAR RESERVA: Se você tem guest_id + room_id(s) + datas + hóspedes, chame `robot_create_booking_atomic` SEM HESITAR. 
-   - **PONTE DE PAGAMENTO**: Após criar, confirme os detalhes (Datas e Quartos), comemore e PERGUNTAR se ele deseja as instruções para o pagamento do sinal (50% do total) agora.
+
+3. CRIAR RESERVA: 
+   - Condição: Tenho guest_id + room_id(s) + datas + hóspedes + dados dos acompanhantes (se houver).
+   - Chame `robot_create_booking_atomic` IMEDIATAMENTE.
+   - **PONTE DE PAGAMENTO**: Após criar, confirme os detalhes (Datas e Quartos), comemore e PERGUNTE se ele deseja as instruções para o pagamento do sinal (50% do total) agora.
 
 REGRAS DE OURO:
 - Se os dados estão no quadro, considere-os VERDADE ABSOLUTA.
@@ -51,7 +57,7 @@ REGRAS DE OURO:
 """
     engine = CustomerEngineV2(tenant_id)
     google_key = os.getenv("GOOGLE_API_KEY")
-    gemini_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
     llm = ChatGoogleGenerativeAI(model=gemini_model, google_api_key=google_key, temperature=0.1)
 
     @tool
@@ -75,10 +81,11 @@ REGRAS DE OURO:
         room_ids: str,
         check_in: str,
         check_out: str,
-        group_size: int
+        group_size: int,
+        companions: Optional[List[Dict[str, Any]]] = None
     ) -> dict:
-        """Cria a reserva no banco de dados com status PENDENTE. Aceita um ou mais quartos (separados por vírgula)."""
-        return await engine.robot_create_booking_atomic(guest_id, room_ids, check_in, check_out, group_size)
+        """Cria a reserva no banco de dados com status PENDENTE. Aceita um ou mais quartos (separados por vírgula). Inclua a lista de acompanhantes [{'name': '...', 'age': 0}] se houver."""
+        return await engine.robot_create_booking_atomic(guest_id, room_ids, check_in, check_out, group_size, companions)
 
     tools = [robot_calculate_quote, robot_search_available_rooms, robot_identify_guest, robot_create_booking_atomic]
     llm_with_tools = llm.bind_tools(tools)
@@ -91,18 +98,26 @@ REGRAS DE OURO:
         if state.get("cpf"): blackboard.append(f"CPF: {state['cpf']}")
         if state.get("guest_id"): blackboard.append(f"Guest ID: {state['guest_id']}")
         if state.get("room_id"): blackboard.append(f"Quarto Escolhido: {state['room_id']}")
+        if state.get("companions"): 
+            comp_list = [f"{c['name']} ({c['age']}a)" for c in state['companions']]
+            blackboard.append(f"Acompanhantes: {', '.join(comp_list)}")
         
         context_text = "📍 QUADRO DE ATENDIMENTO (DADOS ATUAIS NO BANCO):\n" + ("\n".join(blackboard) if blackboard else "Nenhum dado capturado ainda.")
         return SystemMessage(content=context_text)
 
-    def call_reservas_model(state: HotelBookingState):
+    async def call_reservas_model(state: HotelBookingState):
         logger.info(f"[RESERVAS_AGENT] Processando turno para tenant {tenant_id}")
         try:
-            sys_msg = SystemMessage(content=RESERVAS_SYSTEM_PROMPT)
+            custom_persona = await engine.get_ai_persona()
+            full_prompt = RESERVAS_SYSTEM_PROMPT
+            if custom_persona:
+                full_prompt = f"### PERSONALIDADE E TOM DE VOZ (DEFINIDO PELO PROPRIETÁRIO):\n{custom_persona}\n\n" + RESERVAS_SYSTEM_PROMPT
+                
+            sys_msg = SystemMessage(content=full_prompt)
             context_msg = _build_blackboard_msg(state)
             
             # Chama o modelo com as ferramentas
-            response = llm_with_tools.invoke([sys_msg, context_msg] + state["messages"])
+            response = await llm_with_tools.ainvoke([sys_msg, context_msg] + state["messages"])
             return {"messages": [response]}
         except Exception as e:
             logger.error(f"[RESERVAS_AGENT] Erro crítico na chamada do modelo: {e}")

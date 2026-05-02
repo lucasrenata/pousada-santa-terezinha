@@ -25,7 +25,8 @@ export default function BusinessRulesTab() {
     pousada_deposit_percentage: '100',
     check_in_time: '14:00',
     check_out_time: '12:00',
-    house_rules_description: ''
+    house_rules_description: '',
+    ai_persona_customization: ''
   });
 
   const [savingSettings, setSavingSettings] = useState<string | null>(null);
@@ -148,9 +149,10 @@ export default function BusinessRulesTab() {
             Descreva como a IA deve se comportar e quais as regras fundamentais da sua pousada.
           </CardDescription>
         </CardHeader>
-        <CardContent className="pt-6 space-y-4">
+        <CardContent className="pt-6 space-y-6">
+          {/* Manual de Operação */}
           <div className="space-y-2">
-            <label className="text-sm font-bold text-slate-700">Regras da Casa, Políticas de Cancelamento e Observações</label>
+            <label className="text-sm font-bold text-slate-700">Manual de Regras do Estabelecimento (Políticas, Horários e Regras Internas)</label>
             <textarea
               className="w-full h-32 p-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
               placeholder="Ex: Não aceitamos pets. Cancelamento grátis até 7 dias antes. Café da manhã incluso..."
@@ -162,7 +164,28 @@ export default function BusinessRulesTab() {
               disabled={savingSettings === 'house_rules_description'}
               onClick={() => handleSaveSetting('house_rules_description', settings.house_rules_description, 'Regras da casa e políticas lidas pela IA')}
             >
-              {savingSettings === 'house_rules_description' ? 'Salvando...' : 'Salvar Manual da Pousada'}
+              {savingSettings === 'house_rules_description' ? 'Salvando...' : 'Salvar Regras do Estabelecimento'}
+            </Button>
+          </div>
+
+          {/* Personalidade da IA */}
+          <div className="pt-4 border-t border-slate-100 space-y-2">
+            <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
+              Comportamento e Personalidade da IA (Frases de Boas-Vindas e Tom de Voz)
+              <Info className="w-3 h-3 text-slate-400" title="Instruções sobre como a Ana deve cumprimentar, o tom de voz (formal/informal) e frases específicas que você deseja que ela use." />
+            </label>
+            <textarea
+              className="w-full h-24 p-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-violet-500 outline-none text-sm bg-violet-50/30"
+              placeholder="Ex: Use um tom descontraído. Sempre cumprimente dizendo 'Olá, seja bem-vindo!'. Peça para o hóspede ficar à vontade e use emojis amigáveis."
+              value={settings.ai_persona_customization}
+              onChange={(e) => setSettings({ ...settings, ai_persona_customization: e.target.value })}
+            />
+            <Button
+              className="w-full bg-violet-600 hover:bg-violet-700"
+              disabled={savingSettings === 'ai_persona_customization'}
+              onClick={() => handleSaveSetting('ai_persona_customization', settings.ai_persona_customization, 'Personalidade, cumprimentos e tom de voz da IA')}
+            >
+              {savingSettings === 'ai_persona_customization' ? 'Salvando...' : 'Salvar Personalidade da IA'}
             </Button>
           </div>
         </CardContent>

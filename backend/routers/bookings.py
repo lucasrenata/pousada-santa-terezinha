@@ -205,15 +205,23 @@ def check_out(room_id: str, data: schemas.CheckoutPaymentRequest, db: Session = 
     
     consumption_total = sum([c.quantity * c.unit_price for c in booking.consumptions])
     
-    # Aplicação de Desconto (Novo)
+    # Cálculo do Valor a Pagar no Checkout (Subtraindo o Sinal para o Hóspede)
+    total_service = pricing["total"] + consumption_total
+    deposit = booking.deposit_amount or 0.0
     discount = data.discount or 0.0
-    final_total = (pricing["total"] + consumption_total) - discount
+    final_payment_guest = total_service - deposit - discount
+
+    # Lógica Inteligente de Lançamento Financeiro:
+    # Verificamos quanto já foi lançado no financeiro para esta reserva (ex: via Mercado Pago)
+    already_launched = sum([r.amount for r in booking.revenues])
+    # O valor a ser lançado agora é o que falta para completar o total (Total - Já Lançado - Desconto)
+    amount_to_launch_finance = total_service - already_launched - discount
 
     # Atualiza Status da Reserva
     booking.status = models.BookingStatus.CONCLUIDO
     booking.real_check_out = datetime.now()
-    booking.total_amount = final_total
-    booking.discount = discount # Salva o desconto na reserva
+    booking.total_amount = total_service # Valor bruto total
+    booking.discount = discount 
     
     # Atualiza Status do Quarto
     room.status = models.RoomStatus.LIMPEZA
@@ -221,8 +229,8 @@ def check_out(room_id: str, data: schemas.CheckoutPaymentRequest, db: Session = 
     # --- LANÇAMENTO AUTOMÁTICO NO LIVRO CAIXA (FINANCEIRO) ---
     revenue_entry = models.Revenue(
         description=f"Check-out Quarto {room.id} - Reserva #{booking.id}",
-        amount=final_total,
-        discount=discount, # Salva o desconto na receita para o relatório
+        amount=amount_to_launch_finance,
+        discount=discount,
         category=models.RevenueCategory.HOSPEDAGEM,
         payment_method=data.payment_method,
         booking_id=booking.id,
@@ -245,7 +253,7 @@ def check_out(room_id: str, data: schemas.CheckoutPaymentRequest, db: Session = 
 
     db.commit()
 
-    return {"message": "Check-out realizado e Receita Lançada", "total": final_total}
+    return {"message": "Check-out realizado e Receita Lançada", "total": final_payment_guest}
 
 # 3.1. RESUMO PARA CHECK-OUT (diárias x consumos)
 @router.get("/summary/{room_id}")
@@ -288,6 +296,9 @@ def checkout_summary(room_id: str, db: Session = Depends(get_db), current_user =
     
     consumption_total = sum([c.quantity * c.unit_price for c in booking.consumptions])
     
+    total_service = pricing["total"] + consumption_total
+    deposit = booking.deposit_amount or 0.0
+    
     return {
         "booking_id": booking.id,
         "room_id": room_id,
@@ -295,7 +306,8 @@ def checkout_summary(room_id: str, db: Session = Depends(get_db), current_user =
         "daily_rate": booking.daily_rate,
         "daily_total": pricing["total"],
         "consumption_total": consumption_total,
-        "grand_total": pricing["total"] + consumption_total,
+        "deposit_amount": deposit,
+        "grand_total": total_service - deposit,
         "breakdown": pricing["breakdown"],
         "consumptions": [
             { 
@@ -718,10 +730,23 @@ async def upload_receipt(booking_id: int, tenant_id: Optional[int] = None, file:
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    # Atualiza o banco de dados (URL pública)
-    # No localhost, usamos a base_url do .env ou /static/...
+    # Atualiza o banco de dados
     receipt_url = f"/static/uploads/receipts/{filename}"
     booking.payment_receipt_url = receipt_url
+    
+    # --- AUTOMAÇÃO DE STATUS ---
+    # Ao receber o comprovante, confirmamos a reserva e marcamos como pagamento parcial
+    booking.status = models.BookingStatus.CONFIRMADO
+    booking.payment_status = models.PaymentStatus.PARCIAL
+    
+    # Adiciona nota para o administrador
+    deposit_val = booking.deposit_amount or 0.0
+    auto_note = f"\n[SISTEMA] Hóspede enviou comprovante de PIX (Sinal de R$ {deposit_val:.2f}). Conferir PIX e confirmar a reserva para o hóspede."
+    if booking.notes:
+        booking.notes += auto_note
+    else:
+        booking.notes = auto_note.strip()
+    
     db.commit()
 
     return {"success": True, "receipt_url": receipt_url}

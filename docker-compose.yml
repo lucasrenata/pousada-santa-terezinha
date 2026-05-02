@@ -63,29 +63,6 @@ services:
     ports:
       - "6380:6379"
 
-  worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: pousada_worker
-    restart: always
-    command: python worker.py
-    env_file:
-      - ./backend/.env
-    environment:
-      DATABASE_URL: postgresql://pousada_app:ParcerIA19141919%40@db:5432/pousada_db
-      REDIS_URL: redis://redis:6379/0
-      TZ: America/Sao_Paulo
-    volumes:
-      - ./backend:/app
-      - /app/__pycache__
-      - ./backend/reports:/app/reports
-      - ./backend/static:/app/static
-      - ./backend/logs:/app/logs
-    depends_on:
-      - db
-      - redis
-
   frontend:
     build:
       context: ./frontend
