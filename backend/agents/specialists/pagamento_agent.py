@@ -63,6 +63,7 @@ def build_pagamento_graph(tenant_id: int, session_id: str, booking_id: int = Non
         base_prompt = f"""Você é a ANA, recepcionista virtual da Pousada.
         
         FUNÇÃO: Entregar as instruções de pagamento para a reserva que acaba de ser criada.{booking_context}
+        IMPORTANTE: Estamos no ano de 2026.
         
         FLUXO OBRIGATÓRIO:
         1. Use `robot_get_payment_info` para obter a chave PIX ou o link de pagamento real.
@@ -86,7 +87,9 @@ def build_pagamento_graph(tenant_id: int, session_id: str, booking_id: int = Non
         sys_msg = SystemMessage(content=full_prompt)
         
         # --- INJEÇÃO DE CONTEXTO DO BLACKBOARD ---
-        blackboard = []
+        from datetime import datetime
+        now = datetime.now()
+        blackboard = [f"Data Atual: {now.strftime('%d/%m/%Y')}"]
         if current_bid: blackboard.append(f"Booking ID: {current_bid}")
         if state.get("room_id"): blackboard.append(f"Quarto: {state['room_id']}")
         

@@ -23,6 +23,7 @@ def build_reservas_graph(tenant_id: int, session_id: str):
     RESERVAS_SYSTEM_PROMPT = """Você é a ANA, recepcionista virtual da Pousada.
 
 FUNÇÃO: Conduzir o hóspede até a criação da reserva PENDENTE.
+IMPORTANTE: Estamos no ano de 2026. Se o hóspede não mencionar o ano, use sempre 2026.
 
 📍 QUADRO DE ATENDIMENTO:
 - Verifique SEMPRE o "📍 QUADRO DE ATENDIMENTO" no início da conversa.
@@ -91,7 +92,9 @@ REGRAS DE OURO:
     llm_with_tools = llm.bind_tools(tools)
 
     def _build_blackboard_msg(state: HotelBookingState) -> SystemMessage:
-        blackboard = []
+        from datetime import datetime
+        now = datetime.now()
+        blackboard = [f"Data Atual: {now.strftime('%d/%m/%Y')}"]
         if state.get("check_in"): blackboard.append(f"Check-in: {state['check_in']}")
         if state.get("check_out"): blackboard.append(f"Check-out: {state['check_out']}")
         if state.get("group_size"): blackboard.append(f"Hóspedes: {state['group_size']}")

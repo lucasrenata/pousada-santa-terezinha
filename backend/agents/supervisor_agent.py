@@ -166,7 +166,11 @@ class SupervisorAgent:
         return {"messages": res["messages"][-new_count:] if new_count > 0 else []}
 
     def _build_blackboard_msg(self, state: HotelBookingState) -> SystemMessage:
-        b = []
+        from datetime import datetime
+        now = datetime.now()
+        current_date_info = f"HOJE: {now.strftime('%d/%m/%Y')} ({now.strftime('%A')})"
+        
+        b = [current_date_info]
         is_complete = False
         if state.get("check_in") and state.get("check_out") and state.get("group_size"):
             is_complete = True

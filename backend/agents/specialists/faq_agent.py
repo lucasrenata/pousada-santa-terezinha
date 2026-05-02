@@ -69,7 +69,9 @@ def build_faq_graph(tenant_id: int, session_id: str):
         sys_msg = SystemMessage(content=full_prompt)
         
         # --- INJEÇÃO DE CONTEXTO DO BLACKBOARD ---
-        blackboard = []
+        from datetime import datetime
+        now = datetime.now()
+        blackboard = [f"Data Atual: {now.strftime('%d/%m/%Y')}"]
         if state.get("check_in"): blackboard.append(f"Check-in: {state['check_in']}")
         if state.get("check_out"): blackboard.append(f"Check-out: {state['check_out']}")
         if state.get("group_size"): blackboard.append(f"Hóspedes: {state['group_size']}")
