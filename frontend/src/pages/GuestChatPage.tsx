@@ -179,10 +179,10 @@ export default function GuestChatPage() {
 
       const { job_id, status } = res.data;
       
-      // Se estiver apenas acumulando mensagens (debouncing), não iniciamos o polling
+      // Se estiver apenas acumulando mensagens (debouncing), mantemos o loading e iniciamos o polling também
+      // para que o usuário veja a resposta assim que o bloco for processado.
       if (status === 'buffering') {
-        setLoading(false);
-        return;
+        console.log("Mensagem agrupada, aguardando processamento do bloco...");
       }
 
       // 2. Inicia Polling para aguardar a resposta do Worker

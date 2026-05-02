@@ -126,28 +126,66 @@ async def chat_customer(request: ChatRequest, background_tasks: BackgroundTasks,
         job_id = f"sync_{hashlib.md5(request.session_id.encode()).hexdigest()}_{int(time.time())}"
         redis_conn.setex(job_id_key, 30, job_id)
 
-    # Tenta ser o "Líder" (quem vai processar o balaio)
+    # Tenta ser o "Líder" (quem vai processar o bloco)
     if redis_conn.set(lock_key, "1", ex=20, nx=True):
-        # Sou o líder, disparo a tarefa de fundo que vai esperar e processar tudo
-        background_tasks.add_task(process_debounced_messages, request.session_id, request.tenant_id, job_id)
-        return {
-            "job_id": job_id,
-            "status": "processing",
-            "message": "Aguardando concatenação..."
-        }
+        # Sou o líder. Vou avisar o Redis que já estou processando para evitar 404 no polling
+        redis_conn.hset(f"rq:job:{job_id}", mapping={"status": "processing"})
+        redis_conn.expire(f"rq:job:{job_id}", 300)
+
+        try:
+            # 1. Espera o usuário terminar de digitar (janela de 2.5s)
+            await asyncio.sleep(2.5)
+            
+            # 2. Coleta tudo o que foi acumulado no Redis
+            msgs_bytes = redis_conn.lrange(buffer_key, 0, -1)
+            redis_conn.delete(buffer_key)
+            redis_conn.delete(lock_key)
+            redis_conn.delete(job_id_key)
+            
+            if not msgs_bytes:
+                return {"status": "empty"}
+
+            full_message = " ".join([m.decode('utf-8', errors='ignore') for m in msgs_bytes])
+            
+            # 3. Processa com a IA de forma síncrona (para esta request)
+            from agents.supervisor_agent import SupervisorAgent
+            supervisor = SupervisorAgent(request.tenant_id)
+            result = await supervisor.process(full_message, request.session_id)
+            
+            # Atualiza o Redis para quem estiver no polling
+            redis_conn.hset(f"rq:job:{job_id}", mapping={"status": "finished", "result": json.dumps(result)})
+
+            return {
+                "job_id": job_id,
+                "status": "finished",
+                "result": result
+            }
+        except Exception as e:
+            logger.error(f"Erro no processamento síncrono: {e}")
+            redis_conn.hset(f"rq:job:{job_id}", mapping={"status": "failed", "error": str(e)})
+            return {
+                "job_id": job_id,
+                "status": "failed",
+                "error": str(e)
+            }
     else:
-        # Sou um seguidor, apenas avisamos o frontend para não criar novo polling
+        # Sou um seguidor, apenas avisamos o frontend que a mensagem foi agrupada
+        # Também garantimos que o job_id esteja no Redis se ainda não estiver
+        if not redis_conn.exists(f"rq:job:{job_id}"):
+            redis_conn.hset(f"rq:job:{job_id}", mapping={"status": "processing"})
+            redis_conn.expire(f"rq:job:{job_id}", 300)
+
         return {
             "job_id": job_id,
             "status": "buffering",
-            "message": "Mensagem adicionada ao grupo atual."
+            "message": "Mensagem agrupada."
         }
 
 @router.get("/job/{job_id}")
 async def get_job_status(job_id: str):
     """Endpoint de Polling compatível com Jobs Sync e Async."""
     # Primeiro verifica se é um Job Síncrono (Fake Job)
-    if job_id.startswith("sync_"):
+    if job_id.startswith("sync_") or job_id.startswith("admin_"):
         data = redis_conn.hgetall(f"rq:job:{job_id}")
         if data:
             status = data.get(b"status", b"finished").decode()
@@ -157,11 +195,15 @@ async def get_job_status(job_id: str):
                 "status": status,
                 "result": result
             }
+        else:
+            # Se é um job sync mas ainda não tem dados, ele está em processamento
+            return {"status": "processing"}
     
     try:
         job = Job.fetch(job_id, connection=redis_conn)
     except Exception:
-        raise HTTPException(status_code=404, detail="Job não encontrado")
+        # Se não encontrou no RQ mas o ID é nosso, consideramos processando
+        return {"status": "processing"}
     
     if job.is_finished:
         return {
