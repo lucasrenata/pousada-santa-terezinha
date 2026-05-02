@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../services/api';
 import type { AxiosError } from 'axios';
-import { BedDouble, X, CheckCircle, Plus, ShoppingCart, Trash2, Edit, QrCode, CreditCard, Wallet } from 'lucide-react';
+import { BedDouble, X, CheckCircle, Plus, ShoppingCart, Trash2, Edit, QrCode, CreditCard, Wallet, CalendarDays, Save, Clock } from 'lucide-react';
 import RoomModal from '../components/RoomModal';
 import { ReservationForm } from '../components/ReservationForm';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
@@ -72,6 +72,8 @@ export default function Rooms() {
   const [isGeneratingPayment, setIsGeneratingPayment] = useState(false);
   const [isPolling, setIsPolling] = useState(false);
   const [pricingModel, setPricingModel] = useState<'per_person' | 'per_room'>('per_person');
+  const [isExtending, setIsExtending] = useState(false);
+  const [newCheckOut, setNewCheckOut] = useState('');
 
   async function loadRooms() {
     try {
@@ -460,6 +462,29 @@ export default function Rooms() {
     }
   }
 
+  async function updateStayDuration() {
+    if (!activeBooking || !newCheckOut) return;
+    try {
+      await api.put(`/bookings/${activeBooking.id}`, {
+        check_out_date: newCheckOut.split('T')[0],
+        check_out_time: newCheckOut.split('T')[1]?.substring(0, 5) || '12:00'
+      });
+      toast({ 
+        title: "Estadia Atualizada!", 
+        description: "O novo período de hospedagem foi salvo com sucesso." 
+      });
+      setIsExtending(false);
+      
+      // Atualiza o estado local do activeBooking
+      setActiveBooking(prev => prev ? { ...prev, check_out_date: newCheckOut } : null);
+      
+      // Recarrega os quartos para atualizar cores/status se necessário
+      loadRooms();
+    } catch (err) {
+      alert('Falha ao estender estadia. Verifique a disponibilidade.');
+    }
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -675,13 +700,68 @@ export default function Rooms() {
             </div>
 
             {activeBooking && (
-              <div className="mb-4 rounded-lg border p-3 bg-slate-50">
-                <p className="text-sm text-slate-600">
-                  Hóspede: <span className="font-medium text-slate-800">{activeBooking.guest_name}</span>
+              <div className="mb-4 rounded-xl border border-blue-100 p-4 bg-blue-50/50 shadow-sm relative group">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+                  <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Hospedagem Ativa</p>
+                </div>
+                
+                <p className="text-sm text-slate-700 font-bold mb-3 flex items-center gap-2">
+                  <BedDouble size={16} className="text-blue-500" />
+                  {activeBooking.guest_name}
                 </p>
-                <p className="text-sm text-slate-600">
-                  Período: {new Date(activeBooking.check_in_date).toLocaleString('pt-BR')} — {new Date(activeBooking.check_out_date).toLocaleString('pt-BR')}
-                </p>
+
+                {!isExtending ? (
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-slate-500 flex items-center gap-2">
+                      <CalendarDays size={14} className="text-slate-400" />
+                      {new Date(activeBooking.check_in_date).toLocaleDateString('pt-BR')} {new Date(activeBooking.check_in_date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                      <span className="mx-1 text-slate-300">—</span>
+                      <span className="font-bold text-slate-700">{new Date(activeBooking.check_out_date).toLocaleDateString('pt-BR')} {new Date(activeBooking.check_out_date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+                    </p>
+                    <button 
+                      onClick={() => {
+                        setIsExtending(true);
+                        // Converte a data para o formato datetime-local
+                        const d = new Date(activeBooking.check_out_date);
+                        const fmt = d.toISOString().substring(0, 16);
+                        setNewCheckOut(fmt);
+                      }}
+                      className="p-1.5 bg-white rounded-lg border border-blue-100 text-blue-600 hover:bg-blue-600 hover:text-white transition shadow-sm flex items-center gap-1 text-[10px] font-bold"
+                      title="Alterar tempo de estadia"
+                    >
+                      <Clock size={12} /> Estender
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">Novo Check-out</label>
+                      <div className="flex gap-2">
+                        <input 
+                          type="datetime-local"
+                          className="flex-1 bg-white border border-blue-200 rounded-lg px-3 py-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+                          value={newCheckOut}
+                          onChange={(e) => setNewCheckOut(e.target.value)}
+                        />
+                        <button 
+                          onClick={updateStayDuration}
+                          className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition shadow-md"
+                          title="Salvar alteração"
+                        >
+                          <Save size={16} />
+                        </button>
+                        <button 
+                          onClick={() => setIsExtending(false)}
+                          className="px-3 py-2 bg-white text-slate-400 border border-slate-200 rounded-lg hover:bg-slate-50 transition"
+                          title="Cancelar"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
