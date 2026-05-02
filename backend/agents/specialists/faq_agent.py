@@ -48,6 +48,10 @@ def build_faq_graph(tenant_id: int, session_id: str):
         logger.info(f"[FAQ_AGENT] Processando turno para tenant {tenant_id}")
         
         custom_persona = await engine.get_ai_persona()
+        # Detecta se é a primeira mensagem do usuário
+        user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
+        is_first_turn = len(user_messages) <= 1
+        turn_context = "\n⚠️ CONTEXTO: Início de conversa. Use a saudação de boas-vindas da personalidade." if is_first_turn else "\n⚠️ CONTEXTO: Conversa em andamento. NÃO repita saudações iniciais, seja direto."
         base_prompt = """Você é a ANA, recepcionista virtual da Pousada, especialista em atendimento e hospitalidade.
         
         FUNÇÃO NESTE TURNO: Responder dúvidas sobre a pousada com simpatia e precisão.
@@ -64,7 +68,7 @@ def build_faq_graph(tenant_id: int, session_id: str):
 
         full_prompt = base_prompt
         if custom_persona:
-            full_prompt = f"### PERSONALIDADE E TOM DE VOZ (DEFINIDO PELO PROPRIETÁRIO):\n{custom_persona}\n\n" + base_prompt
+            full_prompt = f"### PERSONALIDADE E TOM DE VOZ:\n{custom_persona}\n{turn_context}\n\n" + base_prompt
             
         sys_msg = SystemMessage(content=full_prompt)
         

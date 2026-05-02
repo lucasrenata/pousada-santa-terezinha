@@ -112,9 +112,15 @@ REGRAS DE OURO:
         logger.info(f"[RESERVAS_AGENT] Processando turno para tenant {tenant_id}")
         try:
             custom_persona = await engine.get_ai_persona()
+            
+            # Detecta se é a primeira mensagem do usuário para decidir sobre a saudação
+            user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
+            is_first_turn = len(user_messages) <= 1
+            turn_context = "\n⚠️ CONTEXTO: Início de conversa. Use a saudação de boas-vindas da personalidade." if is_first_turn else "\n⚠️ CONTEXTO: Conversa em andamento. NÃO repita saudações iniciais, seja direto."
+            
             full_prompt = RESERVAS_SYSTEM_PROMPT
             if custom_persona:
-                full_prompt = f"### PERSONALIDADE E TOM DE VOZ (DEFINIDO PELO PROPRIETÁRIO):\n{custom_persona}\n\n" + RESERVAS_SYSTEM_PROMPT
+                full_prompt = f"### PERSONALIDADE E TOM DE VOZ:\n{custom_persona}\n{turn_context}\n\n" + RESERVAS_SYSTEM_PROMPT
                 
             sys_msg = SystemMessage(content=full_prompt)
             context_msg = _build_blackboard_msg(state)

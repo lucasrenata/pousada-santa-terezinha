@@ -58,6 +58,10 @@ def build_pagamento_graph(tenant_id: int, session_id: str, booking_id: int = Non
         logger.info(f"[PAGAMENTO_AGENT] Entregando instruções de pagamento | booking_id={current_bid}")
         
         custom_persona = await engine.get_ai_persona()
+        # Detecta se é a primeira mensagem do usuário
+        user_messages = [m for m in state["messages"] if isinstance(m, HumanMessage)]
+        is_first_turn = len(user_messages) <= 1
+        turn_context = "\n⚠️ CONTEXTO: Início de conversa. Use a saudação de boas-vindas da personalidade." if is_first_turn else "\n⚠️ CONTEXTO: Conversa em andamento. NÃO repita saudações iniciais, seja direto."
         booking_context = f"\n\nCONTEXTO: A reserva #{current_bid} já foi criada com status PENDENTE." if current_bid else ""
         
         base_prompt = f"""Você é a ANA, recepcionista virtual da Pousada.
@@ -82,7 +86,7 @@ def build_pagamento_graph(tenant_id: int, session_id: str, booking_id: int = Non
 
         full_prompt = base_prompt
         if custom_persona:
-            full_prompt = f"### PERSONALIDADE E TOM DE VOZ (DEFINIDO PELO PROPRIETÁRIO):\n{custom_persona}\n\n" + base_prompt
+            full_prompt = f"### PERSONALIDADE E TOM DE VOZ:\n{custom_persona}\n{turn_context}\n\n" + base_prompt
             
         sys_msg = SystemMessage(content=full_prompt)
         
