@@ -83,9 +83,26 @@ class CustomerEngineV2:
         with SessionLocal() as db:
             set_tenant_context(db, self.tenant_id)
             
-            # Busca quartos disponíveis, ordenando do mais barato ao mais caro
+            # Subquery para achar quartos ocupados ou reservados no período
+            occupied_ids = db.query(models.Booking.room_id).filter(
+                models.Booking.status.in_(["confirmado", "ativo", "pendente"]),
+                models.Booking.check_out_date > ci,
+                models.Booking.check_in_date < co
+            ).all()
+            occupied_list = [r[0] for r in occupied_ids]
+
+            # Também verifica na tabela de associação multi-quarto
+            multi_occupied = db.query(models.BookingRoom.room_id).join(models.Booking).filter(
+                models.Booking.status.in_(["confirmado", "ativo", "pendente"]),
+                models.Booking.check_out_date > ci,
+                models.Booking.check_in_date < co
+            ).all()
+            occupied_list += [r[0] for r in multi_occupied]
+
+            # Busca quartos que não estão ocupados no período e não estão em manutenção
             rooms = db.query(models.Room).filter(
-                models.Room.status == "disponivel",
+                ~models.Room.id.in_(occupied_list),
+                models.Room.status != "manutencao",
                 models.Room.max_capacity >= group_size
             ).order_by(models.Room.price_per_night.asc()).all()
             
@@ -179,10 +196,10 @@ class CustomerEngineV2:
             ).all()
             occupied_list += [r[0] for r in multi_occupied]
 
-            # Filtra quartos livres
+            # Filtra quartos livres (não ocupados no período e não em manutenção)
             available = db.query(models.Room).filter(
                 ~models.Room.id.in_(occupied_list),
-                models.Room.status == "disponivel"
+                models.Room.status != "manutencao"
             ).all()
             
             if not available:
@@ -229,6 +246,11 @@ class CustomerEngineV2:
                     
                     if existing:
                         return {"success": False, "error": f"O quarto {r_id} acaba de ser ocupado. Por favor, escolha outro."}
+                    
+                    # Verifica se o quarto entrou em manutenção
+                    room_obj = db.query(models.Room).get(r_id)
+                    if room_obj and room_obj.status == "manutencao":
+                        return {"success": False, "error": f"O quarto {r_id} entrou em manutenção e não pode ser reservado no momento."}
                 
                 # 2. Busca Configurações e Calcula Preço Real
                 settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
