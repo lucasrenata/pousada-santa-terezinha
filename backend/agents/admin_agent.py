@@ -695,3 +695,42 @@ Sua postura é de um gerente sênior: resolutivo, preciso e pragmático.
         import traceback
         traceback.print_exc()
         return {"response": f"Erro na orquestração suprema: {str(e)}"}
+
+def robot_cashier_history_viewer(tenant_id: int, date_str: str = None):
+    """
+    Consulta o histórico de fechamentos de caixa.
+    date_str: Data opcional no formato YYYY-MM-DD. Se omitida, traz os últimos 5 fechamentos.
+    """
+    from sqlalchemy import func
+    with SessionLocal() as db:
+        query = db.query(models.CaixaSession).filter(models.CaixaSession.tenant_id == tenant_id)
+        
+        if date_str:
+            try:
+                target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                query = query.filter(func.date(models.CaixaSession.opened_at) == target_date)
+            except:
+                pass
+        
+        # Ordenar por data de abertura (mais recente primeiro)
+        sessions = query.order_by(models.CaixaSession.opened_at.desc()).limit(10).all()
+        
+        if not sessions:
+            return {"message": "Nenhum registro de caixa encontrado para este período."}
+            
+        results = []
+        for s in sessions:
+            results.append({
+                "id": s.id,
+                "operador": s.user.full_name if s.user else "N/A",
+                "status": s.status.value,
+                "valor_abertura": f"R$ {s.opening_balance:.2f}",
+                "valor_fechamento": f"R$ {s.closing_balance:.2f}" if s.closing_balance is not None else "Aberto",
+                "horario_abertura": s.opened_at.strftime("%d/%m/%Y %H:%M:%S"),
+                "horario_fechamento": s.closed_at.strftime("%d/%m/%Y %H:%M:%S") if s.closed_at else "-"
+            })
+            
+        return {
+            "title": "Histórico de Fechamentos de Caixa",
+            "sessions": results
+        }

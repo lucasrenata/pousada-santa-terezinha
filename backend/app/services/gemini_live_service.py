@@ -65,6 +65,16 @@ class GeminiLiveService:
                 )
             ),
             types.FunctionDeclaration(
+                name="robot_cashier_history_viewer",
+                description="Consulta o histórico de fechamentos de caixa (sessões), incluindo operador, valores e horários.",
+                parameters=types.Schema(
+                    type="OBJECT",
+                    properties={
+                        "date_str": types.Schema(type="STRING", description="Data específica no formato YYYY-MM-DD para filtrar os caixas.")
+                    }
+                )
+            ),
+            types.FunctionDeclaration(
                 name="robot_pdf_reporter",
                 description="Gera relatórios PDF analíticos (financeiro, estoque ou compras).",
                 parameters=types.Schema(
@@ -116,7 +126,7 @@ class GeminiLiveService:
         from agents.admin_agent import (
             inventory_viewer_logic, room_viewer_logic, pdf_generator_logic, 
             expense_logic, pdv_session_logic, active_guests_logic,
-            room_status_logic
+            room_status_logic, robot_cashier_history_viewer
         )
         from agents.shared_tools import get_raw_analytics_logic
 
@@ -146,6 +156,9 @@ class GeminiLiveService:
                 result = room_status_logic(tenant_id, **args)
             elif name == "robot_mark_room_as_ready":
                 result = room_status_logic(tenant_id, room_id=args.get("room_id"), new_status="disponivel")
+            elif name == "robot_cashier_history_viewer":
+                result = robot_cashier_history_viewer(tenant_id=tenant_id, date_str=args.get("date_str"))
+            
             elif name == "robot_pdf_reporter":
                 result = pdf_generator_logic(tenant_id, **args)
                 if "url" in result:
