@@ -549,25 +549,26 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
         return shared_tools.get_raw_analytics_logic(tenant_id, start_date, end_date, compare_with_previous)
 
     @tool
-    def robot_generate_custom_report(title: str, sections: List[Dict[str, Any]]) -> dict:
-        """Micro-robô de PDF Flexível: Gera um relatório PDF profissional baseado na estrutura definida por você.
-        'sections' deve ser uma lista de dicionários com: title, type (page_break ou content) e components (kpis, table, analysis, pie_chart).
-        Use este robô APÓS analisar os dados com robot_get_analytics_data."""
+    def robot_dynamic_pdf_composer(title: str, sections: List[Dict[str, Any]]) -> dict:
+        """Compositor de Documentos Dinâmicos: Gera um PDF profissional e objetivo baseado na sua solicitação.
+        O cabeçalho padrão (Nome, CNPJ, Endereço) é gerado automaticamente.
+        'sections' deve conter os blocos de dados que você organizou (tabelas, KPIs, análises).
+        Use para gerar qualquer relatório específico que o usuário pedir (ex: 'Relatório de Consumo do Quarto 101', 'Balanço de Despesas de Luz')."""
         try:
-            print(f"[AI_ADMIN_LOG] Gerando PDF Analítico: {title}")
+            print(f"[AI_ADMIN_LOG] Compondo PDF Dinâmico: {title}")
             ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f"ai_analysis_{ts}.pdf"
+            filename = f"dynamic_doc_{ts}.pdf"
             path = generate_custom_ai_report(tenant_id, filename, title, sections)
             base_url = os.getenv("BASE_URL", "").rstrip("/")
             if not base_url: base_url = "/api"
             return {
                 "url": f"{base_url}/reports/{filename}" if base_url.endswith("/api") else f"{base_url}/api/reports/{filename}",
-                "message": "Relatório analítico personalizado gerado com sucesso.",
+                "message": f"Documento '{title}' gerado com sucesso.",
                 "title": title
             }
         except Exception as e:
-            print(f"[AI_ADMIN_ERROR] Falha ao gerar PDF: {str(e)}")
-            return {"error": f"Falha na geração do PDF: {str(e)}"}
+            print(f"[AI_ADMIN_ERROR] Falha na composição: {str(e)}")
+            return {"error": f"Erro ao compor o documento: {str(e)}"}
 
     # --- MEMÓRIA E DIAGNÓSTICO ---
     current_guest_id = None

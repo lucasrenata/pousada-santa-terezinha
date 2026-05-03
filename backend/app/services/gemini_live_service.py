@@ -116,6 +116,22 @@ class GeminiLiveService:
                 parameters=types.Schema(type="OBJECT", properties={})
             ),
             types.FunctionDeclaration(
+                name="robot_dynamic_pdf_composer",
+                description="Compositor de Documentos Dinâmicos: Gera um PDF profissional com o cabeçalho oficial do hotel (Nome/CNPJ). Use para relatórios específicos e objetivos pedidos pelo usuário.",
+                parameters=types.Schema(
+                    type="OBJECT",
+                    properties={
+                        "title": types.Schema(type="STRING", description="Título do documento (ex: 'Relatório de Consumo Quarto 101')"),
+                        "sections": types.Schema(
+                            type="ARRAY", 
+                            description="Lista de seções do documento (tabelas, textos, kpis).",
+                            items=types.Schema(type="OBJECT")
+                        )
+                    },
+                    required=["title", "sections"]
+                )
+            ),
+            types.FunctionDeclaration(
                 name="robot_active_guests_viewer",
                 description="Lista todos os hóspedes que estão atualmente hospedados.",
                 parameters=types.Schema(type="OBJECT", properties={})
@@ -126,7 +142,7 @@ class GeminiLiveService:
         from agents.admin_agent import (
             inventory_viewer_logic, room_viewer_logic, pdf_generator_logic, 
             expense_logic, pdv_session_logic, active_guests_logic,
-            room_status_logic, robot_cashier_history_viewer
+            room_status_logic, robot_cashier_history_viewer, robot_dynamic_pdf_composer
         )
         from agents.shared_tools import get_raw_analytics_logic
 
@@ -159,6 +175,13 @@ class GeminiLiveService:
             elif name == "robot_cashier_history_viewer":
                 result = robot_cashier_history_viewer(tenant_id=tenant_id, date_str=args.get("date_str"))
             
+            elif name == "robot_dynamic_pdf_composer":
+                result = robot_dynamic_pdf_composer(title=args.get("title"), sections=args.get("sections"))
+                if "url" in result:
+                    await client_websocket.send_json({
+                        "server_content": { "model_turn": { "parts": [{"text": f"📄 Documento Gerado: [{result['title']}]({result['url']})"}] } }
+                    })
+
             elif name == "robot_pdf_reporter":
                 result = pdf_generator_logic(tenant_id, **args)
                 if "url" in result:

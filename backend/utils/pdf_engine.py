@@ -32,7 +32,7 @@ class ProfessionalReport:
             bottomMargin=2.5*cm
         )
         self.story = []
-        self._p_name = self._get_pousada_name()
+        self._info = self._get_pousada_info()
         
         # Estilos Customizados de Alta Fidelidade
         self.styles.add(ParagraphStyle(
@@ -61,23 +61,59 @@ class ProfessionalReport:
             bulletText='•'
         ))
 
-    def _get_pousada_name(self):
+    def _get_pousada_info(self):
         db = SessionLocal()
         try:
             if self.tenant_id:
                 from database import set_tenant_context
                 set_tenant_context(db, self.tenant_id)
-            setting = db.query(models.SystemSetting).filter(models.SystemSetting.key == 'pousada_name').first()
-            return setting.value if setting else "Estabelecimento"
+            
+            # Buscar todos os dados relevantes
+            keys = ['pousada_name', 'pousada_cnpj', 'pousada_address']
+            settings = db.query(models.SystemSetting).filter(models.SystemSetting.key.in_(keys)).all()
+            info = {s.key: s.value for s in settings}
+            
+            return {
+                "name": info.get('pousada_name', 'Estabelecimento'),
+                "cnpj": info.get('pousada_cnpj', ''),
+                "address": info.get('pousada_address', '')
+            }
         finally:
             db.close()
 
     def add_header(self, subtitle=""):
-        now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-        self.story.append(Paragraph(f"<a name='TOP'/>{self.title}", self.styles['ExecTitle']))
+        now = datetime.now().strftime("%d/%m/%Y %H:%M")
+        # Nome do Estabelecimento (Grande)
+        self.story.append(Paragraph(self._info['name'].upper(), self.styles['ExecTitle']))
+        
+        # Dados do Estabelecimento (CNPJ / Endereço) - Pequeno e elegante
+        meta_text = ""
+        if self._info['cnpj']: meta_text += f"CNPJ: {self._info['cnpj']} "
+        if self._info['address']: meta_text += f"| {self._info['address']}"
+        
+        if meta_text:
+            self.story.append(Paragraph(meta_text, self.styles['ExecSubtitle']))
+        
+        self.story.append(Spacer(1, 0.4*cm))
+        
+        # Título do Relatório e Data
+        header_table_data = [[
+            Paragraph(f"<b>{self.title}</b>", self.styles['Normal']),
+            Paragraph(f"<font color='#64748b' size=8>Gerado em: {now}</font>", self.styles['Normal'])
+        ]]
+        t = Table(header_table_data, colWidths=[12*cm, 5.5*cm])
+        t.setStyle(TableStyle([
+            ('LINEBELOW', (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+        ]))
+        self.story.append(t)
+        
         if subtitle:
+            self.story.append(Spacer(1, 0.3*cm))
             self.story.append(Paragraph(subtitle, self.styles['ExecSubtitle']))
-        self.story.append(Spacer(1, 0.5*cm))
+            
+        self.story.append(Spacer(1, 0.8*cm))
 
     def add_toc(self, items):
         """Adiciona um sumário clicável."""
@@ -187,7 +223,7 @@ class ProfessionalReport:
         canvas.line(1.5*cm, 1.5*cm, A4[0]-1.5*cm, 1.5*cm)
         
         # Nome da Pousada e Data
-        canvas.drawString(1.5*cm, 1.1*cm, f"{self._p_name} - Relatório Executivo")
+        canvas.drawString(1.5*cm, 1.1*cm, f"{self._info['name']} - Relatório Executivo")
         
         # Numeração
         page_num = canvas.getPageNumber()
