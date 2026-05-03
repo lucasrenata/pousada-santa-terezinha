@@ -41,6 +41,26 @@ def convert_history_to_langchain(history: list):
 # Cada robô agora gerencia sua própria sessão de banco de dados para evitar conflitos concorrentes.
 # =============================================================================
 
+# --- NOVO: MOTOR DINÂMICO DE PDF ---
+
+def robot_dynamic_pdf_composer(tenant_id: int, title: str, sections: List[Dict[str, Any]]) -> dict:
+    """Lógica global para composição de documentos dinâmicos."""
+    try:
+        print(f"[AI_ADMIN_LOG] Compondo PDF Dinâmico: {title}")
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"dynamic_doc_{ts}.pdf"
+        path = generate_custom_ai_report(tenant_id, filename, title, sections)
+        base_url = os.getenv("BASE_URL", "").rstrip("/")
+        if not base_url: base_url = "/api"
+        return {
+            "url": f"{base_url}/reports/{filename}" if base_url.endswith("/api") else f"{base_url}/api/reports/{filename}",
+            "message": f"Documento '{title}' gerado com sucesso.",
+            "title": title
+        }
+    except Exception as e:
+        print(f"[AI_ADMIN_ERROR] Falha na composição: {str(e)}")
+        return {"error": f"Erro ao compor o documento: {str(e)}"}
+
 # --- GRUPO ESTOQUE ---
 
 def inventory_sync_logic(tenant_id: int, name: str, quantity_change: int = 0, price: float = None, category: str = None, barcode: str = "", cost_price: float = None, markup_percent: float = None) -> dict:
@@ -548,27 +568,13 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
         print(f"[AI_ADMIN_LOG] Buscando Analytics: {start_date} até {end_date}")
         return shared_tools.get_raw_analytics_logic(tenant_id, start_date, end_date, compare_with_previous)
 
-    @tool
-    def robot_dynamic_pdf_composer(title: str, sections: List[Dict[str, Any]]) -> dict:
+    @tool("robot_dynamic_pdf_composer")
+    def robot_dynamic_pdf_composer_tool(title: str, sections: List[Dict[str, Any]]) -> dict:
         """Compositor de Documentos Dinâmicos: Gera um PDF profissional e objetivo baseado na sua solicitação.
         O cabeçalho padrão (Nome, CNPJ, Endereço) é gerado automaticamente.
         'sections' deve conter os blocos de dados que você organizou (tabelas, KPIs, análises).
         Use para gerar qualquer relatório específico que o usuário pedir (ex: 'Relatório de Consumo do Quarto 101', 'Balanço de Despesas de Luz')."""
-        try:
-            print(f"[AI_ADMIN_LOG] Compondo PDF Dinâmico: {title}")
-            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f"dynamic_doc_{ts}.pdf"
-            path = generate_custom_ai_report(tenant_id, filename, title, sections)
-            base_url = os.getenv("BASE_URL", "").rstrip("/")
-            if not base_url: base_url = "/api"
-            return {
-                "url": f"{base_url}/reports/{filename}" if base_url.endswith("/api") else f"{base_url}/api/reports/{filename}",
-                "message": f"Documento '{title}' gerado com sucesso.",
-                "title": title
-            }
-        except Exception as e:
-            print(f"[AI_ADMIN_ERROR] Falha na composição: {str(e)}")
-            return {"error": f"Erro ao compor o documento: {str(e)}"}
+        return robot_dynamic_pdf_composer(tenant_id, title, sections)
 
     # --- MEMÓRIA E DIAGNÓSTICO ---
     current_guest_id = None
@@ -590,7 +596,7 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
         robot_room_viewer, robot_mark_room_as_ready,
         robot_check_availability, robot_find_guest, robot_book_with_payment,
         robot_find_booking, robot_get_payment_info, robot_confirm_payment, robot_record_knowledge,
-        robot_get_analytics_data, robot_generate_custom_report
+        robot_get_analytics_data, robot_dynamic_pdf_composer_tool
     ]
     llm_with_tools = llm.bind_tools(tools)
     
@@ -610,7 +616,7 @@ Sua postura é de um gerente sênior: resolutivo, preciso e pragmático.
 6. **ANÁLISE E RELATÓRIO**: Sempre que o usuário pedir uma análise de desempenho ou relatório personalizado:
    - Primeiro use `robot_get_analytics_data` para obter os fatos.
    - Realize uma interpretação dos dados (identifique tendências de alta/baixa).
-   - Use `robot_generate_custom_report` para criar o documento, incluindo uma seção de "Análise do Especialista" com suas conclusões.
+   - Use `robot_dynamic_pdf_composer` para criar o documento dinâmico conforme o pedido do usuário, incluindo as seções e tabelas necessárias.
    - Utilize `pie_chart` para mostrar distribuições (ex: faturamento por categoria ou produtos mais vendidos).""")
 
     def call_model(state: MessagesState):
