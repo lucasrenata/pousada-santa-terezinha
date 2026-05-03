@@ -243,46 +243,61 @@ class GeminiLiveService:
                     logger.info("🟢 receive_loop iniciado")
                     try:
                         async for response in session.receive():
-                            data = response.model_dump() if response else {}
-                            
-                            server_content = data.get("server_content")
-                            if not server_content:
-                                await client_websocket.send_json(data)
-                                if response.tool_call:
-                                    tool_responses = []
-                                    for fc in response.tool_call.function_calls:
-                                        res = await self._handle_tool_call(fc, tenant_id, client_websocket)
-                                        tool_responses.append({
-                                            "name": fc.name,
-                                            "id": fc.id,
-                                            "response": {"result": res}
-                                        })
-                                    await self._safe_send_tool_responses(session, tool_responses)
+                            if not response:
                                 continue
-
-                            model_turn = server_content.get("model_turn")
-                            if model_turn:
-                                parts = model_turn.get("parts", [])
-                                for part in parts:
-                                    inline_data = part.get("inline_data")
-                                    if inline_data and isinstance(inline_data.get("data"), bytes):
-                                        audio_bytes = inline_data["data"]
-                                        inline_data["data"] = base64.b64encode(audio_bytes).decode('utf-8')
-
-                            await client_websocket.send_json(data)
+                                
+                            # Debug: Log do tipo de resposta recebida
+                            logger.debug(f"📥 Recebido do Gemini: {type(response)}")
                             
+                            # Converter para dicionário para envio ao frontend
+                            data = response.model_dump()
+                            
+                            # 1. Processar Áudio e Conteúdo de Texto
+                            server_content = data.get("server_content")
+                            if server_content:
+                                model_turn = server_content.get("model_turn")
+                                if model_turn:
+                                    parts = model_turn.get("parts", [])
+                                    for part in parts:
+                                        inline_data = part.get("inline_data")
+                                        if inline_data and isinstance(inline_data.get("data"), bytes):
+                                            audio_bytes = inline_data["data"]
+                                            inline_data["data"] = base64.b64encode(audio_bytes).decode('utf-8')
+                                
+                                # Enviar para o cliente React
+                                await client_websocket.send_json(data)
+                            
+                            # 2. Processar Chamadas de Ferramentas (Tool Calls)
+                            # Nota: tool_call pode vir junto ou separado de server_content
                             if response.tool_call:
+                                logger.info(f"🔧 Tool Call detectada: {len(response.tool_call.function_calls)} chamadas")
+                                
+                                # Se não enviamos o JSON ainda (porque não tinha server_content), enviamos agora
+                                if not server_content:
+                                    await client_websocket.send_json(data)
+                                    
                                 tool_responses = []
                                 for fc in response.tool_call.function_calls:
                                     res = await self._handle_tool_call(fc, tenant_id, client_websocket)
-                                    tool_responses.append({
-                                        "name": fc.name,
-                                        "id": fc.id,
-                                        "response": {"result": res}
-                                    })
-                                await self._safe_send_tool_responses(session, tool_responses)
+                                    # Sanitizar resultado para garantir que é JSON serializável
+                                    sanitized_res = self._sanitize_result(res)
+                                    
+                                    tool_responses.append(types.LiveClientFunctionResponse(
+                                        name=fc.name,
+                                        id=fc.id,
+                                        response={"result": sanitized_res}
+                                    ))
+                                
+                                # Enviar respostas de volta para o Gemini
+                                if tool_responses:
+                                    logger.info(f"📤 Enviando {len(tool_responses)} respostas de ferramentas")
+                                    await session.send(input=types.LiveClientInput(
+                                        function_responses=tool_responses
+                                    ))
+                                    logger.info("✅ Respostas de ferramentas enviadas.")
+
                     except Exception as e:
-                        logger.warning(f"⚠️ receive_loop erro/encerrou: {e}")
+                        logger.warning(f"⚠️ receive_loop interrompido por erro: {e}", exc_info=True)
                     finally:
                         logger.info("🔴 receive_loop finalizado")
 
