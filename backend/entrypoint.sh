@@ -43,8 +43,8 @@ python -c "
 import os
 from sqlalchemy import text, create_engine
 
-# Usamos a conexão principal do sistema, que possui privilégios de owner do DB no container
-admin_url = os.getenv('DATABASE_URL')
+# Usamos a conexão administrativa se disponível, caso contrário a principal
+admin_url = os.getenv('DATABASE_ADMIN_URL') or os.getenv('DATABASE_URL')
 engine = create_engine(admin_url)
 
 sql_dir = 'sql'
