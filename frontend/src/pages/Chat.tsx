@@ -3,13 +3,7 @@ import { Send, User, Check, AlertCircle, Mic, Square } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import api from '../services/api';
 import { Card, CardContent } from '../components/ui/card';
-
-interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: Date;
-}
+import { HolographicAssistant } from '../components/admin/HolographicAssistant';
 
 export default function Chat() {
   const [message, setMessage] = useState('');
@@ -20,6 +14,7 @@ export default function Chat() {
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const tenantId = localStorage.getItem('tenant_id') ? Number(localStorage.getItem('tenant_id')) : 1;
 
   useEffect(() => {
     let sid = localStorage.getItem('chat_session_admin');
@@ -33,7 +28,6 @@ export default function Chat() {
 
   const loadHistory = async (sid: string) => {
     try {
-      const tenantId = localStorage.getItem('tenant_id') ? Number(localStorage.getItem('tenant_id')) : 1;
       const res = await api.get(`/chat/history/${sid}`, { params: { tenant_id: tenantId } });
       setMessages(res.data.map((m: any) => ({
         ...m,
@@ -67,9 +61,6 @@ export default function Chat() {
     setLoading(true);
 
     try {
-      const tenantId = localStorage.getItem('tenant_id') ? Number(localStorage.getItem('tenant_id')) : 0;
-      
-      // 1. Dispara a tarefa no Redis
       const res = await api.post('/chat/admin', {
         message: userMsg.content,
         session_id: sessionId,
@@ -78,7 +69,6 @@ export default function Chat() {
 
       const { job_id } = res.data;
 
-      // 2. Polling de Status
       const pollJob = async () => {
         try {
           const statusRes = await api.get(`/chat/job/${job_id}`);
@@ -96,7 +86,7 @@ export default function Chat() {
           } else if (status === 'failed') {
             throw new Error(error || "Erro no processamento do Admin Agent");
           } else {
-            setTimeout(pollJob, 2000); // Tenta novamente em 2s
+            setTimeout(pollJob, 2000);
           }
         } catch (err) {
           console.error("Erro no polling Admin:", err);
@@ -130,17 +120,14 @@ export default function Chat() {
       const recorder = new MediaRecorder(stream);
       mediaRecorderRef.current = recorder;
       audioChunksRef.current = [];
-
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) audioChunksRef.current.push(e.data);
       };
-
       recorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         await handleTranscription(audioBlob);
         stream.getTracks().forEach(track => track.stop());
       };
-
       recorder.start();
       setIsRecording(true);
     } catch (err) {
@@ -161,11 +148,9 @@ export default function Chat() {
     try {
       const formData = new FormData();
       formData.append('audio', blob, 'recording.webm');
-
       const res = await api.post('/chat/transcribe', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-
       if (res.data.text) {
         await handleSend(undefined, res.data.text);
       }
@@ -177,131 +162,143 @@ export default function Chat() {
     }
   };
 
+  const handleLiveTranscription = (text: string, role: 'user' | 'assistant') => {
+    setMessages(prev => {
+      const lastMsg = prev[prev.length - 1];
+      const now = new Date();
+      
+      // Se a última mensagem for do mesmo papel e for recente
+      if (lastMsg && lastMsg.role === role && (now.getTime() - lastMsg.timestamp.getTime() < 5000)) {
+        // Se o novo texto contiver o anterior (incremental), substitui
+        if (text.startsWith(lastMsg.content)) {
+          return [...prev.slice(0, -1), { ...lastMsg, content: text, timestamp: now }];
+        }
+        // Se for um link ou um texto diferente, anexa ou cria nova
+        if (text.includes('](')) { // É um link markdown
+           return [...prev, { id: 'live-' + now.getTime(), role, content: text, timestamp: now }];
+        }
+        // Caso contrário, apenas atualiza para manter a fluidez da fala
+        return [...prev.slice(0, -1), { ...lastMsg, content: text, timestamp: now }];
+      }
+      
+      return [...prev, {
+        id: 'live-' + now.getTime(),
+        role: role,
+        content: text,
+        timestamp: now
+      }];
+    });
+  };
+
   return (
-    <div className="flex flex-col h-[calc(100dvh-100px)] sm:h-[calc(100vh-120px)] max-w-5xl mx-auto space-y-4 px-2 sm:px-0">
-      <div>
-        <h2 className="text-3xl font-black text-slate-900 tracking-tight">Assistente Administrativo</h2>
-        <p className="text-slate-500 font-medium">Relatórios, estoque e gestão inteligente via IA</p>
+    <div className="flex flex-col h-[calc(100dvh-80px)] sm:h-[calc(100vh-100px)] w-full max-w-[1600px] mx-auto p-4 space-y-6">
+      <div className="flex justify-between items-end">
+        <div>
+          <h2 className="text-4xl font-black text-slate-900 tracking-tight">Centro de Comando</h2>
+          <p className="text-slate-500 font-medium">Gestão Administrativa Holográfica & Relatórios</p>
+        </div>
+        <div className="hidden md:flex gap-4 px-2">
+          <div className="flex items-center gap-2 text-xs text-slate-400 font-medium bg-white px-3 py-1.5 rounded-full shadow-sm border">
+            <Check size={14} className="text-green-500" /> IA Ativada
+          </div>
+          <div className="flex items-center gap-2 text-xs text-slate-400 font-medium bg-white px-3 py-1.5 rounded-full shadow-sm border">
+             <AlertCircle size={14} className="text-indigo-500" /> Admin Live Mode
+          </div>
+        </div>
       </div>
 
-      <Card className="flex-1 flex flex-col shadow-xl border-slate-200 overflow-hidden bg-slate-50/50">
-        {/* Mensagens */}
-        <div 
-          ref={scrollRef}
-          className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 scroll-smooth"
-        >
-          {messages.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full text-center space-y-4 animate-in fade-in zoom-in duration-500">
-              <div className="p-4 bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden w-24 h-24 flex items-center justify-center">
-                <img src="/ai-avatar.jpg" alt="AI Robot" className="w-full h-full object-cover" />
-              </div>
-              <div>
-                <h3 className="font-bold text-slate-800 text-lg">Olá Admin! Como posso ajudar?</h3>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 flex-1 overflow-hidden">
+        {/* Coluna Esquerda: Holograma */}
+        <div className="flex flex-col h-full">
+          <HolographicAssistant 
+            tenantId={tenantId} 
+            onTranscription={handleLiveTranscription}
+          />
+          
+          {/* Quick Stats or Info below Hologram */}
+          <div className="mt-6 grid grid-cols-3 gap-4">
+             <div className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm">
+                <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">Status</p>
+                <p className="text-sm font-bold text-slate-800">Operacional</p>
+             </div>
+             <div className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm">
+                <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">Voz</p>
+                <p className="text-sm font-bold text-slate-800">Ana v2.5</p>
+             </div>
+             <div className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm">
+                <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">Latência</p>
+                <p className="text-sm font-bold text-green-500">Ultra-Baixa</p>
+             </div>
+          </div>
+        </div>
+
+        {/* Coluna Direita: Chat */}
+        <Card className="flex flex-col shadow-2xl border-slate-200 overflow-hidden bg-white/80 backdrop-blur-sm h-full rounded-[2rem]">
+          <div 
+            ref={scrollRef}
+            className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 scroll-smooth"
+          >
+            {messages.length === 0 && (
+              <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
+                <div className="p-4 bg-slate-50 rounded-3xl border border-slate-100 w-24 h-24 flex items-center justify-center">
+                  <img src="/ai-avatar.jpg" alt="AI Robot" className="w-full h-full object-cover rounded-2xl" />
+                </div>
+                <h3 className="font-bold text-slate-800 text-lg">Histórico de Relatórios</h3>
                 <p className="text-sm text-slate-500 max-w-xs">
-                  Posso gerar relatórios financeiros, verificar estoque, consultar reservas e mais.
+                  As respostas detalhadas e documentos gerados pela Ana aparecerão aqui.
                 </p>
               </div>
-            </div>
-          )}
+            )}
 
-          {messages.map((m) => (
-            <div 
-              key={m.id} 
-              className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-2 duration-300`}
-            >
-              <div className={`flex gap-3 max-w-[90%] sm:max-w-[80%] ${m.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden ${
-                  m.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-white border text-slate-600 shadow-sm'
-                }`}>
-                  {m.role === 'user' ? <User size={16} /> : <img src="/ai-avatar.jpg" alt="Bot" className="w-full h-full object-cover" />}
-                </div>
-                <div className={`p-4 rounded-2xl text-sm leading-relaxed shadow-sm ${
-                  m.role === 'user' 
-                    ? 'bg-indigo-600 text-white rounded-tr-none' 
-                    : 'bg-white text-slate-800 rounded-tl-none border border-slate-100'
-                }`}>
-                  <ReactMarkdown 
-                    components={{
-                      a: ({ node, ...props }: any) => {
-                        const href = props.href?.startsWith('http') ? props.href : (props.href?.startsWith('/') ? props.href : `https://${props.href}`);
-                        return (
-                          <a 
-                            href={href}
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-2 mt-2 bg-indigo-50 text-indigo-700 px-4 py-2 rounded-lg font-bold border border-indigo-200 hover:bg-indigo-100 transition-all no-underline shadow-sm mb-1"
-                          >
+            {messages.map((m) => (
+              <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-2`}>
+                <div className={`flex gap-3 max-w-[90%] ${m.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                  <div className={`p-4 rounded-2xl text-sm shadow-sm ${
+                    m.role === 'user' 
+                      ? 'bg-indigo-600 text-white rounded-tr-none' 
+                      : 'bg-slate-50 text-slate-800 rounded-tl-none border border-slate-100'
+                  }`}>
+                    <ReactMarkdown 
+                      components={{
+                        a: ({ node, ...props }: any) => (
+                          <a href={props.href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 mt-2 bg-white text-indigo-700 px-4 py-2 rounded-lg font-bold border border-indigo-200 hover:bg-indigo-50 transition-all no-underline shadow-sm mb-1">
                             <span>📄</span> {props.children}
                           </a>
-                        );
-                      },
-                      p: ({ children }: any) => <p className="mb-0 whitespace-pre-wrap">{children}</p>
-                    }}
-                  >
-                    {m.content}
-                  </ReactMarkdown>
-                  <span className={`text-[10px] mt-2 block opacity-50 ${m.role === 'user' ? 'text-right' : 'text-left'}`}>
-                    {m.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
+                        ),
+                        p: ({ children }: any) => <p className="mb-0 whitespace-pre-wrap">{children}</p>
+                      }}
+                    >
+                      {m.content}
+                    </ReactMarkdown>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            ))}
+            {loading && <div className="text-xs text-slate-400 italic">Ana está processando...</div>}
+          </div>
 
-          {loading && (
-            <div className="flex justify-start animate-pulse">
-              <div className="bg-white border border-slate-100 p-4 rounded-2xl rounded-tl-none shadow-sm flex gap-2">
-                <div className="w-2 h-2 bg-slate-300 rounded-full animate-bounce" />
-                <div className="w-2 h-2 bg-slate-300 rounded-full animate-bounce delay-100" />
-                <div className="w-2 h-2 bg-slate-300 rounded-full animate-bounce delay-200" />
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Input */}
-        <CardContent className="p-3 sm:p-4 bg-white border-t border-slate-100">
-          <form onSubmit={(e) => handleSend(e)} className="flex gap-2 sm:gap-3">
-            <input
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              placeholder={isRecording ? "Ouvindo..." : "Solicite um relatório, dados de estoque, reservas..."}
-              className={`flex-1 bg-slate-50 border-none rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${isRecording ? 'animate-pulse ring-2 ring-red-500' : ''}`}
-            />
-            
-            <button
-              type="button"
-              onClick={isRecording ? stopRecording : startRecording}
-              disabled={loading}
-              className={`p-3 rounded-xl shadow-lg transition-all ${
-                isRecording 
-                  ? 'bg-red-500 text-white animate-pulse' 
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              {isRecording ? <Square size={20} /> : <Mic size={20} />}
-            </button>
-
-            <button
-              type="submit"
-              disabled={loading || !message.trim() || isRecording}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white p-3 rounded-xl shadow-lg shadow-indigo-200 transition-all disabled:opacity-50 disabled:shadow-none"
-            >
-              <Send size={20} />
-            </button>
-          </form>
-        </CardContent>
-      </Card>
-      
-      {/* Footer Tips */}
-      <div className="flex flex-wrap gap-4 px-2">
-        <div className="flex items-center gap-2 text-xs text-slate-400 font-medium">
-          <Check size={14} className="text-green-500" /> IA do Sistema Ativada
-        </div>
-        <div className="flex items-center gap-2 text-xs text-slate-400 font-medium">
-           <AlertCircle size={14} className="text-indigo-500" /> Assistente Administrativo
-        </div>
+          <CardContent className="p-4 bg-slate-50/50 border-t border-slate-100">
+            <form onSubmit={(e) => handleSend(e)} className="flex gap-2">
+              <input
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                placeholder="Digite aqui ou fale com a Ana ao lado..."
+                className="flex-1 bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+              />
+              <button type="submit" disabled={loading || !message.trim()} className="bg-indigo-600 hover:bg-indigo-700 text-white p-3 rounded-2xl shadow-lg transition-all disabled:opacity-50">
+                <Send size={20} />
+              </button>
+            </form>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
+}
+
+interface Message {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: Date;
 }

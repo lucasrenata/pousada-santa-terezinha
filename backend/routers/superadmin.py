@@ -20,7 +20,7 @@ def get_public_pricing(db: Session = Depends(get_db)):
         models.SystemSetting.tenant_id == platform_tenant_id,
         models.SystemSetting.key == "platform_setup_fee"
     ).first()
-    setup_fee = float(fee_setting.value) if fee_setting else 49.90
+    setup_fee = float(fee_setting.value) if fee_setting else 450.00
     
     return {"setup_fee": setup_fee}
 
@@ -191,7 +191,7 @@ def get_platform_config(db: Session = Depends(get_db), current_user: models.User
         models.SystemSetting.tenant_id == current_user.tenant_id,
         models.SystemSetting.key == "platform_setup_fee"
     ).first()
-    fee = float(fee_setting.value) if fee_setting else 49.90
+    fee = float(fee_setting.value) if fee_setting else 450.00
 
     config = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_id == current_user.tenant_id).first()
     if not config:

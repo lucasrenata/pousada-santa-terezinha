@@ -32,26 +32,29 @@ api.interceptors.response.use(
         
         if (response.status === 200 || response.status === 201) {
           const { access_token } = response.data;
-          
-          // Salva o novo token e tenta a requisição original novamente
           localStorage.setItem('token', access_token);
           if (originalRequest.headers) {
              originalRequest.headers.Authorization = `Bearer ${access_token}`;
           }
           return api(originalRequest);
         }
-      } catch (refreshError) {
-        console.error("Sessão expirada. Redirecionando para login...");
+      } catch (refreshError: any) {
+        // Só redireciona se for erro de autenticação (401/403)
+        // Se for erro de rede (servidor reiniciando), NÃO desloga o usuário.
+        const isAuthError = refreshError.response?.status === 401 || refreshError.response?.status === 403;
         
-        // Evita redirecionar se estiver em uma rota que deve ser pública (Guest Chat / Atendimento)
-        const publicRoutes = ['/atendimento', '/registrar', '/book'];
-        const isPublicRoute = publicRoutes.some(route => window.location.pathname.includes(route));
+        if (isAuthError) {
+          console.error("Sessão expirada. Redirecionando para login...");
+          const publicRoutes = ['/atendimento', '/registrar', '/book'];
+          const isPublicRoute = publicRoutes.some(route => window.location.pathname.includes(route));
 
-        if (!isPublicRoute) {
-          localStorage.removeItem('token');
-          localStorage.removeItem('role');
-          localStorage.removeItem('tenant_id');
-          window.location.href = '/login';
+          if (!isPublicRoute) {
+            localStorage.removeItem('token');
+            localStorage.removeItem('role');
+            localStorage.removeItem('tenant_id');
+            // Só redireciona se não houver um token válido (evita loop de refresh)
+            window.location.href = '/login?expired=true';
+          }
         }
         
         return Promise.reject(refreshError);

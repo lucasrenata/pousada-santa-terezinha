@@ -367,6 +367,34 @@ def pdf_generator_logic(tenant_id: int, report_type: str, mode: str = "full", st
         
         return {"error": "Tipo de relatório inválido."}
 
+def pdv_session_logic(tenant_id: int) -> dict:
+    """Lógica para listar caixas abertos e seus respectivos operadores."""
+    with SessionLocal() as db:
+        set_tenant_context(db, tenant_id)
+        sessions = db.query(models.CaixaSession).filter(models.CaixaSession.status == models.CaixaStatus.ABERTO).all()
+        return {
+            "count": len(sessions),
+            "sessions": [{
+                "operador": s.user.full_name or s.user.username,
+                "abertura": s.opened_at.strftime("%H:%M"),
+                "saldo_inicial": s.opening_balance
+            } for s in sessions]
+        }
+
+def active_guests_logic(tenant_id: int) -> dict:
+    """Lógica para listar hóspedes que estão atualmente no hotel (status ATIVO)."""
+    with SessionLocal() as db:
+        set_tenant_context(db, tenant_id)
+        active_bookings = db.query(models.Booking).filter(models.Booking.status == models.BookingStatus.ATIVO).all()
+        return {
+            "count": len(active_bookings),
+            "guests": [{
+                "nome": b.guest.name,
+                "quarto": b.room_id,
+                "check_in": b.real_check_in.strftime("%d/%m %H:%M") if b.real_check_in else "N/A"
+            } for b in active_bookings]
+        }
+
 def event_manager_logic(tenant_id: int, action: str = "query") -> dict:
     """Lógica atômica para consulta de inteligência de mercado/eventos."""
     with SessionLocal() as db:

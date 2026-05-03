@@ -5,7 +5,7 @@ echo "🚀 [DEPLOY] Iniciando processo de inicialização do sistema..."
 
 # 1. Esperar o Banco de Dados ficar pronto
 echo "⏳ Aguardando conexão com o Banco de Dados..."
-until python -c "import socket; s = socket.socket(socket.getaddrinfo('pousada_db', 5432)[0][0], socket.getaddrinfo('pousada_db', 5432)[0][1]); s.connect(('pousada_db', 5432)); s.close()" ; do
+until python -c "import socket; s = socket.socket(socket.getaddrinfo('db', 5432)[0][0], socket.getaddrinfo('db', 5432)[0][1]); s.connect(('db', 5432)); s.close()" ; do
   echo "😴 Banco ainda dormindo... esperando 2 segundos."
   sleep 2
 done
