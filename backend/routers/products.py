@@ -63,7 +63,8 @@ def list_products(
 
 @router.get("/categories", response_model=List[schemas.ProductCategoryResponse])
 def list_categories(db: Session = Depends(get_db), user = Depends(get_current_staff)):
-    set_tenant_context(db, user.get("tenant_id") if isinstance(user, dict) else user.tenant_id)
+    tid = user.get("tenant_id") if isinstance(user, dict) else user.tenant_id
+    set_tenant_context(db, tid)
     cats = db.query(models.ProductCategory).all()
     if not cats:
         # Inicializa categorias padrão se estiver vazio
