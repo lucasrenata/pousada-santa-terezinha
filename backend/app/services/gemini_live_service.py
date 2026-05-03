@@ -213,13 +213,16 @@ class GeminiLiveService:
             async with self.client.aio.live.connect(model=self.model_name, config=config) as session:
                 logger.info(f"✅ Conexão Live SDK Estabelecida para tenant {tenant_id}")
 
+                session_active = True
                 async def send_loop():
+                    nonlocal session_active
                     logger.info("🟢 send_loop iniciado")
                     try:
-                        while True:
+                        while session_active:
                             message = await client_websocket.receive()
                             if message["type"] == "websocket.disconnect":
                                 logger.info("🔌 send_loop: Cliente desconectou.")
+                                session_active = False
                                 break
                             
                             if "text" in message:
@@ -240,10 +243,10 @@ class GeminiLiveService:
                         logger.info("🔴 send_loop finalizado")
 
                 async def receive_loop():
+                    nonlocal session_active
                     logger.info("🟢 receive_loop iniciado")
                     try:
-                        # Usamos um loop externo para o caso de o gerador de stream fechar mas a sessão continuar aberta
-                        while isActive and socketRef.current and socketRef.current.readyState == WebSocket.OPEN:
+                        while session_active:
                             try:
                                 async for response in session.receive():
                                     if not response:
@@ -295,10 +298,11 @@ class GeminiLiveService:
                                 # Se o async for terminar normalmente, damos um pequeno break e tentamos de novo
                                 # a menos que a sessão tenha sido fechada
                                 await asyncio.sleep(0.1)
-                                if not isActive: break
+                                if not session_active: break
 
                             except Exception as e:
-                                if "closed" in str(e).lower():
+                                if "closed" in str(e).lower() or "1000" in str(e) or "1006" in str(e):
+                                    session_active = False
                                     break
                                 logger.warning(f"⚠️ Erro no stream receive: {e}")
                                 await asyncio.sleep(1)
@@ -306,6 +310,7 @@ class GeminiLiveService:
                     except Exception as e:
                         logger.warning(f"⚠️ receive_loop fatal error: {e}", exc_info=True)
                     finally:
+                        session_active = False
                         logger.info("🔴 receive_loop finalizado")
 
                 # Executa ambos e para assim que o primeiro terminar
