@@ -279,21 +279,17 @@ class GeminiLiveService:
                                 tool_responses = []
                                 for fc in response.tool_call.function_calls:
                                     res = await self._handle_tool_call(fc, tenant_id, client_websocket)
-                                    # Sanitizar resultado para garantir que é JSON serializável
                                     sanitized_res = self._sanitize_result(res)
                                     
-                                    tool_responses.append(types.LiveClientFunctionResponse(
-                                        name=fc.name,
-                                        id=fc.id,
-                                        response={"result": sanitized_res}
-                                    ))
+                                    tool_responses.append({
+                                        "name": fc.name,
+                                        "id": fc.id,
+                                        "response": {"result": sanitized_res}
+                                    })
                                 
-                                # Enviar respostas de volta para o Gemini
                                 if tool_responses:
                                     logger.info(f"📤 Enviando {len(tool_responses)} respostas de ferramentas")
-                                    await session.send(input=types.LiveClientInput(
-                                        function_responses=tool_responses
-                                    ))
+                                    await session.send(input={"function_responses": tool_responses})
                                     logger.info("✅ Respostas de ferramentas enviadas.")
 
                     except Exception as e:
