@@ -268,7 +268,11 @@ def pdf_generator_logic(tenant_id: int, report_type: str, mode: str = "full", st
     """Lógica atômica e motor de geração de arquivos PDF analíticos."""
     with SessionLocal() as db:
         set_tenant_context(db, tenant_id)
-        base_url = os.getenv("BASE_URL", "/api")
+        # Obter URL base do ambiente ou fallback seguro
+        base_url = os.getenv("BASE_URL", "").rstrip("/")
+        if not base_url:
+            base_url = "/api" # Fallback local
+            
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
         
         # Filtros de Data
@@ -337,7 +341,7 @@ def pdf_generator_logic(tenant_id: int, report_type: str, mode: str = "full", st
             filename = f"finance_{ts}.pdf"
             generate_financial_report(data, filename, tenant_id=tenant_id, mode=mode)
             return {
-                "url": f"{base_url}/reports/{filename}", 
+                "url": f"{base_url}/reports/{filename}" if base_url.endswith("/api") else f"{base_url}/api/reports/{filename}", 
                 "message": f"Relatório financeiro ({mode}) gerado com sucesso.",
                 "title": "Relatório Financeiro"
             }
@@ -348,7 +352,7 @@ def pdf_generator_logic(tenant_id: int, report_type: str, mode: str = "full", st
             filename = f"stock_{ts}.pdf"
             generate_inventory_report(data, filename, tenant_id=tenant_id)
             return {
-                "url": f"{base_url}/reports/{filename}",
+                "url": f"{base_url}/reports/{filename}" if base_url.endswith("/api") else f"{base_url}/api/reports/{filename}",
                 "message": "Relatório de estoque gerado.",
                 "title": "Relatório de Estoque"
             }
@@ -360,7 +364,7 @@ def pdf_generator_logic(tenant_id: int, report_type: str, mode: str = "full", st
             filename = f"shopping_{ts}.pdf"
             generate_shopping_list_report(data, filename, tenant_id=tenant_id)
             return {
-                "url": f"{base_url}/reports/{filename}",
+                "url": f"{base_url}/reports/{filename}" if base_url.endswith("/api") else f"{base_url}/api/reports/{filename}",
                 "message": "Lista de compras gerada com base no estoque crítico.",
                 "title": "Lista de Compras"
             }
@@ -554,9 +558,10 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
             ts = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = f"ai_analysis_{ts}.pdf"
             path = generate_custom_ai_report(tenant_id, filename, title, sections)
-            base_url = os.getenv("BASE_URL", "/api")
+            base_url = os.getenv("BASE_URL", "").rstrip("/")
+            if not base_url: base_url = "/api"
             return {
-                "url": f"{base_url}/reports/{filename}",
+                "url": f"{base_url}/reports/{filename}" if base_url.endswith("/api") else f"{base_url}/api/reports/{filename}",
                 "message": "Relatório analítico personalizado gerado com sucesso.",
                 "title": title
             }
