@@ -178,6 +178,13 @@ class GeminiLiveService:
         try:
             if name == "robot_inventory_viewer":
                 result = inventory_viewer_logic(tenant_id, **args)
+                if isinstance(result, list) and len(result) > 0:
+                    md = "### 📦 Status do Estoque\n"
+                    md += "| Produto | Qtd Atual | Mínimo | Status |\n| :--- | :--- | :--- | :--- |\n"
+                    for p in result:
+                        status = "✅ OK" if p['stock'] >= p['min_stock'] else "⚠️ BAIXO"
+                        md += f"| {p['name']} | {p['stock']} | {p['min_stock']} | {status} |\n"
+                    await client_websocket.send_json({"server_content": {"model_turn": {"parts": [{"text": md}]}}})
             elif name == "robot_room_viewer":
                 result = room_viewer_logic(tenant_id, **args)
             elif name == "robot_room_status_manager":
@@ -186,9 +193,26 @@ class GeminiLiveService:
                 result = room_status_logic(tenant_id, room_id=args.get("room_id"), new_status="disponivel")
             elif name == "robot_cashier_history_viewer":
                 result = robot_cashier_history_viewer(tenant_id=tenant_id, date_str=args.get("date_str"))
+                if "sessions" in result:
+                    md = "### 🏦 Histórico de Caixas\n"
+                    md += "| ID | Operador | Abertura | Fechamento | Status |\n| :--- | :--- | :--- | :--- | :--- |\n"
+                    for s in result['sessions']:
+                        md += f"| {s['id']} | {s['operador']} | {s['valor_abertura']} | {s['valor_fechamento']} | {s['status']} |\n"
+                    await client_websocket.send_json({"server_content": {"model_turn": {"parts": [{"text": md}]}}})
             
             elif name == "robot_room_occupancy_details":
                 result = room_occupancy_details_logic(tenant_id=tenant_id, room_id=args.get("room_id"))
+                if "quarto" in result:
+                    md = f"### 📑 Extrato Quarto {result['quarto']}\n"
+                    md += f"**Hóspede:** {result['hospede_principal']}\n"
+                    md += f"**Período:** {result['check_in']} até {result['check_out_previsto']}\n\n"
+                    if result['consumos']:
+                        md += "| Item | Qtd | Preço | Subtotal |\n| :--- | :--- | :--- | :--- |\n"
+                        for c in result['consumos']:
+                            md += f"| {c['item']} | {c['quantidade']} | {c['preco_unitario']} | {c['subtotal']} |\n"
+                    resumo = result['resumo_financeiro']
+                    md += f"\n**💰 TOTAL PARCIAL: {resumo['valor_total_parcial']}**"
+                    await client_websocket.send_json({"server_content": {"model_turn": {"parts": [{"text": md}]}}})
             
             elif name == "robot_dynamic_pdf_composer":
                 result = robot_dynamic_pdf_composer(title=args.get("title"), sections=args.get("sections"))
@@ -211,6 +235,12 @@ class GeminiLiveService:
                 result = pdv_session_logic(tenant_id)
             elif name == "robot_active_guests_viewer":
                 result = active_guests_logic(tenant_id)
+                if isinstance(result, list) and len(result) > 0:
+                    md = "### 👤 Hóspedes Ativos\n"
+                    md += "| Quarto | Hóspede | Check-in |\n| :--- | :--- | :--- |\n"
+                    for g in result:
+                        md += f"| {g['room_id']} | {g['guest_name']} | {g['check_in']} |\n"
+                    await client_websocket.send_json({"server_content": {"model_turn": {"parts": [{"text": md}]}}})
         except Exception as e:
             logger.error(f"Erro na ferramenta {name}: {e}")
             result = {"error": str(e)}
