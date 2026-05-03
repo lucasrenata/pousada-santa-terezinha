@@ -74,5 +74,5 @@ if [ "$#" -gt 0 ]; then
     exec "$@"
 else
     echo "🚀 Iniciando Uvicorn..."
-    exec uvicorn main:app --host 0.0.0.0 --port 8000 --proxy-headers
+    exec uvicorn main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'
 fi
