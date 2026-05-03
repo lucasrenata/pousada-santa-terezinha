@@ -242,58 +242,69 @@ class GeminiLiveService:
                 async def receive_loop():
                     logger.info("🟢 receive_loop iniciado")
                     try:
-                        async for response in session.receive():
-                            if not response:
-                                continue
-                                
-                            # Debug: Log do tipo de resposta recebida
-                            logger.debug(f"📥 Recebido do Gemini: {type(response)}")
-                            
-                            # Converter para dicionário para envio ao frontend
-                            data = response.model_dump()
-                            
-                            # 1. Processar Áudio e Conteúdo de Texto
-                            server_content = data.get("server_content")
-                            if server_content:
-                                model_turn = server_content.get("model_turn")
-                                if model_turn:
-                                    parts = model_turn.get("parts", [])
-                                    for part in parts:
-                                        inline_data = part.get("inline_data")
-                                        if inline_data and isinstance(inline_data.get("data"), bytes):
-                                            audio_bytes = inline_data["data"]
-                                            inline_data["data"] = base64.b64encode(audio_bytes).decode('utf-8')
-                                
-                                # Enviar para o cliente React
-                                await client_websocket.send_json(data)
-                            
-                            # 2. Processar Chamadas de Ferramentas (Tool Calls)
-                            # Nota: tool_call pode vir junto ou separado de server_content
-                            if response.tool_call:
-                                logger.info(f"🔧 Tool Call detectada: {len(response.tool_call.function_calls)} chamadas")
-                                
-                                # Se não enviamos o JSON ainda (porque não tinha server_content), enviamos agora
-                                if not server_content:
-                                    await client_websocket.send_json(data)
+                        # Usamos um loop externo para o caso de o gerador de stream fechar mas a sessão continuar aberta
+                        while isActive and socketRef.current and socketRef.current.readyState == WebSocket.OPEN:
+                            try:
+                                async for response in session.receive():
+                                    if not response:
+                                        continue
+                                        
+                                    logger.debug(f"📥 Mensagem recebida do Gemini")
+                                    data = response.model_dump()
                                     
-                                tool_responses = []
-                                for fc in response.tool_call.function_calls:
-                                    res = await self._handle_tool_call(fc, tenant_id, client_websocket)
-                                    sanitized_res = self._sanitize_result(res)
+                                    # 1. Processar Conteúdo (Áudio/Texto)
+                                    server_content = data.get("server_content")
+                                    if server_content:
+                                        model_turn = server_content.get("model_turn")
+                                        if model_turn:
+                                            parts = model_turn.get("parts", [])
+                                            for part in parts:
+                                                inline_data = part.get("inline_data")
+                                                if inline_data and isinstance(inline_data.get("data"), bytes):
+                                                    audio_bytes = inline_data["data"]
+                                                    inline_data["data"] = base64.b64encode(audio_bytes).decode('utf-8')
+                                        
+                                        await client_websocket.send_json(data)
                                     
-                                    tool_responses.append({
-                                        "name": fc.name,
-                                        "id": fc.id,
-                                        "response": {"result": sanitized_res}
-                                    })
+                                    # 2. Processar Ferramentas
+                                    if response.tool_call:
+                                        logger.info(f"🔧 Processando Tool Call...")
+                                        if not server_content:
+                                            await client_websocket.send_json(data)
+                                            
+                                        tool_responses = []
+                                        for fc in response.tool_call.function_calls:
+                                            res = await self._handle_tool_call(fc, tenant_id, client_websocket)
+                                            sanitized_res = self._sanitize_result(res)
+                                            
+                                            # Debug especial para URL
+                                            if isinstance(sanitized_res, dict) and "url" in sanitized_res:
+                                                logger.info(f"🔗 URL Gerada: {sanitized_res['url']}")
+
+                                            tool_responses.append({
+                                                "name": fc.name,
+                                                "id": fc.id,
+                                                "response": {"result": sanitized_res}
+                                            })
+                                        
+                                        if tool_responses:
+                                            logger.info(f"📤 Enviando respostas ({len(tool_responses)})")
+                                            await session.send(input={"function_responses": tool_responses})
+                                            logger.info("✅ Respostas enviadas com sucesso.")
                                 
-                                if tool_responses:
-                                    logger.info(f"📤 Enviando {len(tool_responses)} respostas de ferramentas")
-                                    await session.send(input={"function_responses": tool_responses})
-                                    logger.info("✅ Respostas de ferramentas enviadas.")
+                                # Se o async for terminar normalmente, damos um pequeno break e tentamos de novo
+                                # a menos que a sessão tenha sido fechada
+                                await asyncio.sleep(0.1)
+                                if not isActive: break
+
+                            except Exception as e:
+                                if "closed" in str(e).lower():
+                                    break
+                                logger.warning(f"⚠️ Erro no stream receive: {e}")
+                                await asyncio.sleep(1)
 
                     except Exception as e:
-                        logger.warning(f"⚠️ receive_loop interrompido por erro: {e}", exc_info=True)
+                        logger.warning(f"⚠️ receive_loop fatal error: {e}", exc_info=True)
                     finally:
                         logger.info("🔴 receive_loop finalizado")
 

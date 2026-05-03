@@ -40,6 +40,7 @@ async def health() -> dict[str, str]:
 
 app.include_router(api_router, prefix="/api/v1")
 
-# Servir arquivos estáticos (uploads)
+# Servir arquivos estáticos (uploads e reports)
 app.mount("/static", StaticFiles(directory="uploads"), name="static")
+app.mount("/api/reports", StaticFiles(directory="reports"), name="reports")
 
