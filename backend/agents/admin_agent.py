@@ -41,6 +41,55 @@ def convert_history_to_langchain(history: list):
 # Cada robô agora gerencia sua própria sessão de banco de dados para evitar conflitos concorrentes.
 # =============================================================================
 
+def room_occupancy_details_logic(tenant_id: int, room_id: str) -> dict:
+    """Retorna detalhes completos da ocupação atual de um quarto."""
+    with SessionLocal() as db:
+        set_tenant_context(db, tenant_id)
+        # Buscar reserva ativa para este quarto
+        from models import BookingStatus
+        booking = db.query(models.Booking).filter(
+            models.Booking.room_id == str(room_id),
+            models.Booking.status == BookingStatus.ATIVO
+        ).first()
+        
+        if not booking:
+            return {"message": f"Não há reserva ativa para o quarto {room_id} no momento."}
+            
+        consumos = []
+        total_consumo = 0
+        for c in booking.consumptions:
+            subtotal = c.quantity * c.unit_price
+            total_consumo += subtotal
+            consumos.append({
+                "item": c.product.name if c.product else c.description,
+                "quantidade": c.quantity,
+                "preco_unitario": f"R$ {c.unit_price:.2f}",
+                "subtotal": f"R$ {subtotal:.2f}"
+            })
+            
+        acompanhantes = [{"nome": comp.name, "idade": comp.age} for comp in booking.companions]
+        
+        # Calcular diárias (simplificado)
+        from datetime import datetime
+        dias = (datetime.now() - booking.check_in_date).days
+        if dias == 0: dias = 1
+        valor_diarias = dias * booking.daily_rate
+        
+        return {
+            "quarto": room_id,
+            "hospede_principal": booking.guest.name,
+            "check_in": booking.check_in_date.strftime("%d/%m/%Y %H:%M"),
+            "check_out_previsto": booking.check_out_date.strftime("%d/%m/%Y %H:%M"),
+            "acompanhantes": acompanhantes,
+            "consumos": consumos,
+            "resumo_financeiro": {
+                "total_diarias_parcial": f"R$ {valor_diarias:.2f} ({dias} diárias)",
+                "total_consumo": f"R$ {total_consumo:.2f}",
+                "valor_total_parcial": f"R$ {(valor_diarias + total_consumo):.2f}",
+                "status_pagamento": booking.payment_status.value
+            }
+        }
+
 # --- NOVO: MOTOR DINÂMICO DE PDF ---
 
 def robot_dynamic_pdf_composer(tenant_id: int, title: str, sections: List[Dict[str, Any]]) -> dict:
@@ -586,6 +635,11 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
     op_memory = shared_tools.get_operational_memory_logic(tenant_id, current_guest_id)
     if op_memory: print(f"[AI_ADMIN_LOG] Carregados fatos da memória operacional.")
 
+    @tool
+    def robot_room_occupancy_details(room_id: str) -> dict:
+        """Visualização Detalhada do Quarto: Retorna extrato de consumo, datas de check-in/out e saldo parcial da reserva ativa."""
+        return room_occupancy_details_logic(tenant_id, room_id)
+
     # -------------------------------------------------------------------------
     # ORQUESTRAÇÃO
     # -------------------------------------------------------------------------
@@ -596,7 +650,7 @@ async def handle_admin_query(message: str, history: list, db: Session, tenant_id
         robot_room_viewer, robot_mark_room_as_ready,
         robot_check_availability, robot_find_guest, robot_book_with_payment,
         robot_find_booking, robot_get_payment_info, robot_confirm_payment, robot_record_knowledge,
-        robot_get_analytics_data, robot_dynamic_pdf_composer_tool
+        robot_get_analytics_data, robot_dynamic_pdf_composer_tool, robot_room_occupancy_details
     ]
     llm_with_tools = llm.bind_tools(tools)
     

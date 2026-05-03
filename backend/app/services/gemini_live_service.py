@@ -135,6 +135,17 @@ class GeminiLiveService:
                 name="robot_active_guests_viewer",
                 description="Lista todos os hóspedes que estão atualmente hospedados.",
                 parameters=types.Schema(type="OBJECT", properties={})
+            ),
+            types.FunctionDeclaration(
+                name="robot_room_occupancy_details",
+                description="Retorna detalhes completos de uma ocupação ativa em um quarto (extrato, check-in/out, saldo).",
+                parameters=types.Schema(
+                    type="OBJECT",
+                    properties={
+                        "room_id": types.Schema(type="STRING", description="Número do quarto (ex: '101').")
+                    },
+                    required=["room_id"]
+                )
             )
         ]
 
@@ -142,7 +153,8 @@ class GeminiLiveService:
         from agents.admin_agent import (
             inventory_viewer_logic, room_viewer_logic, pdf_generator_logic, 
             expense_logic, pdv_session_logic, active_guests_logic,
-            room_status_logic, robot_cashier_history_viewer, robot_dynamic_pdf_composer
+            room_status_logic, robot_cashier_history_viewer, robot_dynamic_pdf_composer,
+            room_occupancy_details_logic
         )
         from agents.shared_tools import get_raw_analytics_logic
 
@@ -174,6 +186,9 @@ class GeminiLiveService:
                 result = room_status_logic(tenant_id, room_id=args.get("room_id"), new_status="disponivel")
             elif name == "robot_cashier_history_viewer":
                 result = robot_cashier_history_viewer(tenant_id=tenant_id, date_str=args.get("date_str"))
+            
+            elif name == "robot_room_occupancy_details":
+                result = room_occupancy_details_logic(tenant_id=tenant_id, room_id=args.get("room_id"))
             
             elif name == "robot_dynamic_pdf_composer":
                 result = robot_dynamic_pdf_composer(title=args.get("title"), sections=args.get("sections"))
