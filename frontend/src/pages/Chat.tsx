@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { motion } from 'framer-motion';
 import { Send, User, Check, AlertCircle, Mic, Square } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import api from '../services/api';
