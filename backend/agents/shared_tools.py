@@ -293,7 +293,7 @@ def booking_creation_logic(tenant_id: int, guest_id: int, room_id: Any, check_in
             
             # Registrar todos os quartos
             for r_id in room_ids:
-                db.add(models.BookingRoom(booking_id=booking.id, room_id=r_id))
+                db.add(models.BookingRoom(booking_id=booking.id, room_id=r_id, tenant_id=tenant_id))
             
             # Registrar acompanhantes com tenant_id explícito
             for c in companions:
@@ -385,7 +385,15 @@ def confirm_payment_logic(tenant_id: int, booking_id: int, method: str = "pix") 
             booking = db.query(models.Booking).get(booking_id)
             booking.status = models.BookingStatus.CONFIRMADO
             booking.payment_status = models.PaymentStatus.PAGO
-            rev = models.Revenue(description=f"Pagamento Reserva #{booking.id}", amount=booking.total_amount, category=models.RevenueCategory.HOSPEDAGEM, payment_method=method.lower(), booking_id=booking.id, created_at=datetime.now())
+            rev = models.Revenue(
+                description=f"Pagamento Reserva #{booking.id}", 
+                amount=booking.total_amount, 
+                category=models.RevenueCategory.HOSPEDAGEM, 
+                payment_method=method.lower(), 
+                booking_id=booking.id, 
+                created_at=datetime.now(),
+                tenant_id=tenant_id
+            )
             db.add(rev)
             db.commit()
             return {"success": True}
@@ -501,12 +509,19 @@ def search_events_logic(tenant_id: int, query: str) -> dict:
         results = []
         for e in events:
             results.append({
+                "id": e.id,
                 "name": e.name,
                 "start_date": str(e.start_date),
                 "end_date": str(e.end_date),
-                "description": e.description
+                "location": e.location,
+                "description": e.description,
+                "daily_rate_single": e.daily_rate_single,
+                "daily_rate_couple": e.daily_rate_couple,
+                "daily_rate_extra": e.daily_rate_extra,
+                "daily_rate_child": e.daily_rate_child,
+                "color": e.color
             })
-        return {"results": results}
+        return {"count": len(results), "results": results}
 
 def event_listing_logic(tenant_id: int, month: int = None, year: int = None) -> dict:
     """Lista eventos do calendário filtrados por mês e ano."""
@@ -535,7 +550,19 @@ def event_listing_logic(tenant_id: int, month: int = None, year: int = None) -> 
         return {
             "month": month,
             "year": target_year,
-            "events": [{"name": e.name, "start": str(e.start_date), "end": str(e.end_date), "location": e.location} for e in events]
+            "events": [{
+                "id": e.id,
+                "name": e.name, 
+                "start": str(e.start_date), 
+                "end": str(e.end_date), 
+                "location": e.location,
+                "description": e.description,
+                "daily_rate_single": e.daily_rate_single,
+                "daily_rate_couple": e.daily_rate_couple,
+                "daily_rate_extra": e.daily_rate_extra,
+                "daily_rate_child": e.daily_rate_child,
+                "color": e.color
+            } for e in events]
         }
 
 # ============================================================================

@@ -50,7 +50,14 @@ def build_pagamento_graph(tenant_id: int, session_id: str, booking_id: int = Non
         NUNCA invente dados de pagamento — use SEMPRE este robô."""
         return await engine.robot_get_payment_info(booking_id)
 
-    tools = [robot_get_payment_info]
+    @tool
+    async def robot_register_receipt_upload(booking_id: int) -> dict:
+        """Registra no sistema que o hóspede enviou um comprovante de pagamento.
+        Muda o status para CONFIRMADA e adiciona nota técnica no card da reserva.
+        Chame esta ferramenta assim que o hóspede disser que enviou o arquivo ou confirmou o PIX."""
+        return await engine.robot_register_receipt_upload(booking_id)
+
+    tools = [robot_get_payment_info, robot_register_receipt_upload]
     llm_with_tools = llm.bind_tools(tools)
 
     async def call_pagamento_model(state: HotelBookingState):
@@ -64,25 +71,24 @@ def build_pagamento_graph(tenant_id: int, session_id: str, booking_id: int = Non
         turn_context = "\n⚠️ CONTEXTO: Início de conversa. Use a saudação de boas-vindas da personalidade." if is_first_turn else "\n⚠️ CONTEXTO: Conversa em andamento. NÃO repita saudações iniciais, seja direto."
         booking_context = f"\n\nCONTEXTO: A reserva #{current_bid} já foi criada com status PENDENTE." if current_bid else ""
         
-        base_prompt = f"""Você é a ANA, recepcionista virtual da Pousada.
-        
-        FUNÇÃO: Entregar as instruções de pagamento para a reserva que acaba de ser criada.{booking_context}
-        IMPORTANTE: Estamos no ano de 2026.
-        
-        FLUXO OBRIGATÓRIO:
-        1. Use `robot_get_payment_info` para obter a chave PIX ou o link de pagamento real.
-        2. Apresente as instruções de forma clara:
-           - **Se for PIX**: Informe a chave exata e o valor do sinal.
-           - **REGRA OBRIGATÓRIA**: Você DEVE solicitar que o hóspede envie o **comprovante do PIX aqui mesmo no chat**. Explique que isso é necessário para que a equipe de hospedagem possa conferir o pagamento e confirmar a reserva definitivamente.
-           - **Se for Mercado Pago**: Você DEVE fornecer o link EXATAMENTE como retornado pela ferramenta, sem adicionar espaços. Coloque o link no formato Markdown em uma linha isolada para que o sistema gere um botão:
-             [💳 Pagar com Mercado Pago](URL_DO_LINK_SEM_ESPAÇOS)
-             
-             ⚠️ NUNCA coloque espaços dentro da URL (ex: NUNCA escreva "mercadopago. com. br"). Avise que a confirmação é automática.
-        
-        REGRAS:
-        - Nunca invente dados de pagamento.
-        - Se não houver booking_id no quadro ou no histórico, peça ao hóspede o número da reserva.
-        - Resposta em Português Brasileiro."""
+        base_prompt = f"""Você é o DIRETOR DE ROTEIRO (PAGAMENTO) da Pousada.
+Sua única função é escrever o SCRIPT de pagamento para a reserva #{current_bid}.
+
+📍 RESPOSTA VERBAL OBRIGATÓRIA:
+- Após chamar qualquer ferramenta (robot_get_payment_info, robot_register_receipt_upload), você DEVE aguardar o resultado e então escrever uma resposta completa e natural para o hóspede.
+- NUNCA termine o seu turno com uma mensagem vazia. Se você recebeu a chave PIX, apresente-a. Se o hóspede enviou o comprovante, confirme o recebimento com entusiasmo.
+
+📍 REGRAS DO TELEPROMPTER:
+1. BUSQUE OS DADOS: Use sempre `robot_get_payment_info`.
+2. SCRIPT DE PIX (SE AINDA NÃO PAGOU):
+   - "Para confirmar, o valor do sinal é R$ [VALOR]. Você pode usar a chave PIX: [CHAVE]. Por favor, envie o comprovante aqui no chat para confirmarmos agora."
+3. SCRIPT DE COMPROVANTE RECEBIDO (SE O HÓSPEDE ENVIOU OU DISSE QUE ENVIOU):
+   - "Recebido! Já encaminhei seu comprovante para a nossa equipe financeira. Assim que validarmos (o que costuma ser rápido), você receberá a confirmação definitiva por aqui e por e-mail. Posso te ajudar com algo mais?"
+4. SCRIPT DE MERCADO PAGO:
+   - "Gerei seu link de pagamento seguro. Você pode pagar clicando no botão abaixo. A confirmação é automática."
+   - Markdown: `[💳 Pagar com Mercado Pago](URL)`
+
+4. PROIBIDO: Não invente chaves, não peça dados extras, não repita saudações. Seja direto e técnico."""
 
         full_prompt = base_prompt
         if custom_persona:

@@ -248,17 +248,34 @@ def run_admin_task(message: str, history: List[dict], tenant_id: int, session_id
 async def chat_admin(request: ChatRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_admin = Depends(get_current_admin)):
     """Migra o Admin para processamento direto no backend (Background Task)."""
     tid = current_admin.tenant_id
+    
+    # Guard: se o tenant_id for None (sessão expirada/inválida), retorna 401
+    if tid is None:
+        raise HTTPException(status_code=401, detail="Sessão inválida ou expirada. Faça login novamente.")
+    
     set_tenant_context(db, tid)
     
+    # --- TRAVA DE IDEMPOTÊNCIA (ANTI-DUPLICIDADE) ---
+    import hashlib, time
+    message_hash = hashlib.md5(f"{request.session_id}:{request.message}".encode()).hexdigest()
+    idempotency_key = f"admin:lock:{message_hash}"
+    
+    existing_job = redis_conn.get(idempotency_key)
+    if existing_job:
+        logger.info(f"[CHAT_ADMIN] Reenvio detectado para msg hash {message_hash}. Reaproveitando job {existing_job.decode()}")
+        return {"job_id": existing_job.decode(), "status": "processing"}
+
     # 1. Salva a mensagem do usuário imediatamente
     save_message(request.session_id, "user", request.message, tid, db)
     
     # 2. Busca o histórico
     history = await get_db_history(request.session_id, db, tid)
     
-    # 3. Cria um Job ID fake para manter compatibilidade com o polling do frontend
-    import hashlib, time
-    job_id = f"admin_{hashlib.md5(request.session_id.encode()).hexdigest()}_{int(time.time())}"
+    # 3. Cria um Job ID (Desta vez usamos o hash para ser estável se o lock expirar muito rápido)
+    job_id = f"admin_{message_hash}_{int(time.time())}"
+    
+    # Registra o lock por 60 segundos
+    redis_conn.setex(idempotency_key, 60, job_id)
     
     # Função interna para processar sem travar a requisição HTTP
     async def run_admin_direct():

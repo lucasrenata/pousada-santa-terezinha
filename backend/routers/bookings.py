@@ -696,6 +696,13 @@ def delete_consumption(consumption_id: int, db: Session = Depends(get_db), curre
     if not consumption:
         raise HTTPException(status_code=404, detail="Item de consumo não encontrado")
     
+    # --- DEVOLUÇÃO AO ESTOQUE ---
+    if consumption.product_id:
+        product = db.query(models.Product).filter(models.Product.id == consumption.product_id).first()
+        if product:
+            product.stock_quantity += consumption.quantity
+            print(f"📦 [STOCK] Devolvendo {consumption.quantity}x {product.name} ao estoque. Novo total: {product.stock_quantity}")
+    
     db.delete(consumption)
     db.commit()
     return {"message": "Consumo excluído com sucesso"}

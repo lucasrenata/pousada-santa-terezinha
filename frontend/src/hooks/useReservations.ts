@@ -26,6 +26,19 @@ export interface Reservation {
   companions: Companion[];
 }
 
+export interface Reservation {
+  id: number;
+  room_id: string;
+  guest_id: number;
+  check_in_date: string;
+  check_out_date: string;
+  status: string;
+  total_amount: number;
+  payment_status: string;
+  guest_name?: string;
+  room_number?: string;
+}
+
 export function useReservations() {
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [loading, setLoading] = useState(true);

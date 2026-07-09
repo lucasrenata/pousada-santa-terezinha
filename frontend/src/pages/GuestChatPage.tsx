@@ -1,9 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
-import { Send, User, Check, ShieldCheck, Phone, Paperclip, Loader2 } from 'lucide-react';
+import { Send, User, Check, ShieldCheck, Phone, Paperclip, Loader2, Bot, RefreshCw, Mic, MessageSquare, Headphones, MicOff } from 'lucide-react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import api from '../services/api';
 import { toast } from 'sonner';
+import { Card, CardContent } from '../components/ui/card';
+import { GuestVoiceAssistant, GuestVoiceAssistantRef } from '../components/customer/GuestVoiceAssistant';
 
 interface Message {
   id: string;
@@ -19,20 +22,21 @@ export default function GuestChatPage() {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [sessionId, setSessionId] = useState<string>('');
   const [pousadaName, setPousadaName] = useState('Estabelecimento');
   const [aiName, setAiName] = useState('Ana');
+  const [viewMode, setViewMode] = useState<'voice' | 'chat'>('voice');
+  const [isMuted, setIsMuted] = useState(false);
+  const voiceAssistantRef = useRef<GuestVoiceAssistantRef>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Recupera o ID da reserva das mensagens (para saber onde anexar o comprovante)
   const getLatestBookingId = () => {
-    // Percorre as mensagens da mais recente para a mais antiga
     for (let i = messages.length - 1; i >= 0; i--) {
       const content = messages[i].content;
-      // Procura por "Reserva #123", "ID #123" ou apenas "#123" num contexto de reserva
-      const match = content.match(/(?:reserva|id)?\s*#(\d+)/i);
+      // Regex mais flexível: Procura por #123, "reserva 123", "id 123" ou apenas o número isolado se houver contexto
+      const match = content.match(/(?:reserva|id|#)\s*:?\s*#?(\d{1,6})/i);
       if (match) return match[1];
     }
     return null;
@@ -44,17 +48,10 @@ export default function GuestChatPage() {
 
     const bookingId = getLatestBookingId();
     if (!bookingId) {
-      const errorMsg: Message = {
-        id: Date.now().toString(),
-        role: 'assistant',
-        content: '⚠️ Não consegui localizar o número da sua reserva nesta conversa. Por favor, me informe o ID ou CPF para que eu possa vincular o seu comprovante.',
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, errorMsg]);
+      toast.error('Não localizei o número da reserva nesta conversa.');
       return;
     }
 
-    // Mensagem de "Enviando"
     const processingMsg: Message = {
       id: "proc-" + Date.now(),
       role: 'assistant',
@@ -71,35 +68,21 @@ export default function GuestChatPage() {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       
-      // Remove a mensagem de processamento e adiciona a de sucesso
       setMessages(prev => prev.filter(m => m.id !== processingMsg.id));
-      const successMsg: Message = {
+      setMessages(prev => [...prev, {
         id: Date.now().toString(),
         role: 'assistant',
-        content: `✅ Comprovante da reserva #${bookingId} recebido com sucesso! Nossa equipe de recepção vai validar as informações agora.`,
+        content: `✅ Comprovante da reserva #${bookingId} recebido com sucesso!`,
         timestamp: new Date()
-      };
-      setMessages(prev => [...prev, successMsg]);
-      
+      }]);
     } catch (err: any) {
-      console.error('Erro no upload:', err);
       setMessages(prev => prev.filter(m => m.id !== processingMsg.id));
-      
-      const errorMsg: Message = {
-        id: Date.now().toString(),
-        role: 'assistant',
-        content: `❌ Ops! Tivemos um problema ao enviar o comprovante da reserva #${bookingId}. Verifique se o arquivo é uma imagem válida ou tente novamente em instantes.`,
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, errorMsg]);
+      toast.error('Erro ao enviar comprovante.');
     } finally {
-      // Limpa o input para permitir novo upload
       event.target.value = '';
     }
   };
 
-  // Inicializa sessão e busca configurações
-// ... (rest of useEffects)
   useEffect(() => {
     let sid = localStorage.getItem(`guest_session`);
     if (!sid) {
@@ -109,24 +92,13 @@ export default function GuestChatPage() {
     setSessionId(sid);
     loadHistory(sid);
     loadSettings();
-
-    // Se o usuário acabou de vir do cadastro, faz polling por 10s aguardando a IA falar
-    if (searchParams.get('registered') === 'true') {
-      const interval = setInterval(() => {
-        loadHistory(sid);
-      }, 2500);
-      setTimeout(() => clearInterval(interval), 10000);
-      return () => clearInterval(interval);
-    }
-  }, [searchParams]);
+  }, []);
 
   const loadSettings = async () => {
     try {
-      // 1. Busca dados do Tenant (Nome Oficial)
       const tenantResp = await api.get(`/settings/public/tenant/${tenant_id}`);
       if (tenantResp.data.name) setPousadaName(tenantResp.data.name);
 
-      // 2. Busca outras configs públicas (IA Name, etc)
       const response = await api.get(`/settings/public/${tenant_id}`);
       const aiNameSetting = response.data.find((s: any) => s.key === 'ai_receptionist_name');
       if (aiNameSetting) setAiName(aiNameSetting.value);
@@ -137,7 +109,6 @@ export default function GuestChatPage() {
 
   const loadHistory = async (sid: string) => {
     try {
-      // Passa o tenant_id para o histórico público
       const res = await api.get(`/chat/history/${sid}?tenant_id=${tenant_id}`);
       setMessages(res.data.map((m: any) => ({
         ...m,
@@ -167,225 +138,251 @@ export default function GuestChatPage() {
 
     setMessages(prev => [...prev, userMsg]);
     setMessage('');
-    setLoading(true);
 
-    try {
-      // 1. Dispara a tarefa assíncrona
-      const res = await api.post('/chat/customer', {
-        message: userMsg.content,
-        session_id: sessionId,
-        tenant_id: parseInt(tenant_id || "1")
-      });
+    // Lógica de "Auto-Wake": A primeira mensagem ou qualquer mensagem ativa a voz se estiver no mudo/desativada
+    // No caso do Guest, sempre enviamos via WebSocket do Assistant para garantir a resposta falada
+    voiceAssistantRef.current?.sendTextMessage(userMsg.content);
+  };
 
-      const { job_id, status } = res.data;
+  const handleLiveTranscription = (text: string, role: 'user' | 'assistant') => {
+    setMessages(prev => {
+      const lastMsg = prev[prev.length - 1];
+      const now = new Date();
       
-      // Se estiver apenas acumulando mensagens (debouncing), mantemos o loading e iniciamos o polling também
-      // para que o usuário veja a resposta assim que o bloco for processado.
-      if (status === 'buffering') {
-        console.log("Mensagem agrupada, aguardando processamento do bloco...");
+      // Se for um link markdown ou algo especial, sempre adiciona como nova mensagem
+      if (text.includes('](')) {
+        return [...prev, { id: 'live-link-' + now.getTime(), role, content: text, timestamp: now }];
       }
 
-      // 2. Inicia Polling para aguardar a resposta do Worker
-      const pollJob = async () => {
-        try {
-          const statusRes = await api.get(`/chat/job/${job_id}`);
-          const { status, result, error } = statusRes.data;
-
-          if (status === 'finished') {
-            const botMsg: Message = {
-              id: (Date.now() + 1).toString(),
-              role: 'assistant',
-              content: result.response,
-              timestamp: new Date()
-            };
-            setMessages(prev => [...prev, botMsg]);
-            setLoading(false);
-          } else if (status === 'failed') {
-            throw new Error(error || "Erro no processamento da IA");
-          } else {
-            // Continua processando, tenta novamente em 2s
-            setTimeout(pollJob, 2000);
-          }
-        } catch (err) {
-          console.error("Erro no polling da IA:", err);
-          setMessages(prev => [...prev, {
-            id: 'err-' + Date.now(),
-            role: 'assistant',
-            content: "Desculpe, tive um problema ao processar sua resposta. Pode tentar novamente?",
-            timestamp: new Date()
-          }]);
-          setLoading(false);
+      // Se a última mensagem for do mesmo papel e for recente, tentamos atualizar em vez de duplicar
+      if (lastMsg && lastMsg.role === role && (now.getTime() - lastMsg.timestamp.getTime() < 8000)) {
+        // Se a última mensagem FOR um link, não sobrescreve
+        if (lastMsg.content.includes('](')) {
+           return [...prev, { id: 'live-' + now.getTime(), role, content: text, timestamp: now }];
         }
-      };
 
-      // Inicia o primeiro check
-      setTimeout(pollJob, 1000);
+        // Se o novo texto contiver o anterior (incremental), substitui para manter fluidez
+        if (text.length > lastMsg.content.length && text.startsWith(lastMsg.content)) {
+          return [...prev.slice(0, -1), { ...lastMsg, content: text, timestamp: now }];
+        }
+        
+        // Se o texto for diferente e não incremental, mas muito curto, ignoramos para não poluir
+        if (text === lastMsg.content) return prev;
 
-    } catch (error) {
-      console.error("Erro ao iniciar chat:", error);
-      setMessages(prev => [...prev, {
-        id: 'err-init',
-        role: 'assistant',
-        content: "Desculpe, não consegui conectar com meu cérebro agora. Tente novamente em instantes.",
-        timestamp: new Date()
-      }]);
-      setLoading(false);
-    }
+        // Se o texto for diferente e não incremental, anexa em vez de substituir
+        if (text !== lastMsg.content && !text.startsWith(lastMsg.content)) {
+           return [...prev, { id: 'live-' + now.getTime(), role, content: text, timestamp: now }];
+        }
+
+        return [...prev.slice(0, -1), { ...lastMsg, content: text, timestamp: now }];
+      }
+      
+      return [...prev, {
+        id: 'live-' + now.getTime(),
+        role: role,
+        content: text,
+        timestamp: now
+      }];
+    });
   };
 
   return (
-    <div className="max-w-6xl mx-auto h-screen h-[100dvh] flex flex-col p-2 sm:p-4 lg:p-6 animate-in fade-in duration-700">
-      {/* Header Compacto - Top Left */}
-      <header className="flex items-center gap-4 mb-4 mt-2 px-2 sm:px-4 self-start">
-        <div className="w-12 h-12 bg-white rounded-2xl shadow-lg shadow-indigo-100 flex items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-default overflow-hidden border border-slate-100">
-           <img src="/ai-avatar.jpg" alt="AI Assistant" className="w-full h-full object-cover" />
-        </div>
-        <div className="text-left">
-          <h1 className="text-xl font-black text-slate-800 tracking-tight leading-none">{pousadaName}</h1>
-          <div className="flex items-center gap-2 mt-1">
-            <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
-            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Atendimento Inteligente</p>
+    <div className="flex flex-col min-h-[calc(100dvh)] w-full max-w-[1600px] mx-auto p-2 sm:p-6 space-y-4 sm:space-y-6 font-sans">
+      {/* Header com Branding e Controles */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white/50 backdrop-blur-md p-4 sm:p-6 rounded-[2rem] border border-white/60 shadow-xl">
+        <div className="flex items-center gap-4">
+          <div className="relative">
+            <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-200">
+              <Bot className="text-white" size={24} />
+            </div>
+            <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-2 border-white rounded-full"></div>
+          </div>
+          <div>
+            <h1 className="font-black text-slate-800 tracking-tight text-lg leading-tight">{pousadaName}</h1>
+            <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest">Atendimento Inteligente</p>
           </div>
         </div>
-      </header>
+        
+        <div className="flex items-center gap-3 w-full md:w-auto overflow-x-auto pb-2 md:pb-0">
+          <button
+            onClick={() => setIsMuted(!isMuted)}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-[10px] font-black transition-all border shadow-sm shrink-0 ${
+              isMuted 
+                ? 'bg-red-50 text-red-600 border-red-200' 
+                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+            }`}
+          >
+            {isMuted ? <MicOff size={14} /> : <Mic size={14} />}
+            {isMuted ? 'MICROFONE DESATIVADO' : 'MICROFONE ATIVO'}
+          </button>
 
-      {/* Chat Container - Full Height */}
-      <div className="flex-1 bg-white/40 backdrop-blur-xl border border-white/60 shadow-2xl rounded-[1.5rem] sm:rounded-[2.5rem] flex flex-col overflow-hidden relative">
-
-        {/* Messages Area */}
-        <div 
-          ref={scrollRef}
-          className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 scrollbar-hide"
-        >
-          {messages.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full text-center space-y-4">
-               <div className="p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100/50">
-                  <p className="text-slate-600 text-sm font-medium italic">
-                    "Olá, meu nome é {aiName}, {aiName.toLowerCase().endsWith('a') ? 'sua' : 'seu'} recepcionista virtual, como posso te ajudar hoje?"
-                  </p>
-               </div>
-               <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-tighter">Sua conversa é segura e privada</p>
-            </div>
-          )}
-
-          {messages.map((m) => (
-            <div 
-              key={m.id} 
-              className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-4 duration-500`}
-            >
-              <div className={`flex gap-3 max-w-[95%] sm:max-w-[90%] ${m.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm overflow-hidden ${
-                  m.role === 'user' ? 'bg-slate-800 text-white' : 'bg-white border border-slate-100'
-                }`}>
-                  {m.role === 'user' ? <User size={14} /> : <img src="/ai-avatar.jpg" alt="Bot" className="w-full h-full object-cover" />}
-                </div>
-                <div className={`p-4 rounded-2xl text-sm leading-relaxed shadow-lg ${
-                  m.role === 'user' 
-                    ? 'bg-slate-900/90 text-white rounded-tr-none' 
-                    : 'bg-white/80 text-slate-800 rounded-tl-none border border-slate-100'
-                }`}>
-                  <ReactMarkdown 
-                    components={{
-                      a: ({ node, ...props }: any) => {
-                        const isInternal = props.href?.startsWith('/') && !props.href?.startsWith('//');
-                        if (isInternal) {
-                          return (
-                            <button 
-                              onClick={() => navigate(props.href)}
-                              className="inline-flex items-center gap-2 mt-3 bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-bold border-none hover:bg-indigo-700 transition-all no-underline shadow-lg shadow-indigo-100 mb-1 group"
-                            >
-                              <Check size={16} /> {props.children}
-                            </button>
-                          );
-                        }
-                        
-                        // Link Externo (Segurança para Protocolos Absolutos)
-                        const href = props.href?.startsWith('http') ? props.href : `https://${props.href}`;
-                        
-                        return (
-                          <a 
-                            href={href}
-                            target="_blank" rel="noopener noreferrer"
-                            className="inline-flex items-center gap-2 mt-3 bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-bold border-none hover:bg-indigo-700 transition-all no-underline shadow-lg shadow-indigo-100 mb-1 group"
-                          >
-                            <Check size={16} /> {props.children}
-                          </a>
-                        );
-                      },
-                      p: ({ children }: any) => <p className="mb-0 whitespace-pre-wrap">{children}</p>,
-                      img: ({ node, ...props }: any) => (
-                        <span className="block mt-4 mb-2 bg-white p-3 rounded-2xl shadow-sm border border-slate-100 w-fit">
-                          <img {...props} className="w-48 h-48 object-contain rounded-xl opacity-90 mix-blend-multiply" alt="QR Code PIX" />
-                        </span>
-                      )
-                    }}
-                  >
-                    {m.content}
-                  </ReactMarkdown>
-                  <span className={`text-[10px] mt-2 block opacity-40 font-bold ${m.role === 'user' ? 'text-right' : 'text-left'}`}>
-                    {m.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ))}
-
-          {loading && (
-            <div className="flex justify-start">
-              <div className="bg-white/80 backdrop-blur-sm border border-slate-100 p-4 rounded-2xl rounded-tl-none shadow-sm flex gap-1.5 items-center">
-                <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.3s]" />
-                <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.15s]" />
-                <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" />
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Action Input Area */}
-        <div className="p-3 sm:p-6 bg-white/50 border-t border-white/60 backdrop-blur-md">
-          <form onSubmit={handleSend} className="relative group flex gap-2">
-            <div className="relative flex-1">
-              <input
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                placeholder="Digite sua mensagem aqui..."
-                className="w-full bg-white border-2 border-slate-100 rounded-2xl pl-5 pr-14 py-4 text-sm focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all placeholder:text-slate-300 font-medium shadow-inner"
-              />
-              <button
-                type="submit"
-                disabled={loading || !message.trim()}
-                className="absolute right-2 top-2 bottom-2 aspect-square bg-indigo-600 hover:bg-slate-900 text-white flex items-center justify-center rounded-xl shadow-lg shadow-indigo-100 transition-all disabled:opacity-30 active:scale-90"
-              >
-                <Send size={18} />
-              </button>
-            </div>
-            
-            {/* Botão de Anexo */}
+          <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200 shadow-inner shrink-0">
             <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-              className="w-12 h-12 sm:w-14 sm:h-14 flex-shrink-0 bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center rounded-2xl transition-all active:scale-90 border-2 border-slate-200/50"
-              title="Anexar Comprovante PIX"
+              onClick={() => setViewMode('voice')}
+              className={`px-4 py-2 rounded-xl text-[10px] font-bold transition-all flex items-center gap-2 ${
+                viewMode === 'voice' ? 'bg-white text-indigo-600 shadow-md' : 'text-slate-400'
+              }`}
             >
-              {uploading ? <Loader2 size={20} className="animate-spin" /> : <Paperclip size={20} />}
+              <Headphones size={14} /> VOZ
             </button>
-            <input 
-              type="file" 
-              ref={fileInputRef} 
-              className="hidden" 
-              accept="image/*,application/pdf"
-              onChange={handleFileUpload}
-            />
-          </form>
-          <div className="flex flex-col sm:flex-row justify-between items-center mt-4 px-2 gap-2 sm:gap-0">
-            <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-bold uppercase">
-               <ShieldCheck size={12} className="text-indigo-400" /> Criptografia Ponta-a-Ponta
-            </div>
-            <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-bold uppercase">
-               <Phone size={12} className="text-slate-300" /> Suporte 24/7 Ativo
-            </div>
+            <button
+              onClick={() => setViewMode('chat')}
+              className={`px-4 py-2 rounded-xl text-[10px] font-bold transition-all flex items-center gap-2 ${
+                viewMode === 'chat' ? 'bg-white text-indigo-600 shadow-md' : 'text-slate-400'
+              }`}
+            >
+              <MessageSquare size={14} /> CHAT
+            </button>
           </div>
+
+          <button 
+            onClick={() => setMessages([])}
+            className="p-2.5 text-slate-400 hover:text-indigo-600 transition-all rounded-xl hover:bg-indigo-50 border border-transparent hover:border-indigo-100 shrink-0"
+          >
+            <RefreshCw size={18} />
+          </button>
+        </div>
+      </div>
+
+      {/* Grid Principal */}
+      <div className={`grid gap-4 sm:gap-8 flex-1 overflow-hidden transition-all duration-700 grid-cols-1 ${
+        viewMode === 'voice' ? 'lg:grid-cols-[1.1fr_0.9fr]' : 'lg:grid-cols-[0.7fr_1.3fr]'
+      }`}>
+        
+        {/* Lado Esquerdo: Assistente Holográfico */}
+        <motion.div 
+          layout
+          className="flex flex-col h-full min-h-[300px] sm:min-h-0"
+        >
+          <GuestVoiceAssistant 
+            ref={voiceAssistantRef}
+            tenantId={tenant_id || "0"}
+            viewMode={viewMode}
+            isMuted={isMuted}
+            onMuteChange={setIsMuted}
+            onTranscription={handleLiveTranscription}
+            agentName={aiName}
+          />
+          
+          <div className="hidden sm:grid grid-cols-2 gap-4 mt-6">
+             <div className="bg-white/50 backdrop-blur-sm p-4 rounded-3xl border border-white/60 shadow-sm">
+                <p className="text-[9px] uppercase font-black text-slate-400 mb-1 tracking-widest">Status da IA</p>
+                <p className="text-xs font-bold text-slate-800 flex items-center gap-2">
+                   <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span> {aiName} Online
+                </p>
+             </div>
+             <div className="bg-white/50 backdrop-blur-sm p-4 rounded-3xl border border-white/60 shadow-sm">
+                <p className="text-[9px] uppercase font-black text-slate-400 mb-1 tracking-widest">Conexão</p>
+                <p className="text-xs font-bold text-indigo-600">Ultra-Baixa Latência</p>
+             </div>
+          </div>
+        </motion.div>
+
+        {/* Lado Direito: Histórico de Chat */}
+        <motion.div
+          layout
+          className="flex flex-col h-full min-h-[400px] sm:min-h-0 overflow-hidden"
+        >
+          <Card className="flex flex-col shadow-2xl border-white/60 overflow-hidden bg-white/60 backdrop-blur-xl h-full rounded-[2.5rem]">
+            <div 
+              ref={scrollRef}
+              className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-6 scroll-smooth"
+            >
+              {messages.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-full text-center space-y-6 opacity-60">
+                  <div className="w-20 h-20 bg-indigo-50 rounded-3xl flex items-center justify-center">
+                    <MessageSquare className="text-indigo-400" size={32} />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="font-black text-slate-800 text-lg">Olá, eu sou a {aiName}!</h3>
+                    <p className="text-sm text-slate-500 max-w-[240px] font-medium leading-relaxed">
+                      Como posso ajudar em sua estadia hoje? Você pode falar ou digitar.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {messages.map((msg) => (
+                <div 
+                  key={msg.id}
+                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-4 duration-500`}
+                >
+                  <div className={`flex items-end gap-3 max-w-[90%] sm:max-w-[85%] ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                    <div className={`w-8 h-8 rounded-xl flex-shrink-0 flex items-center justify-center shadow-lg ${
+                      msg.role === 'user' ? 'bg-slate-900 text-white' : 'bg-white text-indigo-600 border border-slate-100'
+                    }`}>
+                      {msg.role === 'user' ? <User size={14} /> : <Bot size={14} />}
+                    </div>
+                    <div className={`p-4 sm:p-5 rounded-[1.75rem] text-[14px] font-semibold leading-relaxed shadow-xl backdrop-blur-sm ${
+                      msg.role === 'user' 
+                        ? 'bg-slate-900 text-white rounded-br-none' 
+                        : 'bg-white/90 text-slate-800 border border-slate-100 rounded-bl-none shadow-indigo-50/50'
+                    }`}>
+                      <ReactMarkdown 
+                        className="prose prose-sm max-w-none prose-slate font-medium"
+                        components={{
+                          a: ({ node, ...props }: any) => (
+                            <a href={props.href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 mt-2 bg-indigo-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-indigo-700 transition-all no-underline shadow-md mb-1">
+                              <span>🔗</span> {props.children}
+                            </a>
+                          ),
+                          p: ({ children }: any) => <p className="mb-0 whitespace-pre-wrap">{children}</p>
+                        }}
+                      >
+                        {msg.content}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {loading && <div className="text-[10px] text-slate-400 font-bold animate-pulse uppercase tracking-widest">Processando resposta...</div>}
+            </div>
+
+            <CardContent className="p-4 sm:p-6 bg-white/50 border-t border-white/60">
+              <form onSubmit={handleSend} className="flex gap-3 max-w-4xl mx-auto relative items-center">
+                <div className="relative flex-1 group">
+                  <input
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    placeholder="Escreva sua dúvida ou pedido..."
+                    className="w-full bg-slate-50/80 border-2 border-transparent rounded-[2rem] pl-6 pr-14 py-4 text-sm focus:bg-white focus:ring-[8px] focus:ring-indigo-500/5 focus:border-indigo-400 outline-none transition-all placeholder:text-slate-300 font-bold shadow-inner"
+                  />
+                  <button
+                    type="submit"
+                    disabled={loading || !message.trim()}
+                    className="absolute right-2 top-2 bottom-2 aspect-square bg-slate-900 hover:bg-indigo-600 text-white flex items-center justify-center rounded-[1.5rem] shadow-lg transition-all disabled:opacity-20 active:scale-90"
+                  >
+                    <Send size={18} />
+                  </button>
+                </div>
+                
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-12 h-12 flex-shrink-0 bg-white hover:bg-slate-50 text-slate-400 flex items-center justify-center rounded-2xl transition-all active:scale-90 border-2 border-slate-100 shadow-sm"
+                >
+                  <Paperclip size={20} />
+                </button>
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  className="hidden" 
+                  accept="image/*,application/pdf"
+                  onChange={handleFileUpload}
+                />
+              </form>
+            </CardContent>
+          </Card>
+        </motion.div>
+      </div>
+      
+      {/* Footer / Info Mobile */}
+      <div className="flex flex-wrap justify-center gap-6 py-2 opacity-60">
+        <div className="flex items-center gap-2 text-[8px] text-slate-500 font-black uppercase tracking-[0.2em]">
+           <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div> Atendimento Prioritário
+        </div>
+        <div className="flex items-center gap-2 text-[8px] text-slate-500 font-black uppercase tracking-[0.2em]">
+           <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-ping"></div> ParcerIA v2026
         </div>
       </div>
     </div>

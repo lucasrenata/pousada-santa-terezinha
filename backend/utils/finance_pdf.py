@@ -49,25 +49,21 @@ def generate_financial_report(data, filename="relatorio_financeiro.pdf", tenant_
     report.add_kpi_cards(kpis)
     
     # Mini Tabelas de Distribuição
-    report.story.append(Paragraph("Distribuição por Categoria", report.styles['Heading4']))
-    cat_data = [["Categoria", "Receita", "Despesa"]]
-    # Agrupar categorias únicas
     all_cats = set(list(data.get("by_category", {}).keys()) + list(data.get("expense_by_category", {}).keys()))
+    cat_data = [["Categoria", "Receita", "Despesa"]]
     for cat in sorted(all_cats):
         rv = data.get("by_category", {}).get(cat, 0)
         ex = data.get("expense_by_category", {}).get(cat, 0)
         cat_data.append([cat.title(), f"R$ {rv:.2f}", f"R$ {ex:.2f}"])
     
-    report.add_table(cat_data, col_widths=[6*cm, 4*cm, 4*cm])
+    report.add_table(cat_data, col_widths=[6*cm, 4*cm, 4*cm], title="Distribuição por Categoria")
     
     # Nova mini-tabela: Meios de Pagamento (Receitas)
-    report.story.append(Spacer(1, 0.5*cm))
-    report.story.append(Paragraph("Resumo por Meio de Pagamento (Entradas)", report.styles['Heading4']))
     pay_data = [["Meio de Pagamento", "Total Recebido"]]
     for m, val in data.get("pay_summary", {}).items():
         pay_data.append([m.upper(), f"R$ {val:.2f}"])
     if len(pay_data) == 1: pay_data.append(["-", "Nenhuma entrada"])
-    report.add_table(pay_data, col_widths=[7*cm, 7*cm])
+    report.add_table(pay_data, col_widths=[7*cm, 7*cm], title="Resumo por Meio de Pagamento (Entradas)")
     
     report.story.append(Spacer(1, 1*cm))
 

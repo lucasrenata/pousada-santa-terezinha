@@ -60,13 +60,17 @@ class CustomerEngineV2:
             if attempt < 2:
                 await asyncio.sleep(2.0)
         
-        link = f"{frontend_url}/{self.tenant_id}/registrar?cpf={clean_cpf}&sid={session_id}".replace(" ", "")
+        # Garante que o session_id não seja a string "null"
+        clean_sid = session_id if session_id and session_id != "null" else ""
+        link = f"{frontend_url}/{self.tenant_id}/registrar?cpf={clean_cpf}&sid={clean_sid}".replace(" ", "")
+        
         logger.info(f"[ROBOT_ID] Link gerado: {link}")
         return {
             "success": False,
             "needs_registration": True,
             "registration_link": link,
-            "message": f"CPF não cadastrado. Por favor, clique no link para se registrar: {link}"
+            "message": "Hóspede não localizado.",
+            "script_hint": f"Informe que não localizou o cadastro e forneça o link de registro: {link}"
         }
 
     # -------------------------------------------------------------------------
@@ -100,10 +104,10 @@ class CustomerEngineV2:
             occupied_list += [r[0] for r in multi_occupied]
 
             # Busca quartos que não estão ocupados no período e não estão em manutenção
+            # Nota: Removido filtro rígido de capacidade para permitir sugestão de múltiplos quartos menores
             rooms = db.query(models.Room).filter(
                 ~models.Room.id.in_(occupied_list),
-                models.Room.status != "manutencao",
-                models.Room.max_capacity >= group_size
+                models.Room.status != "manutencao"
             ).order_by(models.Room.price_per_night.asc()).all()
             
             if not rooms: return {"success": False, "error": "Não há quartos disponíveis para estas datas."}
@@ -117,6 +121,9 @@ class CustomerEngineV2:
             days = (co - ci).days
             if days <= 0: days = 1
             
+            # Busca Configurações para o Cálculo
+            settings = {s.key: s.value for s in db.query(models.SystemSetting).all()}
+            
             options = []
             seen_types = set()
             
@@ -128,12 +135,17 @@ class CustomerEngineV2:
                     if event and event.daily_rate > 0:
                         base_price = event.daily_rate
                     
-                    total = base_price * days * group_size
+                    # Usa o motor oficial de cálculo (considera idades e modelo per_person/per_room)
+                    # Se não temos as idades agora, assumimos adultos para a cotação inicial
+                    ages_mock = [18] * group_size
+                    calc = calculate_reservation_total(base_price, days, ages_mock, settings=settings)
+                    
                     options.append({
                         "room_id": r.id,
                         "type": r.type,
-                        "total": total,
-                        "daily": base_price
+                        "total": calc["total"],
+                        "daily": base_price,
+                        "pricing_model": calc.get("pricing_model")
                     })
                     
                 if len(options) >= 3:
@@ -146,11 +158,14 @@ class CustomerEngineV2:
                         base_price = r.price_per_night
                         if event and event.daily_rate > 0:
                             base_price = event.daily_rate
+                        
+                        calc = calculate_reservation_total(base_price, days, [18]*group_size, settings=settings)
                         options.append({
                             "room_id": r.id,
                             "type": r.type,
-                            "total": base_price * days * group_size,
-                            "daily": base_price
+                            "total": calc["total"],
+                            "daily": base_price,
+                            "pricing_model": calc.get("pricing_model")
                         })
                         if len(options) >= 3:
                             break
@@ -160,7 +175,8 @@ class CustomerEngineV2:
                 "options": options,
                 "days": days,
                 "event": event.name if event else None,
-                "message": f"Cotação para {days} diárias processada."
+                "message": f"Cotação para {days} diárias processada.",
+                "script_hint": f"Apresente as opções de quartos disponíveis para {days} diárias e pergunte qual o hóspede prefere."
             }
 
     # -------------------------------------------------------------------------
@@ -422,6 +438,32 @@ class CustomerEngineV2:
                     "message": f"Chave PIX Manual: {manual_pix_key}"
                 }
 
+    async def robot_get_booking_details(self, booking_id: int) -> dict:
+        """Busca os detalhes completos de uma reserva existente pelo seu ID (número da reserva)."""
+        db = SessionLocal()
+        try:
+            set_tenant_context(db, self.tenant_id)
+            booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
+            if not booking:
+                return {"success": False, "message": f"Reserva #{booking_id} não encontrada."}
+            
+            return {
+                "success": True,
+                "booking_id": booking.id,
+                "guest_name": booking.guest.name if booking.guest else "Hóspede",
+                "check_in": booking.check_in_date.strftime("%d/%m/%Y"),
+                "check_out": booking.check_out_date.strftime("%d/%m/%Y"),
+                "room": booking.room_id,
+                "total": booking.total_amount,
+                "status": booking.status,
+                "message": f"Reserva #{booking_id} localizada para {booking.guest.name}. Check-in em {booking.check_in_date.strftime('%d/%m/%Y')}."
+            }
+        except Exception as e:
+            logger.error(f"[ENGINE][CONSULTA] Erro ao buscar reserva #{booking_id}: {e}")
+            return {"success": False, "message": str(e)}
+        finally:
+            db.close()
+
     # -------------------------------------------------------------------------
     # ROBÔ 6: NOTIFICADOR PROATIVO
     # -------------------------------------------------------------------------
@@ -461,6 +503,46 @@ class CustomerEngineV2:
                 "events": events_list,
                 "message": "Inteligência operacional carregada."
             }
+
+    async def robot_register_receipt_upload(self, booking_id: int) -> dict:
+        """
+        REGISTRO MANUAL/IA DE COMPROVANTE:
+        Replica a lógica do roteador de reservas para quando a IA detecta o pagamento.
+        Muda status para CONFIRMADO e adiciona a nota sistêmica no card.
+        """
+        db = SessionLocal()
+        try:
+            set_tenant_context(db, self.tenant_id)
+            booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
+            if not booking:
+                return {"success": False, "message": "Reserva não encontrada."}
+            
+            # --- MESMA LÓGICA DO ROUTER/BOOKINGS.PY ---
+            booking.status = models.BookingStatus.CONFIRMADO
+            booking.payment_status = models.PaymentStatus.PARCIAL
+            
+            deposit_val = booking.deposit_amount or 0.0
+            auto_note = f"\n[SISTEMA] Hóspede enviou comprovante de PIX (Sinal de R$ {deposit_val:.2f}). Conferir PIX e confirmar a reserva para o hóspede."
+            
+            if booking.notes:
+                if "[SISTEMA]" not in booking.notes: # Evita duplicar
+                    booking.notes += auto_note
+            else:
+                booking.notes = auto_note.strip()
+            
+            db.commit()
+            logger.info(f"✅ [ENGINE][PAYMENT] Automação de comprovante (via IA) concluída para reserva #{booking_id}")
+            return {
+                "success": True, 
+                "message": "Status atualizado e nota registrada no card.",
+                "script_hint": "Confirme que você já registrou o envio no sistema e que a reserva agora está com o status CONFIRMADA no painel."
+            }
+        except Exception as e:
+            db.rollback()
+            logger.error(f"❌ [ENGINE][PAYMENT] Erro ao registrar comprovante via IA: {e}")
+            return {"success": False, "message": str(e)}
+        finally:
+            db.close()
 
     async def get_ai_persona(self) -> str:
         """Busca a personalização de tom de voz e cumprimentos do banco."""

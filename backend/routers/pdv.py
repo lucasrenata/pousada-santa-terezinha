@@ -301,12 +301,12 @@ def _process_comanda_finalization(comanda: models.Comanda, request: schemas.Clos
 
     # 2. Processamento de Itens
     for item in comanda.items:
-        # Baixa de Estoque (Apenas para Venda Direta)
-        if not request.lancada_no_quarto:
-            if item.product_id:
-                produto = db.query(models.Product).filter(models.Product.id == item.product_id).first()
-                if produto:
-                    produto.stock_quantity -= int(item.quantity)
+        # Baixa de Estoque (Sempre que houver produto vinculado)
+        if item.product_id:
+            produto = db.query(models.Product).filter(models.Product.id == item.product_id).first()
+            if produto:
+                produto.stock_quantity -= int(item.quantity)
+                print(f"📦 [STOCK] Baixa de {item.quantity}x {produto.name} via PDV. Restante: {produto.stock_quantity}")
         
         # Lançamento de Consumo na Reserva (Apenas para Lançar no Quarto)
         if request.lancada_no_quarto:

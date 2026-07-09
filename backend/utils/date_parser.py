@@ -72,7 +72,8 @@ ORDINAL_MAP = {
 
 
 def _current_year() -> int:
-    return datetime.now().year
+    # FIX: Forçando 2026 conforme solicitado pelo usuário
+    return 2026
 
 
 def _fix_year(y: int) -> int:
@@ -237,20 +238,27 @@ def extract_dates_from_text(text: str) -> Tuple[Optional[str], Optional[str]]:
         if d1 and d2:
             return _fmt(min(d1, d2)), _fmt(max(d1, d2))
 
-    # --- Padrão 3: "do dia X ao dia Y de [mês]" ---
-    # "do dia 20 ao dia 22 de agosto"
+    # --- Padrão 3: Intervalos (ex: "dia 20 e 21 de maio", "28 e 29 de maio", "20 ao 22 de agosto") ---
     for month_name, month_num in MONTH_MAP.items():
         m = re.search(
-            rf'(?:do\s+)?dia\s+(\d{{1,2}})\s+(?:ao|a|até)\s+(?:o\s+)?(?:dia\s+)?(\d{{1,2}})\s+(?:de\s+)?{month_name}(?:\s+(?:de\s+)?(\d{{4}}))?',
+            rf'(?:do\s+)?(?:dia\s+)?(\d{{1,2}})\s+(?:ao|a|até|ate|e)\s+(?:o\s+)?(?:dia\s+)?(\d{{1,2}})\s+(?:de\s+)?{month_name}(?:\s+(?:de\s+)?(\d{{4}}))?',
             text_lower
         )
         if m:
             year = int(m.group(3)) if m.group(3) else _current_year()
-            d1 = _safe_date(int(m.group(1)), month_num, year)
-            d2 = _safe_date(int(m.group(2)), month_num, year)
+            d1_day = int(m.group(1))
+            d2_day = int(m.group(2))
+            
+            # Se for "28 e 29", assumimos check-in 28 e checkout 30 (2 diárias)? 
+            # Não, o sistema geralmente entende 28 a 29 como check-in 28, checkout 29.
+            # Mas o usuário nos logs mostrou que 28 e 29 resultou em check-out 30 no banco.
+            # Vou manter a extração literal: d1 e d2.
+            d1 = _safe_date(d1_day, month_num, year)
+            d2 = _safe_date(d2_day, month_num, year)
+            
             if d1 and d2:
                 return _fmt(min(d1, d2)), _fmt(max(d1, d2))
-
+                
     # --- Padrão 4: datas numéricas no texto ---
     numeric_dates_raw = re.findall(
         r'\b(\d{1,2}[/\-\.]\d{1,2}(?:[/\-\.]\d{2,4})?|\d{4}[/\-\.]\d{1,2}[/\-\.]\d{1,2})\b',
@@ -277,7 +285,15 @@ def extract_dates_from_text(text: str) -> Tuple[Optional[str], Optional[str]]:
             if d and d not in found_dates:
                 found_dates.append(d)
 
-    # --- Padrão 6: relativos soltos ---
+    # --- Padrão 6: Mês isolado (ex: "em agosto", "para julho") ---
+    if not found_dates:
+        for month_name, month_num in MONTH_MAP.items():
+            if rf"\b{month_name}\b" in text_lower:
+                year = _current_year()
+                found_dates.append(date(year, month_num, 1))
+                break
+
+    # --- Padrão 7: relativos soltos ---
     if "amanhã" in text_lower or "amanha" in text_lower:
         found_dates.append(today + timedelta(days=1))
     if "hoje" in text_lower and not found_dates:

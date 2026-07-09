@@ -145,7 +145,8 @@ def inventory_sync_logic(tenant_id: int, name: str, quantity_change: int = 0, pr
             new_p = models.Product(
                 name=name, price=final_price, category=category or "Diversos", 
                 stock_quantity=quantity_change, barcode=barcode or None,
-                cost_price=cost_price or 0.0, markup_percent=markup_percent or 0.0
+                cost_price=cost_price or 0.0, markup_percent=markup_percent or 0.0,
+                tenant_id=tenant_id
             )
             db.add(new_p)
             db.commit()
@@ -210,7 +211,8 @@ def room_setup_logic(tenant_id: int, room_id: str, max_capacity: int = 2, price:
             new_room = models.Room(
                 id=room_id, type=room_type, max_capacity=max_capacity, 
                 price_per_night=price, description=description, 
-                floor=floor, status=models.RoomStatus.DISPONIVEL
+                floor=floor, status=models.RoomStatus.DISPONIVEL,
+                tenant_id=tenant_id
             )
             db.add(new_room)
             db.commit()
@@ -227,7 +229,7 @@ def consumption_logic(tenant_id: int, room_id: str, product_name: str, quantity:
         if not prod: return {"error": f"Produto '{product_name}' não encontrado."}
         if prod.stock_quantity < quantity: return {"error": f"Estoque insuficiente."}
         
-        cons = models.Consumption(booking_id=booking.id, product_id=prod.id, quantity=quantity, unit_price=prod.price)
+        cons = models.Consumption(booking_id=booking.id, product_id=prod.id, quantity=quantity, unit_price=prod.price, tenant_id=tenant_id)
         prod.stock_quantity -= quantity
         db.add(cons)
         db.commit()
@@ -278,7 +280,8 @@ def checkout_logic(tenant_id: int, room_id: str, action: str = "preview", paymen
             room.status = models.RoomStatus.LIMPEZA
             rev = models.Revenue(
                 description=f"Check-out {room_id}", amount=grand_total, category=models.RevenueCategory.HOSPEDAGEM,
-                payment_method=payment_method.lower(), booking_id=booking.id, created_at=now
+                payment_method=payment_method.lower(), booking_id=booking.id, created_at=now,
+                tenant_id=tenant_id
             )
             db.add(rev)
             db.commit()
@@ -319,7 +322,8 @@ def expense_logic(tenant_id: int, description: str, amount: float, category: str
             is_paid=is_paid,
             payment_method=t_payment if is_paid else None,
             paid_date=today if is_paid else None,
-            due_date=d_due
+            due_date=d_due,
+            tenant_id=tenant_id
         )
         db.add(exp)
         db.commit()
@@ -468,6 +472,70 @@ def active_guests_logic(tenant_id: int) -> dict:
             } for b in active_bookings]
         }
 
+def booking_summary_logic(tenant_id: int, status: str = None, check_in_today: bool = False) -> dict:
+    """É o olho do gerente: mostra quantas reservas existem por categoria de status.
+    Se status for informado, lista as reservas daquele status.
+    Se check_in_today=True, lista check-ins previstos para hoje.
+    """
+    from datetime import date
+    with SessionLocal() as db:
+        set_tenant_context(db, tenant_id)
+
+        # Panorama geral por status
+        summary_counts = {}
+        for s in ["pendente", "confirmado", "ativo", "concluido", "cancelado"]:
+            count = db.query(models.Booking).filter(models.Booking.status == s).count()
+            summary_counts[s] = count
+
+        # Check-ins de hoje
+        if check_in_today:
+            today = date.today()
+            bookings = db.query(models.Booking).filter(
+                models.Booking.check_in_date == today,
+                models.Booking.status.in_(["confirmado", "pendente"])
+            ).all()
+            return {
+                "check_ins_hoje": len(bookings),
+                "reservas": [
+                    {
+                        "id": b.id,
+                        "hospede": b.guest.name if b.guest else "N/A",
+                        "quarto": b.room_id,
+                        "status": b.status,
+                        "check_in": str(b.check_in_date)
+                    } for b in bookings
+                ]
+            }
+
+        # Listagem por status específico
+        if status:
+            bookings = db.query(models.Booking).filter(
+                models.Booking.status == status.lower()
+            ).order_by(models.Booking.check_in_date.desc()).limit(15).all()
+            return {
+                "status_filtrado": status,
+                "count": len(bookings),
+                "resumo_geral": summary_counts,
+                "reservas": [
+                    {
+                        "id": b.id,
+                        "hospede": b.guest.name if b.guest else "N/A",
+                        "quarto": b.room_id,
+                        "check_in": str(b.check_in_date),
+                        "check_out": str(b.check_out_date),
+                        "total": b.total_amount
+                    } for b in bookings
+                ]
+            }
+
+        # Sem filtro: retorna apenas o panorama
+        return {
+            "resumo_por_status": summary_counts,
+            "total": sum(summary_counts.values()),
+            "message": f"Total de {sum(summary_counts.values())} reservas no sistema."
+        }
+
+
 def event_manager_logic(tenant_id: int, action: str = "query") -> dict:
     """Lógica atômica para consulta de inteligência de mercado/eventos."""
     with SessionLocal() as db:
@@ -483,7 +551,19 @@ def event_manager_logic(tenant_id: int, action: str = "query") -> dict:
 # ORQUESTRADOR CENTRAL (AGENTE ADMIN)
 # =============================================================================
 
-async def handle_admin_query(message: str, history: list, db: Session, tenant_id: int, session_id: str = None): # Adicionado session_id
+async def handle_admin_query(message: str, history: list, db: Session, tenant_id: int, session_id: str = None):
+    """
+    Ponto de entrada principal do Admin Agent.
+    Delega para o AdminOrchestrator (multi-agentes) que roteia para o especialista certo.
+    Mantém compatibilidade total com os routers existentes.
+    """
+    print(f"[AI_ADMIN_LOG] Delegando para AdminOrchestrator | tenant={tenant_id} | session={session_id}")
+    from agents.admin_orchestrator import handle_admin_query_v2
+    return await handle_admin_query_v2(message, history, tenant_id, session_id or "default_admin")
+
+
+async def _handle_admin_query_legacy(message: str, history: list, db: Session, tenant_id: int, session_id: str = None):
+    """Versão legada mantida para referência. Não é mais chamada pelo router."""
     # --- SELEÇÃO DE MOTOR (GEMINI PREVIEW) ---
     google_key = os.getenv("GOOGLE_API_KEY")
     gemini_model = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash-lite"

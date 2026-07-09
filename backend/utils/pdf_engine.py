@@ -34,14 +34,14 @@ class ProfessionalReport:
         self.story = []
         self._info = self._get_pousada_info()
         
-        # Estilos Customizados de Alta Fidelidade
+        # Estilos Customizados de Alta Fidelidade (Padrão Moderno)
         self.styles.add(ParagraphStyle(
             name='ExecTitle',
-            parent=self.styles['Heading1'],
-            fontSize=22,
+            fontSize=24,
             textColor=colors.HexColor("#0f172a"),
-            spaceAfter=20,
-            fontName='Helvetica-Bold'
+            spaceAfter=2,
+            fontName='Helvetica-Bold',
+            leading=28
         ))
         
         self.styles.add(ParagraphStyle(
@@ -49,16 +49,40 @@ class ProfessionalReport:
             fontSize=10,
             textColor=colors.HexColor("#64748b"),
             alignment=0,
-            spaceAfter=10
+            spaceAfter=12,
+            fontName='Helvetica',
+            leading=12
+        ))
+
+        self.styles.add(ParagraphStyle(
+            name='SectionTitle',
+            fontSize=16,
+            textColor=colors.HexColor("#1e293b"),
+            spaceBefore=15,
+            spaceAfter=10,
+            fontName='Helvetica-Bold',
+            borderPadding=(0, 0, 5, 0),
+            leading=20
+        ))
+
+        self.styles.add(ParagraphStyle(
+            name='TableTitle',
+            fontSize=11,
+            textColor=colors.HexColor("#334155"),
+            spaceBefore=12,
+            spaceAfter=6,
+            fontName='Helvetica-BoldOblique',
+            leading=14
         ))
 
         self.styles.add(ParagraphStyle(
             name='ExecTOC',
             fontSize=11,
-            textColor=colors.HexColor("#334155"),
+            textColor=colors.HexColor("#2563eb"),
             leftIndent=10,
             spaceBefore=5,
-            bulletText='•'
+            bulletText='•',
+            fontName='Helvetica'
         ))
 
     def _get_pousada_info(self):
@@ -126,8 +150,15 @@ class ProfessionalReport:
     def add_section_header(self, text, anchor=None):
         if anchor:
             text = f"<a name='{anchor}'/>{text}"
-        self.story.append(Paragraph(text, self.styles['Heading2']))
-        self.story.append(Spacer(1, 0.3*cm))
+        self.story.append(Paragraph(text, self.styles['SectionTitle']))
+        # Linha decorativa sob o título da seção
+        line_data = [[""]]
+        line_table = Table(line_data, colWidths=[A4[0] - 3*cm])
+        line_table.setStyle(TableStyle([
+            ('LINEBELOW', (0,0), (-1,-1), 1, colors.HexColor("#e2e8f0"))
+        ]))
+        self.story.append(line_table)
+        self.story.append(Spacer(1, 0.4*cm))
 
     def add_kpi_cards(self, cards: list):
         data = [[Paragraph(f"<font color='#64748b' size=8>{c['label']}</font><br/><br/><font size=14><b>{c['value']}</b></font>", self.styles['Normal']) for c in cards]]
@@ -144,23 +175,26 @@ class ProfessionalReport:
         self.story.append(t)
         self.story.append(Spacer(1, 0.8*cm))
 
-    def add_table(self, data, col_widths=None, align='CENTER'):
+    def add_table(self, data, col_widths=None, align='CENTER', title=None):
+        if title:
+            self.story.append(Paragraph(title, self.styles['TableTitle']))
+            
         t = Table(data, colWidths=col_widths, hAlign=align)
         t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1e293b")), 
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#0f172a")), # Darker navy
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 9),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-            ('TOPPADDING', (0, 0), (-1, 0), 8),
-            ('GRID', (0, 0), (-1, -1), 0.1, colors.HexColor("#cbd5e1")),
+            ('FONTSIZE', (0, 0), (-1, 0), 10), # Slightly larger header
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+            ('TOPPADDING', (0, 0), (-1, 0), 10),
+            ('GRID', (0, 0), (-1, -1), 0.1, colors.HexColor("#e2e8f0")),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('FONTSIZE', (0, 1), (-1, -1), 8),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#f1f5f9")]) 
+            ('FONTSIZE', (0, 1), (-1, -1), 9), # Slightly larger body
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]) 
         ]))
         self.story.append(t)
-        self.story.append(Spacer(1, 0.5*cm))
+        self.story.append(Spacer(1, 0.8*cm))
 
     def add_paragraph(self, text, style_name='Normal'):
         """Adiciona um bloco de texto (análise do robô)."""

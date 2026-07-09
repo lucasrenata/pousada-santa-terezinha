@@ -98,6 +98,16 @@ class StateManager:
                 logger.warning(f"[STATE_LOG] Sessão {session_id} não encontrada para tenant {self.tenant_id}")
                 return None
 
+            # --- LÓGICA DE EXPIRAÇÃO DE 1 HORA ---
+            from datetime import datetime, timedelta
+            if session_state.updated_at:
+                # updated_at pode vir sem timezone do banco, garantimos a comparação correta
+                diff = datetime.utcnow() - session_state.updated_at.replace(tzinfo=None)
+                if diff > timedelta(hours=1):
+                    logger.info(f"⏳ [STATE_LOG] Sessão {session_id} expirou (mais de 1h de inatividade). Resetando contexto.")
+                    # Opcional: Poderíamos deletar do banco aqui, mas retornar None já resolve para a IA
+                    return None
+
             return {
                 'session_id': session_state.session_id,
                 'current_state': session_state.current_state,

@@ -45,7 +45,12 @@ def update_setting(setting: SettingSchema, db: Session = Depends(get_db), curren
         db_setting.value = setting.value
         db_setting.description = setting.description
     else:
-        new_s = models.SystemSetting(key=setting.key, value=setting.value, description=setting.description)
+        new_s = models.SystemSetting(
+            key=setting.key, 
+            value=setting.value, 
+            description=setting.description,
+            tenant_id=current_user.tenant_id
+        )
         db.add(new_s)
     db.commit()
     return {"message": "Salvo"}

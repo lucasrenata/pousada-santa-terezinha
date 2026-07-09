@@ -15,50 +15,41 @@ from psycopg_pool import AsyncConnectionPool
 import models
 from database import SessionLocal, set_tenant_context
 from agents.schemas.session_state import HotelBookingState
+from agents.auditor_agent import AuditorAgent
 
 logger = logging.getLogger("SUPERVISOR")
 
 def extract_state_from_history(messages: List[Any]) -> Dict[str, Any]:
     """
-    Extrai check-in, check-out, group_size e CPF das mensagens.
-    Foca nas mensagens recentes para evitar confusão com dados antigos.
+    Extrai check-in, check-out, group_size, CPF e room_id das mensagens de forma robusta.
     """
-    from utils.date_parser import extract_dates_from_text
+    from utils.date_parser import extract_dates_from_text, extract_group_size_from_text
     
-    # Pega apenas as últimas 4 mensagens para contexto de extração
-    recent_messages = messages[-4:]
-    full_text = " ".join([m.content for m in recent_messages if isinstance(m, HumanMessage) and isinstance(m.content, str)])
+    # Analisa as últimas 6 mensagens para manter o contexto vivo
+    recent_messages = messages[-6:]
+    full_text = " ".join([str(m.content) for m in recent_messages if hasattr(m, 'content')])
     
-    # Prioriza a ÚLTIMA mensagem para group_size para evitar "2" + "2" = 22
-    last_user_msg = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
+    # Extração de Datas
+    ci, co = extract_dates_from_text(full_text)
+    
+    # Extração de Pessoas (foca na última mensagem para evitar somas erradas)
+    last_user_msg = next((str(m.content) for m in reversed(messages) if hasattr(m, 'content') and not isinstance(m, AIMessage)), "")
+    gs = extract_group_size_from_text(last_user_msg) or extract_group_size_from_text(full_text)
+    
+    # Extração de CPF
+    cpf_match = re.search(r'\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b', full_text) or re.search(r'\b\d{11}\b', full_text)
+    cpf = cpf_match.group(0).replace(".", "").replace("-", "") if cpf_match else None
+    
+    # Extração de Quarto
+    room_match = re.search(r'\b(?:quarto|número|room|nº|#)\s*[:#]?\s*(\d{3})\b', full_text, re.IGNORECASE)
+    room_id = room_match.group(1) if room_match else None
     
     state = {}
-    
-    # Datas
-    dates = extract_dates_from_text(full_text)
-    if dates:
-        state["check_in"] = dates[0]
-        if len(dates) > 1:
-            state["check_out"] = dates[1]
-            
-    # Group Size (Sanidade: 1 a 15 pessoas)
-    group_match = re.search(r"(\d+)\s*(pess|adult|hosp|alguém)", last_user_msg.lower())
-    if not group_match:
-        group_match = re.search(r"^\s*(\d+)\s*$", last_user_msg) # Match número isolado "2"
-        
-    if group_match:
-        val = int(group_match.group(1))
-        if 1 <= val <= 15: # Limite de sanidade
-            state["group_size"] = val
-            
-    # CPF
-    cpf_match = re.search(r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b", full_text)
-    if cpf_match:
-        state["cpf"] = cpf_match.group(0).replace(".", "").replace("-", "")
-
-    # Detecção de room_id (ex: "quarto 102", "quarto número 101", "número 303")
-    room_match = re.search(r'\b(?:quarto|número|room|nº|#)\s*[:#]?\s*(\d{3})\b', full_text, re.IGNORECASE)
-    if room_match: state["room_id"] = room_match.group(1)
+    if ci: state["check_in"] = ci
+    if co: state["check_out"] = co
+    if gs: state["group_size"] = gs
+    if cpf: state["cpf"] = cpf
+    if room_id: state["room_id"] = room_id
     
     return state
 
@@ -100,9 +91,9 @@ class SupervisorAgent:
 
     async def extractor_node(self, state: HotelBookingState):
         # O extractor olha todo o histórico atual para não perder nada
-        extracted = extract_state_from_history(state["messages"])
-        logger.info(f"[FSM][EXTRACTOR] Novas entidades: {extracted}")
-        return extracted
+        extracted_data = extract_state_from_history(state["messages"])
+        logger.info(f"[FSM][EXTRACTOR] Novas entidades: {extracted_data}")
+        return extracted_data
 
     def fsm_router(self, state: HotelBookingState) -> str:
         last_msg = state["messages"][-1].content.lower()
@@ -116,7 +107,7 @@ class SupervisorAgent:
         
         # 2. Rota de PAGAMENTO (Se existe reserva E intenção de pagar)
         if state.get("booking_id"):
-            payment_keywords = ["pagar", "pagamento", "pix", "comprovante", "cartão", "link", "valor", "sinal", "depósito", "como eu pago"]
+            payment_keywords = ["pagar", "pagamento", "pix", "comprovante", "cartão", "link", "valor", "sinal", "depósito", "como eu pago", "arquivo", "enviado", "pago"]
             is_payment_intent = any(kw in last_msg for kw in payment_keywords) or \
                                last_msg in ["sim", "quero", "ok", "pode ser", "claro", "manda", "envia", "por favor", "com certeza", "bora"]
             
@@ -131,14 +122,20 @@ class SupervisorAgent:
         from agents.specialists.reservas_agent import build_reservas_graph
         graph = build_reservas_graph(self.tenant_id, state["session_id"])
         
-        # Prepara entrada: Blackboard no topo + histórico
         board_msg = self._build_blackboard_msg(state)
         input_messages = [board_msg] + state["messages"]
         
         logger.info(f"[FSM][RESERVAS] Iniciando sub-grafo...")
         res = await graph.ainvoke({"messages": input_messages})
         
-        # Retorna apenas as mensagens que o especialista ADICIONOU (ignorando o input)
+        # --- SCHEMA VALIDATOR (SOLUÇÃO 2) ---
+        last_ai_msg = res["messages"][-1].content
+        if "robot_calculate_quote" in str(res["messages"]) and "R$" not in str(last_ai_msg):
+            logger.warning("[FSM][RESERVAS] Resposta não estruturada detectada. Forçando re-formatação.")
+            # Se o especialista esqueceu de falar os preços, o Supervisor injeta os dados do blackboard
+            if state.get("quote_options"):
+                last_ai_msg += "\n[VALIDATOR] Sistema: Use estes dados de cotação: " + str(state["quote_options"])
+
         new_count = len(res["messages"]) - len(input_messages)
         return {"messages": res["messages"][-new_count:] if new_count > 0 else []}
 
@@ -168,23 +165,44 @@ class SupervisorAgent:
     def _build_blackboard_msg(self, state: HotelBookingState) -> SystemMessage:
         from datetime import datetime
         now = datetime.now()
-        current_date_info = f"HOJE: {now.strftime('%d/%m/%Y')} ({now.strftime('%A')})"
+        current_date_info = f"HOJE: {now.strftime('%d/%m')}/2026 ({now.strftime('%A')})"
         
-        b = [current_date_info]
-        is_complete = False
-        if state.get("check_in") and state.get("check_out") and state.get("group_size"):
-            is_complete = True
-            b.append(f"- PERÍODO: {state['check_in']} a {state['check_out']}")
-            b.append(f"- HÓSPEDES: {state['group_size']}")
+        # --- QUADRO DE FATOS ---
+        facts = [current_date_info, "ANO: 2026"]
+        has_dates = state.get("check_in") and state.get("check_out")
+        has_group = state.get("group_size")
+        has_quote = state.get("quote_options") # Se já fizemos cotação
+        has_cpf = state.get("cpf")
+        has_guest = state.get("guest_id")
+        has_booking = state.get("booking_id")
         
-        if state.get("room_id"): b.append(f"- QUARTO SELECIONADO: {state['room_id']}")
-        if state.get("guest_id"): b.append(f"- HÓSPEDE CADASTRADO ID: {state['guest_id']}")
-        if state.get("booking_id"): b.append(f"- RESERVA CRIADA: #{state['booking_id']}")
-        
-        content = "📍 QUADRO DE ATENDIMENTO:\n" + ("\n".join(b) if b else "(Vazio)")
-        
-        if is_complete:
-            content += "\n\n💡 DICA DE ATENDIMENTO: Você já tem dados da reserva no quadro. Se o hóspede te saudar, seja educado, retribua brevemente e já mostre os próximos passos ou preços. Não finja que não sabe das datas."
+        if state.get("check_in"): facts.append(f"- CHECK-IN: {state['check_in']}")
+        if state.get("check_out"): facts.append(f"- CHECK-OUT: {state['check_out']}")
+        if state.get("group_size"): facts.append(f"- HÓSPEDES: {state['group_size']}")
+        if state.get("cpf"): facts.append(f"- CPF: {state['cpf']}")
+        if state.get("guest_id"): facts.append(f"- CADASTRO: LOCALIZADO (ID {state['guest_id']})")
+        if state.get("booking_id"): facts.append(f"- RESERVA: #{state['booking_id']}")
+
+        # --- ESTRATÉGIA DO ROTEIRO DE 14 PASSOS ---
+        strategy = "🎯 ESTRATÉGIA DO ROTEIRO: "
+        if has_booking:
+            strategy += "Reserva criada! Explique o pagamento do sinal e entregue o PIX/Link (Passos 11-14)."
+        elif has_guest and has_quote:
+            strategy += "Cadastro OK! Faça a confirmação final de Quarto/Valor/Pessoas e crie a reserva (Passos 9-10)."
+        elif has_cpf and not has_guest:
+            strategy += "CPF fornecido mas sem cadastro. Forneça o LINK DE CADASTRO agora (Passo 7)."
+        elif has_quote:
+            strategy += "Valores entregues! Se o hóspede der o OK, peça o CPF do responsável (Passos 5-6)."
+        elif has_dates and has_group:
+            strategy += "Dados prontos. Chame `robot_calculate_quote` e entregue os valores (Passo 4)."
+        elif has_dates:
+            strategy += "Temos datas. Pergunte agora a quantidade de pessoas e idades (Passo 3)."
+        else:
+            strategy += "Início do funil. Dê as boas-vindas e pergunte as datas (Passos 1-2)."
+
+        content = f"📍 QUADRO DE FATOS:\n" + "\n".join(facts)
+        content += f"\n\n{strategy}\n"
+        content += "\n⚠️ REGRAL GERAL: Nunca pule a ordem. Só peça CPF após o hóspede aceitar os valores."
             
         return SystemMessage(content=content)
 
@@ -201,13 +219,38 @@ class SupervisorAgent:
             # Carrega histórico para o estado inicial
             db = SessionLocal()
             set_tenant_context(db, self.tenant_id)
-            db_msgs = db.query(models.ChatMessage).filter(models.ChatMessage.session_id == session_id, models.ChatMessage.tenant_id == self.tenant_id).order_by(models.ChatMessage.created_at.asc()).all()
+            
+            # --- FILTRO DE MENSAGENS RECENTES (ÚLTIMA 1 HORA) ---
+            from datetime import datetime, timedelta
+            one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+            
+            db_msgs = db.query(models.ChatMessage).filter(
+                models.ChatMessage.session_id == session_id, 
+                models.ChatMessage.tenant_id == self.tenant_id,
+                models.ChatMessage.created_at >= one_hour_ago
+            ).order_by(models.ChatMessage.created_at.asc()).all()
             db.close()
             history = []
+            # Filtro anti-repetição de saudações no histórico do banco
+            greeting_patterns = ["a paz,", "bem vindo a pousada", "como posso ajudar hoje?", "olá! encontrei as informações"]
+            
             for m in db_msgs[-10:]:
-                if m.role == "user": history.append(HumanMessage(content=m.content))
-                elif m.role == "assistant": history.append(AIMessage(content=m.content))
-            history.append(HumanMessage(content=message))
+                content_lower = m.content.lower()
+                # Se for uma saudação automática repetida, ignora para não confundir o modelo
+                if any(p in content_lower for p in greeting_patterns) and m.role == "assistant":
+                    continue
+                    
+                if m.role == "user": 
+                    history.append(HumanMessage(content=m.content))
+                elif m.role == "assistant": 
+                    history.append(AIMessage(content=m.content))
+            
+            # Adiciona a mensagem atual (garantindo que não seja um eco)
+            if not any(p in message.lower() for p in greeting_patterns):
+                history.append(HumanMessage(content=message))
+            else:
+                # Se for apenas uma saudação, trata como início limpo
+                history = [HumanMessage(content=message)]
 
             initial_state = {"messages": history, "tenant_id": self.tenant_id, "session_id": session_id}
             
@@ -225,12 +268,10 @@ class SupervisorAgent:
             updates = self._extract_final_data(final_state)
             sm.update_state(session_id, updates)
 
-            # Resposta
-            # Resposta: Busca a última mensagem de texto (AIMessage) de forma robusta
+            # Resposta: Busca a última mensagem de texto (AIMessage) gerada NESTE turno
             response = ""
             for m in reversed(final_state["messages"]):
                 if isinstance(m, AIMessage) and m.content:
-                    # Garante que 'content' seja uma string, mesmo que venha como lista do Gemini
                     content = ""
                     if isinstance(m.content, str):
                         content = m.content.strip()
@@ -238,29 +279,67 @@ class SupervisorAgent:
                         content = " ".join([c["text"] for c in m.content if isinstance(c, dict) and "text" in c]).strip()
                     
                     if content and not content.startswith("{"):
-                        # --- FILTRO ANTI-REPETIÇÃO ---
-                        sentences = content.replace("!", "!|").replace("?", "?|").replace(".", ".|").split("|")
-                        unique_sentences = []
-                        for s in sentences:
-                            s_clean = s.strip()
-                            if s_clean and s_clean not in unique_sentences:
-                                unique_sentences.append(s_clean)
-                        response = " ".join(unique_sentences)
+                        # Se a resposta for um 'Frankenstein' (repetindo saudações), limpa
+                        if "A paz," in content and len(final_state["messages"]) > 3:
+                            # Se não for o início da conversa, remove a saudação repetida
+                            content = re.sub(r"^(A paz,.*?Como posso te ajudar hoje\?)\s*", "", content, flags=re.IGNORECASE | re.DOTALL)
+                        
+                        response = content.strip()
                         break
 
             if not response:
-                response = "Olá! Encontrei as informações da sua reserva. Como posso te ajudar a finalizar?"
-                logger.error(f"[SUPERVISOR] Falha ao encontrar resposta de texto. Histórico: {final_state['messages'][-3:]}")
+                logger.warning(f"[SUPERVISOR] Especialista não gerou texto. Iniciando Resgate de Resposta...")
+                try:
+                    # Tenta uma chamada rápida de síntese para não deixar o usuário no vácuo
+                    from langchain_google_genai import ChatGoogleGenerativeAI
+                    rescue_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", google_api_key=self.api_key, temperature=0.7)
+                    
+                    # Constrói um prompt de resumo baseado no Blackboard e últimas mensagens
+                    recap_prompt = f"""Você é o SUPERVISOR da Pousada. 
+O especialista técnico executou ações (verificou preços, disponibilidade ou criou reserva), mas esqueceu de falar com o hóspede.
+
+DADOS ATUAIS DO SISTEMA: {updates}
+
+Com base no histórico e nos dados acima, dê uma resposta CURTA, NATURAL e DIRETA para o hóspede informando o que foi feito ou o que foi encontrado. 
+
+⚠️ REGRA DE OURO: NÃO FAÇA CONTAS. Use apenas os valores que aparecem em 'DADOS ATUAIS DO SISTEMA'. Se o sistema diz que o total é R$ 100, diga que é R$ 100. Nunca tente somar ou multiplicar por conta própria.
+Seja acolhedor."""
+                    
+                    rescue_msg = await rescue_llm.ainvoke([
+                        SystemMessage(content=recap_prompt),
+                        HumanMessage(content="O que você encontrou/fez para mim?")
+                    ])
+                    response = rescue_msg.content.strip()
+                    logger.info(f"[SUPERVISOR] Resgate concluído com sucesso: {response[:50]}...")
+                except Exception as e:
+                    logger.error(f"[SUPERVISOR] Falha no Resgate: {e}")
+                    response = "Olá! Já processei sua solicitação no sistema. Como posso te ajudar com os próximos passos?"
             
             # --- SANITIZAÇÃO DE LINKS MARKDOWN ---
             # Remove qualquer espaço vazio dentro da sintaxe de link do markdown [texto]( ur l ) -> [texto](url)
             # Isso garante que a UI frontend (react-markdown) renderize corretamente como Botão.
-            import re
             response = re.sub(
                 r'\[(.*?)\]\(\s*(.*?)\s*\)', 
                 lambda m: f"[{m.group(1)}]({m.group(2).replace(' ', '')})", 
                 response
             )
+
+            # 🔍 AUDITORIA DE QUALIDADE (Anti-Falha de Ferramentas)
+            auditor = AuditorAgent(self.tenant_id)
+            last_action = None
+            action_details = {}
+            
+            if updates.get("booking_id"):
+                last_action = "create_booking"
+                action_details = {"booking_id": updates["booking_id"]}
+            elif updates.get("guest_id"):
+                last_action = "identify_guest"
+                action_details = {"guest_id": updates["guest_id"]}
+                
+            response = await auditor.audit_response(response, {
+                "last_action": last_action,
+                "action_details": action_details
+            })
             
             db = SessionLocal()
             set_tenant_context(db, self.tenant_id)
@@ -268,7 +347,7 @@ class SupervisorAgent:
             db.commit()
             db.close()
 
-            return {"response": response, "session_id": session_id}
+            return {"response": response, "session_id": session_id, "facts": updates}
 
     def _extract_final_data(self, state: HotelBookingState) -> Dict[str, Any]:
         updates = {}

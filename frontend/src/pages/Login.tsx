@@ -52,7 +52,7 @@ export default function Login() {
       if (response.data.role) {
         localStorage.setItem('role', response.data.role);
       }
-      if (response.data.tenant_id) {
+      if (response.data.tenant_id !== undefined && response.data.tenant_id !== null) {
         localStorage.setItem('tenant_id', response.data.tenant_id.toString());
       }
       
