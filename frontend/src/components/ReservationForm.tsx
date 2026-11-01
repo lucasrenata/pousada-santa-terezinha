@@ -64,6 +64,9 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
   const [pricingModel, setPricingModel] = useState<'per_person' | 'per_room'>('per_person');
   const [childPercentage, setChildPercentage] = useState(50);
   const [infantFixedRate, setInfantFixedRate] = useState(30);
+  const [checkInTimeRule, setCheckInTimeRule] = useState('14:00');
+  const [checkOutTimeRule, setCheckOutTimeRule] = useState('12:00');
+  const [depositPercentage, setDepositPercentage] = useState(50);
   const [showCustomerForm, setShowCustomerForm] = useState(false);
   
   const { createReservation, updateReservation } = useReservations();
@@ -78,14 +81,14 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
   const form = useForm<ReservationFormData>({
     resolver: zodResolver(reservationSchema),
     defaultValues: {
-      guest_id: reservation?.id ? 0 : 0, // Será setado no useEffect
+      guest_id: reservation?.id ? 0 : 0, 
       room_id: initialRoomId || "", 
       check_in_date: reservation?.check_in_date ? new Date(reservation.check_in_date) : new Date(getTodayISODate() + 'T00:00:00'),
       check_out_date: reservation?.check_out_date ? new Date(reservation.check_out_date) : new Date(new Date(getTodayISODate() + 'T00:00:00').setDate(new Date(getTodayISODate() + 'T00:00:00').getDate() + 1)),
       check_in_time: reservation?.check_in_time || '14:00',
       check_out_time: reservation?.check_out_time || '12:00',
       total_guests: reservation?.total_guests || 1,
-      daily_rate: reservation?.total_amount ? 0 : 0, // Lógica de cálculo ou manual
+      daily_rate: reservation?.total_amount ? 0 : 0, 
       deposit_amount: reservation?.deposit_amount || 0,
       payment_status: reservation?.payment_status || 'pending',
       status: reservation?.status || 'pendente',
@@ -107,17 +110,24 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
     const [start, end, ciTime, coTime, rate, guests, companionsList] = watchedValues;
     if (!start || !end || !rate) return 0;
 
-    // Regra hoteleira de contagem de diárias (baseada no backend logic)
     const calculateDays = (d1: Date, d2: Date, h1: string, h2: string) => {
       const msPerDay = 24 * 60 * 60 * 1000;
       let diff = Math.ceil((new Date(d2).setHours(0,0,0,0) - new Date(d1).setHours(0,0,0,0)) / msPerDay);
       if (diff < 1) diff = 1;
 
-      const hour1 = parseInt(h1.split(':')[0]);
-      const hour2 = parseInt(h2.split(':')[0]);
+      const parseTimeToFloat = (timeStr: string, defaultStr: string) => {
+        const targetStr = timeStr || defaultStr;
+        const [hours, minutes] = targetStr.split(':').map(Number);
+        return hours + (minutes / 60);
+      };
 
-      if (hour1 < 14) diff += 1; // Check-in antecipado
-      if (hour2 >= 14) diff += 1; // Check-out tardio
+      const hour1 = parseTimeToFloat(h1, checkInTimeRule);
+      const hour2 = parseTimeToFloat(h2, checkOutTimeRule);
+      const limit_ci = parseTimeToFloat(checkInTimeRule, "14:00");
+      const limit_co = parseTimeToFloat(checkOutTimeRule, "12:00");
+
+      if (hour1 < limit_ci) diff += 1; // Check-in antecipado
+      if (hour2 > limit_co) diff += 1; // Check-out tardio (usando >)
 
       return diff;
     };
@@ -128,7 +138,6 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
       return days * rate;
     }
 
-    // Lógica Per Person (Adultos full, Crianças %, Bebês fixo)
     let total = 0;
     const allAges = [18, ...(companionsList?.map(c => Number(c.age)) || [])];
     
@@ -139,7 +148,14 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
     });
 
     return total;
-  }, [watchedValues, pricingModel, childPercentage, infantFixedRate]);
+  }, [watchedValues, pricingModel, childPercentage, infantFixedRate, checkInTimeRule, checkOutTimeRule]);
+
+  // Auto-calcular valor padrão de sinal (deposit_amount) para novas reservas enquanto o usuário não alterar manualmente
+  useEffect(() => {
+    if (!reservation && !form.formState.dirtyFields.deposit_amount) {
+      form.setValue('deposit_amount', Number((totalPresumed * (depositPercentage / 100)).toFixed(2)));
+    }
+  }, [totalPresumed, depositPercentage, reservation, form]);
 
   // --- BUSCA DE DISPONIBILIDADE E CONFIGS EM TEMPO REAL ---
   const checkInDate = form.watch('check_in_date');
@@ -157,16 +173,32 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
         const model = response.data.find((s: any) => s.key === 'pousada_pricing_model');
         const childPct = response.data.find((s: any) => s.key === 'pousada_rate_child_percentage');
         const infantFixed = response.data.find((s: any) => s.key === 'pousada_rate_infant_fixed');
+        const ciTime = response.data.find((s: any) => s.key === 'check_in_time');
+        const coTime = response.data.find((s: any) => s.key === 'check_out_time');
+        const depPct = response.data.find((s: any) => s.key === 'pousada_deposit_percentage');
         
         if (model) setPricingModel(model.value as any);
         if (childPct) setChildPercentage(Number(childPct.value));
         if (infantFixed) setInfantFixedRate(Number(infantFixed.value));
+        if (ciTime) {
+          setCheckInTimeRule(ciTime.value);
+          if (!reservation) {
+            form.setValue('check_in_time', ciTime.value);
+          }
+        }
+        if (coTime) {
+          setCheckOutTimeRule(coTime.value);
+          if (!reservation) {
+            form.setValue('check_out_time', coTime.value);
+          }
+        }
+        if (depPct) setDepositPercentage(Number(depPct.value));
       } catch (err) {
         console.error("Erro ao carregar modelo de preços", err);
       }
     };
     fetchSettings();
-  }, []);
+  }, [reservation, form]);
 
   // Mantém total_guests sincronizado com acompanhantes no modo normal
   useEffect(() => {
@@ -237,6 +269,9 @@ export function ReservationForm({ reservation, initialRoomId, onSuccess, onCance
         check_out_time: reservation.check_out_time || "14:00",
         daily_rate: reservation.daily_rate || 0,
         total_guests: reservation.total_guests || 1,
+        deposit_amount: reservation.deposit_amount || 0,
+        payment_status: reservation.payment_status || 'pending',
+        status: reservation.status || 'pendente',
         notes: reservation.notes || "",
         companions: reservation.companions || [],
       });

@@ -15,7 +15,6 @@ import PublicBooking from './pages/PublicBooking';
 import ServicePanel from './pages/ServicePanel';
 import Settings from './pages/Settings';
 import AdminUsers from './pages/AdminUsers';
-import Chat from './pages/Chat';
 import Events from './pages/Events';
 import PDV from './pages/PDV';
 import SuperDashboard from './pages/SuperDashboard';
@@ -48,7 +47,6 @@ function App() {
         <Route element={<ProtectedRoute />}>
           <Route element={<MainLayout />}>
             <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/chat" element={<Chat />} />
             <Route path="/rooms" element={<Rooms />} />
             <Route path="/bookings" element={<Reservations />} />
             <Route path="/bookings/new" element={<NewBooking />} />

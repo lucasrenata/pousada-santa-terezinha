@@ -38,21 +38,22 @@ export const calculateDailyRatesWithHours = (
   checkInDate: Date,
   checkInTime: string | null,
   checkOutDate: Date,
-  checkOutTime: string | null
+  checkOutTime: string | null,
+  checkInTimeRule: string = "14:00",
+  checkOutTimeRule: string = "12:00"
 ): number => {
-  // Constantes do sistema
-  const DAILY_RATE_START_HOUR = 14; // 14:00
-  const CHECKOUT_LIMIT_HOUR = 14;   // 14:00
-
   // Converter horários de string para número (ex: "03:30" → 3.5)
-  const parseTime = (timeStr: string | null): number => {
-    if (!timeStr) return DAILY_RATE_START_HOUR; // Default: 14:00
-    const [hours, minutes] = timeStr.split(':').map(Number);
+  const parseTime = (timeStr: string | null, defaultStr: string): number => {
+    const targetStr = timeStr || defaultStr;
+    const [hours, minutes] = targetStr.split(':').map(Number);
     return hours + (minutes / 60);
   };
 
-  const checkInHour = parseTime(checkInTime);
-  const checkOutHour = parseTime(checkOutTime);
+  const limit_ci = parseTime(checkInTimeRule, "14:00");
+  const limit_co = parseTime(checkOutTimeRule, "12:00");
+
+  const checkInHour = parseTime(checkInTime, checkInTimeRule);
+  const checkOutHour = parseTime(checkOutTime, checkOutTimeRule);
 
   // Criar cópias das datas para não mudar os originais
   let adjustedCheckIn = new Date(checkInDate);
@@ -62,8 +63,8 @@ export const calculateDailyRatesWithHours = (
   adjustedCheckIn.setHours(0, 0, 0, 0);
   adjustedCheckOut.setHours(0, 0, 0, 0);
 
-  // REGRA 1: Se check-in for antes das 14:00, subtrair 1 dia (cobra diária do dia anterior)
-  if (checkInHour < DAILY_RATE_START_HOUR) {
+  // REGRA 1: Se check-in for antes da hora limite, subtrair 1 dia (cobra diária do dia anterior)
+  if (checkInHour < limit_ci) {
     adjustedCheckIn.setDate(adjustedCheckIn.getDate() - 1);
   }
 
@@ -71,9 +72,9 @@ export const calculateDailyRatesWithHours = (
   const diffTime = adjustedCheckOut.getTime() - adjustedCheckIn.getTime();
   const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
 
-  // REGRA 2: Se check-out for depois das 14:00, adicionar 1 diária
+  // REGRA 2: Se check-out for depois da hora limite, adicionar 1 diária
   let totalDays = diffDays;
-  if (checkOutHour > CHECKOUT_LIMIT_HOUR) {
+  if (checkOutHour > limit_co) {
     totalDays += 1;
   }
 
@@ -85,14 +86,23 @@ export const calculateDaysStayed = (
   checkInDate: string, 
   checkOutDate?: string,
   checkInTime?: string | null,
-  checkOutTime?: string | null
+  checkOutTime?: string | null,
+  checkInTimeRule: string = "14:00",
+  checkOutTimeRule: string = "12:00"
 ): number => {
   const checkIn = new Date(checkInDate);
   const endDate = checkOutDate ? new Date(checkOutDate) : new Date();
   
   // Se tiver horários, usar a lógica avançada
   if (checkInTime || checkOutTime) {
-    return calculateDailyRatesWithHours(checkIn, checkInTime || null, endDate, checkOutTime || null);
+    return calculateDailyRatesWithHours(
+      checkIn, 
+      checkInTime || null, 
+      endDate, 
+      checkOutTime || null,
+      checkInTimeRule,
+      checkOutTimeRule
+    );
   }
   
   // Fallback: lógica antiga (sem horários)

@@ -67,6 +67,18 @@ class ConfigSaveRequest(BaseModel):
     mp_public_key: str
     manual_pix_key: str | None = None
 
+@router.get("/public/config/{tenant_id}")
+def get_public_payment_config(tenant_id: int, db: Session = Depends(get_db)):
+    """Retorna chaves públicas e chave PIX para o portal público do hóspede."""
+    set_tenant_context(db, tenant_id)
+    config = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_id == tenant_id).first()
+    if not config:
+        return {"mp_public_key": "", "manual_pix_key": ""}
+    return {
+        "mp_public_key": config.mp_public_key,
+        "manual_pix_key": config.manual_pix_key or ""
+    }
+
 @router.get("/config")
 def get_mp_config(db: Session = Depends(get_db), current_user = Depends(get_current_staff)):
     config = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_id == current_user.tenant_id).first()

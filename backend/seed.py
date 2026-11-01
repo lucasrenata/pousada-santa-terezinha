@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from database import SessionLocal, engine
+from database import SessionLocal, engine, set_tenant_context
 import models
 from passlib.context import CryptContext
 
@@ -11,6 +11,7 @@ def get_password_hash(password):
 def seed_data():
     db = SessionLocal()
     try:
+        set_tenant_context(db, -1)
         # 1. Create Default Admin
         admin_user = db.query(models.User).filter(models.User.username == "admin").first()
         if not admin_user:

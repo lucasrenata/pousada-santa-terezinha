@@ -26,3 +26,5 @@ backend/reports/
 *.log
 agent_logs.txt
 backend_logs_tail.txt
+
+scratch_test_live.py

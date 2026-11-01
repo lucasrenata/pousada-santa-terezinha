@@ -97,6 +97,7 @@ class RoomUpdate(BaseModel):
 class RoomResponse(RoomBase):
     status: models.RoomStatus
     maintenance_note: str | None = None
+    remaining_capacity: Optional[int] = None
     class Config: from_attributes = True
 
 # --- GUESTS (COMPLETO DA DOC) ---
@@ -237,6 +238,7 @@ class BookingCreate(BaseModel):
     total_guests: int
     daily_rate: float
     notes: Optional[str] = None
+    deposit_amount: Optional[float] = None
     companions: List[CompanionCreate] = []
 
 class BookingUpdate(BaseModel):

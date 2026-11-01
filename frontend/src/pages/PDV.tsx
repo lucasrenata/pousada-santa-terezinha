@@ -112,6 +112,13 @@ export default function PDV() {
   const [movimentacaoAmount, setMovimentacaoAmount] = useState('');
   const [movimentacaoDesc, setMovimentacaoDesc] = useState('');
   const [caixaSummary, setCaixaSummary] = useState<any>(null);
+  
+  // Role & Security States
+  const role = localStorage.getItem('role');
+  const isAdminOrSuper = role === 'admin' || role === 'superadmin';
+  const [showPinInput, setShowPinInput] = useState(false);
+  const [managerPin, setManagerPin] = useState('');
+  const [divergenceError, setDivergenceError] = useState<string | null>(null);
 
   // --- QUICK ACCESS (ATALHOS) ---
   const [showQuickAccessModal, setShowQuickAccessModal] = useState(false);
@@ -150,6 +157,11 @@ export default function PDV() {
   }, []);
 
   useEffect(() => {
+    if (showCaixaModal) {
+      setShowPinInput(false);
+      setManagerPin('');
+      setDivergenceError(null);
+    }
     if (caixa && showCaixaModal) {
       loadCaixaSummary();
     }
@@ -357,14 +369,24 @@ export default function PDV() {
     }
   };
 
-  const handleCloseCaixa = async () => {
+  const handleCloseCaixa = async (pinOverride?: string) => {
     try {
-      await api.post('/pdv/caixa/fechar?closing_balance=' + closingBalance);
+      setDivergenceError(null);
+      const url = `/pdv/caixa/fechar?closing_balance=${closingBalance}` + (pinOverride ? `&manager_pin=${pinOverride}` : '');
+      await api.post(url);
       setCaixa(null);
       setShowCaixaModal(false);
+      setShowPinInput(false);
+      setManagerPin('');
       toast({ title: "Sucesso", description: "Caixa fechado com sucesso!" });
-    } catch (err) {
-      toast({ title: "Erro", description: "Erro ao fechar o caixa.", variant: "destructive" });
+    } catch (err: any) {
+      const errorMsg = err.response?.data?.detail || "Erro ao fechar o caixa.";
+      if (err.response?.status === 400 && (errorMsg.includes("faltando") || errorMsg.includes("sobrando") || errorMsg.includes("PIN"))) {
+        setDivergenceError(errorMsg);
+        setShowPinInput(true);
+      } else {
+        toast({ title: "Erro", description: errorMsg, variant: "destructive" });
+      }
     }
   };
 
@@ -859,33 +881,47 @@ export default function PDV() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                   {/* Lado Esquerdo: Resumo Financeiro */}
                   <div className="space-y-6">
-                    <Card className="p-6 border-none bg-slate-50 rounded-3xl space-y-4">
-                      <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                        <ChartLine size={14} /> Saldo de Dinheiro (Em Mãos)
-                      </h4>
-                      <div className="space-y-3">
-                         <div className="flex justify-between text-sm font-bold text-slate-600">
-                           <span>Abertura:</span>
-                           <span>{formatCurrency(caixaSummary?.opening_balance || 0)}</span>
-                         </div>
-                         <div className="flex justify-between text-sm font-bold text-emerald-600">
-                           <span>Vendas (Dinheiro):</span>
-                           <span>+ {formatCurrency(caixaSummary?.vendas_dinheiro || 0)}</span>
-                         </div>
-                         <div className="flex justify-between text-sm font-bold text-emerald-600">
-                           <span>Suprimentos:</span>
-                           <span>+ {formatCurrency(caixaSummary?.entradas_total || 0)}</span>
-                         </div>
-                         <div className="flex justify-between text-sm font-bold text-rose-500">
-                           <span>Sangrias/Retiradas:</span>
-                           <span>- {formatCurrency(caixaSummary?.retiradas_total || 0)}</span>
-                         </div>
-                         <div className="pt-3 border-t border-slate-200 flex justify-between items-end">
-                           <span className="text-sm font-black text-slate-900">SALDO EM DINHEIRO:</span>
-                           <span className="text-2xl font-black text-slate-900">{formatCurrency(caixaSummary?.saldo_dinheiro || 0)}</span>
-                         </div>
-                      </div>
-                    </Card>
+                    {isAdminOrSuper ? (
+                      <Card className="p-6 border-none bg-slate-50 rounded-3xl space-y-4">
+                        <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                          <ChartLine size={14} /> Saldo de Dinheiro (Em Mãos)
+                        </h4>
+                        <div className="space-y-3">
+                           <div className="flex justify-between text-sm font-bold text-slate-600">
+                             <span>Abertura:</span>
+                             <span>{formatCurrency(caixaSummary?.opening_balance || 0)}</span>
+                           </div>
+                           <div className="flex justify-between text-sm font-bold text-emerald-600">
+                             <span>Vendas (Dinheiro):</span>
+                             <span>+ {formatCurrency(caixaSummary?.vendas_dinheiro || 0)}</span>
+                           </div>
+                           <div className="flex justify-between text-sm font-bold text-emerald-600">
+                             <span>Suprimentos:</span>
+                             <span>+ {formatCurrency(caixaSummary?.entradas_total || 0)}</span>
+                           </div>
+                           <div className="flex justify-between text-sm font-bold text-rose-500">
+                             <span>Sangrias/Retiradas:</span>
+                             <span>- {formatCurrency(caixaSummary?.retiradas_total || 0)}</span>
+                           </div>
+                           <div className="pt-3 border-t border-slate-200 flex justify-between items-end">
+                             <span className="text-sm font-black text-slate-900">SALDO EM DINHEIRO:</span>
+                             <span className="text-2xl font-black text-slate-900">{formatCurrency(caixaSummary?.saldo_dinheiro || 0)}</span>
+                           </div>
+                        </div>
+                      </Card>
+                    ) : (
+                      <Card className="p-6 border-none bg-slate-50 rounded-3xl space-y-4">
+                        <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                          <ChartLine size={14} /> Saldo de Dinheiro
+                        </h4>
+                        <div className="space-y-3">
+                           <div className="flex justify-between text-sm font-bold text-slate-600">
+                             <span>Valor de Abertura:</span>
+                             <span>{formatCurrency(caixaSummary?.opening_balance || 0)}</span>
+                           </div>
+                        </div>
+                      </Card>
+                    )}
 
                     <Card className="p-6 border-none bg-blue-50/50 rounded-3xl space-y-4">
                       <h4 className="text-xs font-black text-blue-400 uppercase tracking-widest">
@@ -905,8 +941,8 @@ export default function PDV() {
                            <span>{formatCurrency(caixaSummary?.vendas_credito || 0)}</span>
                         </div>
                         <div className="pt-2 border-t border-blue-100 flex justify-between text-sm font-black text-blue-700">
-                           <span>TOTAL GERAL (BRUTO):</span>
-                           <span>{formatCurrency(caixaSummary?.saldo_geral || 0)}</span>
+                           <span>{isAdminOrSuper ? "TOTAL GERAL (BRUTO):" : "TOTAL (NÃO DINHEIRO):"}</span>
+                           <span>{formatCurrency(isAdminOrSuper ? (caixaSummary?.saldo_geral || 0) : ((caixaSummary?.vendas_pix || 0) + (caixaSummary?.vendas_debito || 0) + (caixaSummary?.vendas_credito || 0)))}</span>
                         </div>
                       </div>
                     </Card>
@@ -920,10 +956,35 @@ export default function PDV() {
                         value={closingBalance} 
                         onChange={e => setClosingBalance(e.target.value)} 
                       />
-                      <Button variant="destructive" className="w-full h-12 rounded-2xl font-black shadow-lg shadow-red-100" onClick={handleCloseCaixa}>
+                      <Button variant="destructive" className="w-full h-12 rounded-2xl font-black shadow-lg shadow-red-100" onClick={() => handleCloseCaixa()}>
                         ENCERRAR CAIXA
                       </Button>
                     </div>
+
+                    {showPinInput && (
+                      <div className="p-6 bg-red-50 border border-red-200 rounded-3xl space-y-4">
+                        <p className="text-xs font-bold text-red-600 leading-tight">
+                          {divergenceError}
+                        </p>
+                        <div className="space-y-2">
+                          <label className="text-xs font-black text-slate-500 uppercase tracking-wider">PIN do Gerente</label>
+                          <Input 
+                            type="password" 
+                            maxLength={6}
+                            placeholder="Digite o PIN de autorização" 
+                            className="h-12 bg-white border-red-200 rounded-2xl text-center font-black" 
+                            value={managerPin} 
+                            onChange={e => setManagerPin(e.target.value.replace(/\D/g, ''))} 
+                          />
+                        </div>
+                        <Button 
+                          className="w-full h-12 bg-red-600 hover:bg-red-700 rounded-2xl font-black text-sm text-white shadow-lg shadow-red-100"
+                          onClick={() => handleCloseCaixa(managerPin)}
+                        >
+                          AUTORIZAR E FECHAR
+                        </Button>
+                      </div>
+                    )}
                   </div>
 
                   {/* Lado Direito: Movimentações e Histórico */}

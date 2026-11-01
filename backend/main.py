@@ -12,8 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from database import engine
 import models
-from routers import auth, guests, rooms, bookings, products, finance, settings, payments, admin, chat, events, webhook_whatsapp, business_rules, superadmin, pdv, admin_live, customer_live
-from routes.chat import router as chat_v1_router
+from routers import auth, guests, rooms, bookings, products, finance, settings, payments, admin, events, webhook_whatsapp, business_rules, superadmin, pdv
 from routes.webhooks import router as webhooks_router
 import sys
 
@@ -51,15 +50,11 @@ app.include_router(settings.router)
 app.include_router(business_rules.router)
 app.include_router(payments.router)
 app.include_router(admin.router)
-app.include_router(chat.router)
-app.include_router(chat_v1_router)
 app.include_router(events.router)
 app.include_router(webhook_whatsapp.router)
 app.include_router(webhooks_router)
 app.include_router(superadmin.router)
 app.include_router(pdv.router)
-app.include_router(admin_live.router)
-app.include_router(customer_live.router)
 
 # Serve arquivos estáticos (Uploads de comprovantes, etc)
 os.makedirs("static/uploads/receipts", exist_ok=True)

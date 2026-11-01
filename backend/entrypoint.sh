@@ -73,6 +73,8 @@ if [ "$#" -gt 0 ]; then
     echo "🚀 Executando comando customizado: $@"
     exec "$@"
 else
+    echo "🤖 Iniciando robô de automação em background..."
+    python services/automation_robots.py &
     echo "🚀 Iniciando Uvicorn..."
     exec uvicorn main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'
 fi

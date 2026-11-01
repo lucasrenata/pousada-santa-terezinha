@@ -11,7 +11,6 @@ export default function MainLayout() {
   const role = localStorage.getItem('role');
   const menuItems = [
     { label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard', roles: ['admin', 'recepcionista', 'servico'] },
-    { label: 'Chat IA', icon: MessageSquare, path: '/chat', roles: ['admin'] },
     { label: 'PDV', icon: ShoppingCart, path: '/pdv', roles: ['admin', 'recepcionista'] },
     { label: 'Quartos', icon: BedDouble, path: '/rooms', roles: ['admin', 'recepcionista', 'servico'] },
     { label: 'Reservas', icon: CalendarDays, path: '/bookings', roles: ['admin', 'recepcionista'] },
@@ -32,7 +31,7 @@ export default function MainLayout() {
     const isRecepcionista = role === 'recepcionista';
     
     // Rotas bloqueadas para recepcionista e serviço
-    const forbiddenForRecepcionista = ['/finance', '/chat', '/admin', '/settings'];
+    const forbiddenForRecepcionista = ['/finance', '/admin', '/settings'];
     const permittedForService = ['/service', '/rooms', '/dashboard'];
 
     if (role && isServiceStaff && !permittedForService.includes(location.pathname)) {

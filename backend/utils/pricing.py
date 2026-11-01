@@ -23,6 +23,14 @@ def calculate_daily_rates_count(
         except:
             return 14.0
 
+    from zoneinfo import ZoneInfo
+    local_tz = ZoneInfo("America/Sao_Paulo")
+
+    if hasattr(check_in_date, "astimezone") and check_in_date.tzinfo is not None:
+        check_in_date = check_in_date.astimezone(local_tz)
+    if hasattr(check_out_date, "astimezone") and check_out_date.tzinfo is not None:
+        check_out_date = check_out_date.astimezone(local_tz)
+
     ci_hour = parse_time(check_in_time_str, policy_check_in_time)
     co_hour = parse_time(check_out_time_str, policy_check_out_time)
     limit_ci = parse_time(policy_check_in_time, "14:00")

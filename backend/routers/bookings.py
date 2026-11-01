@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
 from fastapi.responses import StreamingResponse
 import shutil, uuid, os
 from sqlalchemy.orm import Session
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, time
 from typing import List, Optional
 import asyncio, json
 import models, schemas
@@ -28,33 +28,33 @@ async def create_booking(data: schemas.BookingCreate, db: Session = Depends(get_
             if data.mode == models.BookingMode.CARAVANA:
                 total_people = data.total_guests
                 
-            if total_people > room.max_capacity:
+            if not check_room_capacity_available(db, data.room_id, data.check_in_date, data.check_out_date, total_people):
+                remaining = calculate_room_remaining_capacity(db, room, data.check_in_date, data.check_out_date)
                 raise HTTPException(
-                    status_code=400, 
-                    detail=f"Capacidade excedida! O quarto {room.id} comporta no máximo {room.max_capacity} pessoas."
+                    status_code=400,
+                    detail=f"Capacidade de leitos indisponível! O quarto {room.id} possui apenas {remaining} leito(s) vago(s) no período."
                 )
-
-            # Verifica conflito de datas
-            conflict = db.query(models.Booking).filter(
-                models.Booking.room_id == data.room_id,
-                models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
-                models.Booking.check_out_date > data.check_in_date,
-                models.Booking.check_in_date < data.check_out_date,
-            ).first()
-            if conflict:
-                raise HTTPException(status_code=400, detail="Este quarto já possui uma reserva confirmada para o período selecionado.")
 
         # Busca Hóspede para validação e cálculo
         guest = db.query(models.Guest).filter(models.Guest.id == data.guest_id).first()
         if not guest:
             raise HTTPException(status_code=400, detail="Hóspede principal não localizado. Por favor, selecione ou cadastre um hóspede.")
 
+        # Busca configurações
+        settings_rows = db.query(models.SystemSetting).all()
+        settings_dict = {s.key: s.value for s in settings_rows}
+
+        policy_check_in_time = settings_dict.get("check_in_time", "14:00")
+        policy_check_out_time = settings_dict.get("check_out_time", "12:00")
+
         # Cálculo de dias e valores
         days = calculate_daily_rates_count(
             data.check_in_date, 
             data.check_out_date, 
             data.check_in_time, 
-            data.check_out_time
+            data.check_out_time,
+            policy_check_in_time=policy_check_in_time,
+            policy_check_out_time=policy_check_out_time
         )
         
         guest_age = 18
@@ -64,11 +64,21 @@ async def create_booking(data: schemas.BookingCreate, db: Session = Depends(get_
         
         ages = [guest_age] + [c.age for c in data.companions]
         
-        settings_rows = db.query(models.SystemSetting).all()
-        settings_dict = {s.key: s.value for s in settings_rows}
-        
         pricing = calculate_reservation_total(data.daily_rate, days, ages, settings=settings_dict)
         total_val = pricing["total"]
+
+        # Calcula valor do sinal (deposit_amount)
+        if data.deposit_amount is not None:
+            deposit_val = data.deposit_amount
+        else:
+            deposit_percentage = 50.0
+            raw_percentage = settings_dict.get("pousada_deposit_percentage")
+            if raw_percentage is not None and str(raw_percentage).strip():
+                try:
+                    deposit_percentage = float(raw_percentage)
+                except (ValueError, TypeError):
+                    pass
+            deposit_val = total_val * (deposit_percentage / 100.0)
 
         # Cria a reserva
         booking = models.Booking(
@@ -82,6 +92,7 @@ async def create_booking(data: schemas.BookingCreate, db: Session = Depends(get_
             total_guests=total_people,
             daily_rate=data.daily_rate,
             total_amount=total_val,
+            deposit_amount=deposit_val,
             notes=data.notes,
             status=models.BookingStatus.PENDENTE,
             tenant_id=current_user.tenant_id
@@ -178,15 +189,21 @@ def check_out(room_id: str, data: schemas.CheckoutPaymentRequest, db: Session = 
 
     room = db.query(models.Room).with_for_update().filter(models.Room.id == room_id).first()
 
-    # Recalcula com dados reais e lógica hoteleira
-    base_checkin = booking.real_check_in or booking.check_in_date
-    now = datetime.now()
-    
-    # Formata horários para a função de cálculo
-    ci_time = booking.check_in_time
-    co_time = now.strftime("%H:%M")
-    
-    days = calculate_daily_rates_count(base_checkin, now, ci_time, co_time)
+    # Busca settings para o cálculo
+    settings_rows = db.query(models.SystemSetting).all()
+    settings_dict = {s.key: s.value for s in settings_rows}
+
+    policy_check_in_time = settings_dict.get("check_in_time", "14:00")
+    policy_check_out_time = settings_dict.get("check_out_time", "12:00")
+
+    days = calculate_daily_rates_count(
+        base_checkin, 
+        now, 
+        ci_time, 
+        co_time,
+        policy_check_in_time=policy_check_in_time,
+        policy_check_out_time=policy_check_out_time
+    )
     
     # Recalcula valor das diárias baseado nas idades originais
     guest_age = 18
@@ -196,10 +213,6 @@ def check_out(room_id: str, data: schemas.CheckoutPaymentRequest, db: Session = 
         guest_age = today.year - bday.year - ((today.month, today.day) < (bday.month, bday.day))
     
     ages = [guest_age] + [c.age for c in booking.companions]
-    
-    # Busca settings para o cálculo
-    settings_rows = db.query(models.SystemSetting).all()
-    settings_dict = {s.key: s.value for s in settings_rows}
     
     pricing = calculate_reservation_total(booking.daily_rate, days, ages, settings=settings_dict)
     
@@ -276,8 +289,22 @@ def checkout_summary(room_id: str, db: Session = Depends(get_db), current_user =
     
     ci_time = booking.check_in_time
     co_time = now.strftime("%H:%M")
+
+    # Busca settings para o cálculo
+    settings_rows = db.query(models.SystemSetting).all()
+    settings_dict = {s.key: s.value for s in settings_rows}
+
+    policy_check_in_time = settings_dict.get("check_in_time", "14:00")
+    policy_check_out_time = settings_dict.get("check_out_time", "12:00")
     
-    days = calculate_daily_rates_count(base_checkin, now, ci_time, co_time)
+    days = calculate_daily_rates_count(
+        base_checkin, 
+        now, 
+        ci_time, 
+        co_time,
+        policy_check_in_time=policy_check_in_time,
+        policy_check_out_time=policy_check_out_time
+    )
     
     # Recalcula valor das diárias baseado nas idades
     guest_age = 18
@@ -287,10 +314,6 @@ def checkout_summary(room_id: str, db: Session = Depends(get_db), current_user =
         guest_age = today.year - bday.year - ((today.month, today.day) < (bday.month, bday.day))
     
     ages = [guest_age] + [c.age for c in booking.companions]
-    
-    # Busca settings para o cálculo
-    settings_rows = db.query(models.SystemSetting).all()
-    settings_dict = {s.key: s.value for s in settings_rows}
     
     pricing = calculate_reservation_total(booking.daily_rate, days, ages, settings=settings_dict)
     
@@ -427,44 +450,78 @@ def get_active_booking(room_id: str, db: Session = Depends(get_db), current_user
         "check_out_date": booking.check_out_date,
     }
 
-@router.get("/availability", response_model=List[schemas.RoomResponse])
-def get_availability(start: datetime, end: datetime, guests: Optional[int] = None, exclude_booking_id: Optional[int] = None, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
-    blocked_q = db.query(models.Booking.room_id).filter(
-        models.Booking.room_id.isnot(None),
+def calculate_room_remaining_capacity(db: Session, room: models.Room, start: datetime, end: datetime, exclude_booking_id: Optional[int] = None) -> int:
+    bookings = db.query(models.Booking).filter(
+        models.Booking.room_id == room.id,
         models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
         models.Booking.check_out_date > start,
         models.Booking.check_in_date < end,
     )
-    
     if exclude_booking_id:
-        blocked_q = blocked_q.filter(models.Booking.id != exclude_booking_id)
+        bookings = bookings.filter(models.Booking.id != exclude_booking_id)
         
-    blocked_ids = {rid for (rid,) in blocked_q.distinct().all()}
-    query = db.query(models.Room)
-    if guests is not None:
-        query = query.filter(models.Room.max_capacity >= guests)
-    rooms = query.all()
-    available = [r for r in rooms if r.id not in blocked_ids]
+    bookings = bookings.all()
+    if not bookings:
+        return room.max_capacity
+        
+    events = []
+    for b in bookings:
+        evt_in = max(b.check_in_date, start)
+        evt_out = min(b.check_out_date, end)
+        events.append((evt_in, b.total_guests))
+        events.append((evt_out, -b.total_guests))
+        
+    events.sort(key=lambda x: (x[0], x[1]))
+    
+    max_occupied = 0
+    current_occupied = 0
+    for t, delta in events:
+        current_occupied += delta
+        if current_occupied > max_occupied:
+            max_occupied = current_occupied
+            
+    remaining = room.max_capacity - max_occupied
+    return max(0, remaining)
+
+def check_room_capacity_available(db: Session, room_id: str, start: datetime, end: datetime, requested_guests: int, exclude_booking_id: Optional[int] = None) -> bool:
+    room = db.query(models.Room).filter(models.Room.id == room_id).first()
+    if not room:
+        return False
+    remaining = calculate_room_remaining_capacity(db, room, start, end, exclude_booking_id)
+    return requested_guests <= remaining
+
+@router.get("/availability", response_model=List[schemas.RoomResponse])
+def get_availability(start: datetime, end: datetime, guests: Optional[int] = None, exclude_booking_id: Optional[int] = None, db: Session = Depends(get_db), current_user = Depends(get_current_receptionist)):
+    set_tenant_context(db, current_user.tenant_id)
+    rooms = db.query(models.Room).all()
+    available = []
+    for r in rooms:
+        remaining = calculate_room_remaining_capacity(db, r, start, end, exclude_booking_id)
+        if guests is not None:
+            if guests > remaining:
+                continue
+        else:
+            if remaining <= 0:
+                continue
+        r.remaining_capacity = remaining
+        available.append(r)
     return available
 
 @router.get("/availability/public", response_model=List[schemas.RoomResponse])
 def get_public_availability(tenant_id: int, start: datetime, end: datetime, guests: Optional[int] = None, exclude_booking_id: Optional[int] = None, db: Session = Depends(get_db)):
     set_tenant_context(db, tenant_id)
-    blocked_q = db.query(models.Booking.room_id).filter(
-        models.Booking.room_id.isnot(None),
-        models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
-        models.Booking.check_out_date > start,
-        models.Booking.check_in_date < end,
-    )
-    if exclude_booking_id:
-        blocked_q = blocked_q.filter(models.Booking.id != exclude_booking_id)
-        
-    blocked_ids = {rid for (rid,) in blocked_q.distinct().all()}
-    query = db.query(models.Room)
-    if guests is not None:
-        query = query.filter(models.Room.max_capacity >= guests)
-    rooms = query.all()
-    available = [r for r in rooms if r.id not in blocked_ids]
+    rooms = db.query(models.Room).all()
+    available = []
+    for r in rooms:
+        remaining = calculate_room_remaining_capacity(db, r, start, end, exclude_booking_id)
+        if guests is not None:
+            if guests > remaining:
+                continue
+        else:
+            if remaining <= 0:
+                continue
+        r.remaining_capacity = remaining
+        available.append(r)
     return available
 
 @router.post("/reschedule")
@@ -480,17 +537,12 @@ def reschedule(data: schemas.RescheduleRequest, db: Session = Depends(get_db), c
         if not room:
             raise HTTPException(status_code=404, detail="Quarto não encontrado")
         total_people = booking.total_guests
-        if total_people > room.max_capacity:
-            raise HTTPException(status_code=400, detail="Capacidade excedida para o quarto selecionado")
-        conflict = db.query(models.Booking).filter(
-            models.Booking.room_id == target_room_id,
-            models.Booking.id != booking.id,
-            models.Booking.status.in_([models.BookingStatus.CONFIRMADO, models.BookingStatus.ATIVO]),
-            models.Booking.check_out_date > data.check_in_date,
-            models.Booking.check_in_date < data.check_out_date,
-        ).first()
-        if conflict:
-            raise HTTPException(status_code=400, detail="Quarto indisponível no período")
+        if not check_room_capacity_available(db, target_room_id, data.check_in_date, data.check_out_date, total_people, exclude_booking_id=booking.id):
+            remaining = calculate_room_remaining_capacity(db, room, data.check_in_date, data.check_out_date, exclude_booking_id=booking.id)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Capacidade de leitos indisponível! O quarto {room.id} possui apenas {remaining} leito(s) vago(s) no período."
+            )
     booking.room_id = target_room_id
     booking.check_in_date = data.check_in_date
     booking.check_out_date = data.check_out_date
@@ -509,14 +561,25 @@ async def create_public_booking(data: schemas.BookingPublicCreate, db: Session =
     
     # 1. Localiza ou cria hóspede
     g = data.guest
-    guest = db.query(models.Guest).filter(models.Guest.document == g.document).first()
+    clean_doc = "".join(filter(str.isdigit, g.document)) if g.document else ""
+    guest = db.query(models.Guest).filter(
+        (models.Guest.document == g.document) | 
+        (models.Guest.document == clean_doc)
+    ).first()
     if not guest:
-        new_g_dict = g.model_dump(exclude={'tenant_id'})
+        # Previne erro 500 se o e-mail já estiver cadastrado para outro CPF
+        if g.email and db.query(models.Guest).filter(models.Guest.email == g.email).first():
+            raise HTTPException(
+                status_code=400, 
+                detail="O e-mail informado já está sendo utilizado por outro cadastro."
+            )
+            
         guest = models.Guest(
             name=g.name, email=g.email, phone=g.phone, document=g.document, birth_date=g.birth_date,
             profession=g.profession, address_zip=g.address_zip, address_street=g.address_street,
             address_number=g.address_number, address_neighborhood=g.address_neighborhood,
-            address_city=g.address_city, address_state=g.address_state
+            address_city=g.address_city, address_state=g.address_state,
+            tenant_id=data.tenant_id
         )
         db.add(guest)
         db.commit()
@@ -524,9 +587,19 @@ async def create_public_booking(data: schemas.BookingPublicCreate, db: Session =
     else:
         # Atualiza dados se já existir
         guest.name = g.name
-        guest.email = g.email
+        
+        # Previne erro 500 se tentar alterar para um e-mail em uso por outro CPF
+        if g.email and guest.email != g.email:
+            if db.query(models.Guest).filter(models.Guest.email == g.email, models.Guest.id != guest.id).first():
+                raise HTTPException(
+                    status_code=400, 
+                    detail="O e-mail informado já está sendo utilizado por outro cadastro."
+                )
+            guest.email = g.email
+            
         guest.phone = g.phone
         guest.birth_date = g.birth_date
+        guest.tenant_id = data.tenant_id
         db.commit()
 
     # 2. Valida capacidade
@@ -536,11 +609,34 @@ async def create_public_booking(data: schemas.BookingPublicCreate, db: Session =
 
     if data.room_id:
         room = db.query(models.Room).filter(models.Room.id == data.room_id).first()
-        if room and total_people > room.max_capacity:
-            raise HTTPException(status_code=400, detail="Capacidade excedida")
+        if not room:
+            raise HTTPException(status_code=404, detail="Quarto não encontrado")
+        if not check_room_capacity_available(db, data.room_id, data.check_in_date, data.check_out_date, total_people):
+            remaining = calculate_room_remaining_capacity(db, room, data.check_in_date, data.check_out_date)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Capacidade de leitos indisponível! O quarto {room.id} possui apenas {remaining} leito(s) vago(s) no período."
+            )
 
     # 3. Cálculo de preços e datas
-    days = calculate_daily_rates_count(data.check_in_date, data.check_out_date, data.check_in_time, data.check_out_time)
+    settings_rows = db.query(models.SystemSetting).all()
+    settings_dict = {s.key: s.value for s in settings_rows}
+
+    policy_check_in_time = settings_dict.get("check_in_time", "14:00")
+    policy_check_out_time = settings_dict.get("check_out_time", "12:00")
+
+    # Utiliza o horário específico de check-in e check-out fornecidos pelo payload, caindo de volta nas políticas se nulo
+    ci_time = data.check_in_time or policy_check_in_time
+    co_time = data.check_out_time or policy_check_out_time
+
+    days = calculate_daily_rates_count(
+        data.check_in_date,
+        data.check_out_date,
+        ci_time,
+        co_time,
+        policy_check_in_time=policy_check_in_time,
+        policy_check_out_time=policy_check_out_time
+    )
     
     guest_age = 18
     if guest.birth_date:
@@ -549,10 +645,18 @@ async def create_public_booking(data: schemas.BookingPublicCreate, db: Session =
     
     ages = [guest_age] + [c.age for c in data.companions]
     
-    settings_rows = db.query(models.SystemSetting).all()
-    settings_dict = {s.key: s.value for s in settings_rows}
-    
     pricing = calculate_reservation_total(data.daily_rate, days, ages, settings=settings_dict)
+    total_val = pricing["total"]
+
+    # Calcula valor do sinal (deposit_amount)
+    deposit_percentage = 50.0
+    raw_percentage = settings_dict.get("pousada_deposit_percentage")
+    if raw_percentage is not None and str(raw_percentage).strip():
+        try:
+            deposit_percentage = float(raw_percentage)
+        except (ValueError, TypeError):
+            pass
+    deposit_val = total_val * (deposit_percentage / 100.0)
 
     # 4. Cria reserva
     booking = models.Booking(
@@ -565,19 +669,26 @@ async def create_public_booking(data: schemas.BookingPublicCreate, db: Session =
         mode=data.mode,
         total_guests=total_people,
         daily_rate=data.daily_rate,
-        total_amount=pricing["total"],
+        total_amount=total_val,
+        deposit_amount=deposit_val,
         notes=data.notes,
-        status=models.BookingStatus.PENDENTE
+        status=models.BookingStatus.PENDENTE,
+        tenant_id=data.tenant_id
     )
     db.add(booking)
     db.commit()
     # db.refresh(booking)
 
     for comp in data.companions:
-        db.add(models.Companion(booking_id=booking.id, name=comp.name, age=comp.age))
+        db.add(models.Companion(booking_id=booking.id, name=comp.name, age=comp.age, tenant_id=data.tenant_id))
     db.commit()
 
-    return {"message": "Solicitação recebida!", "booking_id": booking.id}
+    return {
+        "message": "Solicitação recebida!", 
+        "booking_id": booking.id, 
+        "total_amount": booking.total_amount,
+        "deposit_amount": booking.deposit_amount
+    }
 
 # 7. LER RESERVA ESPECÍFICA
 @router.get("/{booking_id}", response_model=schemas.BookingResponse)
@@ -645,11 +756,16 @@ def update_booking(booking_id: int, data: schemas.BookingUpdate, db: Session = D
         settings_rows = db.query(models.SystemSetting).all()
         settings_dict = {s.key: s.value for s in settings_rows}
 
+        policy_check_in_time = settings_dict.get("check_in_time", "14:00")
+        policy_check_out_time = settings_dict.get("check_out_time", "12:00")
+
         days = calculate_daily_rates_count(
             booking.check_in_date,
             booking.check_out_date,
             booking.check_in_time,
-            booking.check_out_time
+            booking.check_out_time,
+            policy_check_in_time=policy_check_in_time,
+            policy_check_out_time=policy_check_out_time
         )
 
         guest_age = 18
@@ -661,6 +777,17 @@ def update_booking(booking_id: int, data: schemas.BookingUpdate, db: Session = D
         ages = [guest_age] + [c.age for c in booking.companions]
         pricing = calculate_reservation_total(booking.daily_rate, days, ages, settings=settings_dict)
         booking.total_amount = pricing["total"]
+
+        # Recalcula valor do sinal (deposit_amount) apenas se não for enviado explicitamente no update
+        if "deposit_amount" not in update_data:
+            deposit_percentage = 50.0
+            raw_percentage = settings_dict.get("pousada_deposit_percentage")
+            if raw_percentage is not None and str(raw_percentage).strip():
+                try:
+                    deposit_percentage = float(raw_percentage)
+                except (ValueError, TypeError):
+                    pass
+            booking.deposit_amount = booking.total_amount * (deposit_percentage / 100.0)
 
         db.commit()
         # db.refresh(booking) <-- Removido para estabilidade

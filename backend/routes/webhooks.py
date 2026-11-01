@@ -10,9 +10,7 @@ import json
 import os
 
 from database import SessionLocal, set_tenant_context
-from agents.state_manager import StateManager
 import models
-from agents import shared_tools
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -167,38 +165,9 @@ async def handle_guest_registration_webhook(
     request: Request
 ) -> WebhookResponse:
     """
-    Endpoint que recebe notificação quando hóspede se cadastra no formulário público.
+    Endpoint que recebe notificação quando hóspede se cadastra no formulário público (No-op com IA desativada).
     """
-    try:
-        logger.info(f"[WEBHOOK_LOG] Recebido webhook de cadastro de hóspede")
-        payload = await request.json()
-        
-        tenant_id = payload.get('tenant_id')
-        cpf = payload.get('cpf')
-        session_id = payload.get('session_id')
-        
-        if not tenant_id or not cpf:
-            logger.warning(f"[WEBHOOK_LOG] tenant_id ou cpf faltando")
-            raise HTTPException(status_code=400, detail="tenant_id ou cpf faltando")
-        
-        # Usar shared_tools para processar webhook
-        result = shared_tools.handle_guest_registration_webhook(
-            tenant_id=tenant_id,
-            cpf=cpf,
-            session_id=session_id
-        )
-        
-        if not result.get('success'):
-            logger.warning(f"[WEBHOOK_LOG] Erro ao processar webhook: {result.get('error')}")
-            raise HTTPException(status_code=400, detail=result.get('error'))
-        
-        return WebhookResponse(success=True, message="Hóspede registrado com sucesso")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[WEBHOOK_LOG] Erro ao processar webhook de cadastro: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Erro ao processar webhook: {str(e)}")
+    return WebhookResponse(success=True, message="Webhook recebido (No-op: IA desativada)")
 
 def _validate_mercadopago_signature(body: bytes, signature: str, request_id: str) -> bool:
     """Valida a assinatura do webhook do Mercado Pago."""

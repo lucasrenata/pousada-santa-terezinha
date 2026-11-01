@@ -2,9 +2,6 @@ import asyncio
 from fastapi import APIRouter, Request, BackgroundTasks
 from services.whatsapp import WhatsAppService
 from database import SessionLocal
-from routers.chat import save_message, get_db_history
-from agents.admin_agent import handle_admin_query
-
 router = APIRouter(prefix="/webhook/whatsapp", tags=["Webhooks"])
 
 async def process_whatsapp_message(payload: dict):
@@ -88,24 +85,20 @@ async def process_whatsapp_message(payload: dict):
         await whatsapp_service.send_text(number=user_id, text=error_msg)
         return
 
-    # Injeta contexto do banco de dados e chama o Agente Admin
+    # Salva a mensagem do usuário e processa resposta automática
     db = SessionLocal()
     try:
         # Usa o próprio número do usuário como session_id para o chat
         session_id = f"wa_{user_id}"
         
-        # Salva a mensagem do usuário
-        save_message(session_id, "user", str(content), db)
-        
-        # Busca o histórico do admin
-        history = await get_db_history(session_id, db)
-        
-        # Chama o Agente Admin
-        result = await handle_admin_query(str(content), history[:-1], db)
-        response_text = result.get("response", "Ocorreu um erro ao processar sua requisição.")
-        
-        # Salva a resposta da IA
-        save_message(session_id, "assistant", response_text, db)
+        # Resposta automática amigável avisando que o chat com IA foi desativado
+        response_text = (
+            "Olá! Agradecemos o contato.\n\n"
+            "Nosso atendimento automático via WhatsApp está temporariamente desativado. "
+            "Para fazer uma reserva, por favor acesse nosso Portal de Reservas público ou "
+            "entre em contato direto com a recepção do estabelecimento.\n\n"
+            "Desejamos um excelente dia!"
+        )
         
         # Envia a resposta de volta ao WhatsApp
         await whatsapp_service.send_text(number=user_id, text=response_text)
@@ -113,7 +106,7 @@ async def process_whatsapp_message(payload: dict):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        print(f"Erro ao processar mensagem com o agente admin para o usuário {user_id}: {e}")
+        print(f"Erro ao enviar resposta automatizada do WhatsApp para o usuário {user_id}: {e}")
     finally:
         db.close()
 

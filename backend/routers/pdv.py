@@ -50,6 +50,7 @@ def abrir_caixa(
 @router.post("/caixa/fechar", response_model=schemas.CaixaSessionResponse)
 def fechar_caixa(
     closing_balance: float,
+    manager_pin: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
@@ -78,9 +79,44 @@ def fechar_caixa(
     }
     
     # Saldo Dinheiro = Abertura + Vendas Dinheiro + Suprimentos - (Sangrias + Retiradas)
-    summary["saldo_dinheiro"] = summary["opening_balance"] + summary["vendas_dinheiro"] + summary["entradas_total"] - summary["retiradas_total"]
-    # Saldo Geral = Saldo Dinheiro + Vendas Outros Métodos
-    summary["saldo_geral"] = summary["saldo_dinheiro"] + summary["vendas_pix"] + summary["vendas_debito"] + summary["vendas_credito"]
+    saldo_esperado = sessao.opening_balance + summary["vendas_dinheiro"] + summary["entradas_total"] - summary["retiradas_total"]
+    
+    # Validação de Divergência (blindada)
+    if round(closing_balance, 2) != round(saldo_esperado, 2):
+        if not manager_pin:
+            diff = abs(closing_balance - saldo_esperado)
+            diff_formatted = f"R$ {diff:.2f}".replace(".", ",")
+            if closing_balance < saldo_esperado:
+                detail_msg = f"Caixa faltando {diff_formatted}. Verifique o valor novamente ou chame o gerente."
+            else:
+                detail_msg = f"Caixa sobrando {diff_formatted}. Chame o gerente para confirmar."
+            raise HTTPException(
+                status_code=400,
+                detail=detail_msg
+            )
+        
+        # Validar o PIN de Gerente cadastrado nas configurações
+        pin_setting = db.query(models.SystemSetting).filter(models.SystemSetting.key == "caixa_pin").first()
+        if not pin_setting or not pin_setting.value:
+            raise HTTPException(
+                status_code=400,
+                detail="PIN de autorização do caixa não configurado no sistema. O gerente deve cadastrar o PIN nas configurações."
+            )
+        
+        if pin_setting.value != manager_pin:
+            raise HTTPException(
+                status_code=400,
+                detail="PIN de autorização do gerente incorreto."
+            )
+            
+        summary["manager_authorized"] = True
+        summary["divergence_amount"] = round(closing_balance - saldo_esperado, 2)
+    else:
+        summary["manager_authorized"] = False
+        summary["divergence_amount"] = 0.0
+
+    summary["saldo_dinheiro"] = saldo_esperado
+    summary["saldo_geral"] = saldo_esperado + summary["vendas_pix"] + summary["vendas_debito"] + summary["vendas_credito"]
     
     sessao.status = models.CaixaStatus.FECHADO
     sessao.closing_balance = closing_balance
@@ -152,6 +188,21 @@ def get_caixa_summary(
     # Saldo Geral = Saldo Dinheiro + Vendas Outros Métodos
     res["saldo_geral"] = res["saldo_dinheiro"] + res["vendas_pix"] + res["vendas_debito"] + res["vendas_credito"]
     
+    # Redação blindada para usuários operacionais (não administradores)
+    if current_user.role not in ["admin", "superadmin"]:
+        res["vendas_dinheiro"] = 0.0
+        res["entradas_total"] = 0.0
+        res["retiradas_total"] = 0.0
+        res["saldo_dinheiro"] = 0.0
+        res["saldo_geral"] = res["vendas_pix"] + res["vendas_debito"] + res["vendas_credito"]
+        res["movements"] = [
+            m for m in movements 
+            if not (
+                m.type in [models.CaixaMovementType.SUPRIMENTO, models.CaixaMovementType.SANGRIA, models.CaixaMovementType.RETIRADA] or
+                (m.type == models.CaixaMovementType.VENDA and m.payment_method == models.PaymentMethod.DINHEIRO)
+            )
+        ]
+        
     return res
 
 # --- COMANDAS ---

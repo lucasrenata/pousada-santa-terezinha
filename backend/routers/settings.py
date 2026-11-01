@@ -29,7 +29,11 @@ def get_public_settings(tenant_id: int, db: Session = Depends(get_db)):
     """Retorna apenas configurações não sensíveis para o portal do hóspede."""
     set_tenant_context(db, tenant_id)
     # Lista branca de chaves seguras para exposição pública
-    public_keys = ['pousada_name', 'pousada_checkin_time', 'pousada_checkout_time', 'pousada_logo_url', 'ai_receptionist_name']
+    public_keys = [
+        'pousada_name', 'pousada_checkin_time', 'pousada_checkout_time', 
+        'pousada_logo_url', 'ai_receptionist_name', 'check_in_time', 
+        'check_out_time', 'pousada_deposit_percentage'
+    ]
     return db.query(models.SystemSetting).filter(models.SystemSetting.key.in_(public_keys)).all()
 
 @router.get("/public/tenant/{tenant_id}", response_model=schemas.TenantPublicResponse)

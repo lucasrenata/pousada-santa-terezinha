@@ -117,8 +117,7 @@ class TestGuestRegistrationWebhook:
             "guest_data": {"name": "João Silva"}
         }
         
-        with patch('agents.shared_tools.handle_guest_registration_webhook') as mock_handle:
-            mock_handle.return_value = {'success': True}
-            response = client.post("/api/webhooks/guest-registered", json=payload)
-            assert response.status_code == 200
-            assert response.json()['success'] == True
+        response = client.post("/api/webhooks/guest-registered", json=payload)
+        assert response.status_code == 200
+        assert response.json()['success'] == True
+
